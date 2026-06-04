@@ -262,7 +262,7 @@ def _load_matrix_input(input_path, genes_path=None, barcodes_path=None):
             gene_names = [f"gene_{i}" for i in range(mat.shape[0])]
 
         if barcodes_path:
-            barcodes = pd.read_csv(barcodes_path, sep="\t", header=None).iloc[:, 0].values
+            barcodes = pd.read_csv(barcodes_path, sep="\t", header=None, dtype=str).iloc[:, 0].values
         else:
             barcodes = np.array([f"cell_{i}" for i in range(mat.shape[1])], dtype=object)
 
