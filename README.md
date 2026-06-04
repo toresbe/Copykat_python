@@ -15,9 +15,10 @@ The original CopyKAT-R package is widely used for distinguishing aneuploid tumor
 
 - Identical core parameters as CopyKAT-R with convenient Python improvements
 - Handles datasets from thousands to hundreds of thousands of cells with significantly faster speed
+- fixed some known bugs of copykat-R to improve aneuploid prediction accuracy.
 - Annotated CNA heatmaps with per-cell metadata sidebars (cell type, cluster labels, etc.)
 - Pre-built Singularity container for reproducible deployment
-- Validated across 16 human and mouse 10X datasets and a 170k-cell Xenium whole-transcript dataset
+- Validated across 11 human cancer samples and a 170k-cell Xenium whole-transcript dataset
   
 ---
 
@@ -213,51 +214,43 @@ plot_heatmap_annotated(
 
 ## Benchmarking and Validation
 
-### 10X Dataset Validation
+### Validation for 11 datasets from [Cancer Cell Atlas (3CA)](https://www.weizmann.ac.il/sites/3CA/)
 
-Both CopyKAT-R and CopyKAT-Python were tested on raw datasets (no QC filtering) using 24 cores. A total of 16 datasets spanning human and mouse tissues across multiple 10X platforms were used for validation.
+Both CopyKAT-R and CopyKAT-Python were tested on raw datasets (no QC filtering) using 24 cores. 
+A total of 11 datasets with cell-type composition, aneuploid annotation, and UMAP embeddings from the metadata, and prepare per-sample count matrices in standard 10X MTX format for downstream CopyKAT-R vs CopyKAT-Py comparison.
 
 <details>
-<summary><b>10x Genomics Benchmark Datasets</b></summary>
+<summary><b>3CA Benchmark Datasets</b></summary>
 
 <br>
 
-| Sample | Species | Tissue | Assay | Reported Cells |
-| :--- | :--- | :--- | :--- | ---: |
-| [human_pbmc_10k_3pv3](https://cf.10xgenomics.com/samples/cell-exp/3.0.0/pbmc_10k_v3/pbmc_10k_v3_web_summary.html) | human | PBMC healthy control | Universal 3' v3 | 11,769 |
-| [human_nsclc_5pv1](https://www.10xgenomics.com/datasets/nsclc-tumor-5-gene-expression-1-standard-2-2-0) | human | NSCLC tumor | Universal 5' v1 | 7,802 |
-| [human_ovarian_flex](https://www.10xgenomics.com/datasets/17k-human-ovarian-cancer-scFFPE) | human | Ovarian cancer FFPE | Flex | 17,553 |
-| [human_kidney_gemx_flex](https://www.10xgenomics.com/datasets/Human_Kidney_4k_GEM-X_Flex) | human | Kidney nuclei control | GEM-X Flex | 4,633 |
-| [human_hodgkins_3pv31](https://www.10xgenomics.com/datasets/hodgkins-lymphoma-dissociated-tumor-whole-transcriptome-analysis-3-1-standard-4-0-0) | human | Hodgkin's lymphoma | Universal 3' v3.1 | 3,394 |
-| [human_breast_idc_7p5k_3pv31](https://www.10xgenomics.com/jp/datasets/7-5-k-sorted-cells-from-human-invasive-ductal-carcinoma-3-v-3-1-3-1-standard-6-0-0) | human | Invasive ductal carcinoma | Universal 3' v3.1 | 5,680 |
-| [human_breast_idc_750_lt_3pv31](https://www.10xgenomics.com/datasets/750-sorted-cells-from-human-invasive-ductal-carcinoma-3-lt-v-3-1-3-1-low-6-0-0) | human | Invasive ductal carcinoma | Universal 3' LT v3.1 | 687 |
-| [human_melanoma_5p_nextgem](https://www.10xgenomics.com/datasets/10k-human-dtc-melanoma-NextGEM-5p) | human | Melanoma dissociated tumor cells | Universal 5' NextGEM | 6,704 |
-| [mouse_brain_neurons_2k_v21](https://cf.10xgenomics.com/samples/cell-exp/2.1.0/neurons_2000/neurons_2000_web_summary.html) | mouse | E18 brain neurons | Universal 3' v2.1 | 2,022 |
-| [mouse_brain_neurons_10k_v3](https://cf.10xgenomics.com/samples/cell-exp/3.0.0/neuron_10k_v3/neuron_10k_v3_web_summary.html) | mouse | Brain neurons | Universal 3' v3 | 11,843 |
-| [mouse_heart_1k_v3](https://cf.10xgenomics.com/samples/cell-exp/3.0.0/heart_1k_v3/heart_1k_v3_web_summary.html) | mouse | Heart E18 | Universal 3' v3 | 1,011 |
-| [mouse_heart_10k_v3](https://cf.10xgenomics.com/samples/cell-exp/3.0.0/heart_10k_v3/heart_10k_v3_web_summary.html) | mouse | Heart E18 | Universal 3' v3 | 7,713 |
-| [mouse_brain_e18_10k_si_3pv31](https://www.10xgenomics.com/datasets/10-k-mouse-e-18-combined-cortex-hippocampus-and-subventricular-zone-cells-single-indexed-3-1-standard-4-0-0) | mouse | E18 cortex hippocampus SVZ | Universal 3' v3.1 SI | 11,316 |
-| [mouse_kidney_nuclei_1k_3pv31](https://www.10xgenomics.com/cn/datasets/1k-mouse-kidney-nuclei-isolated-with-chromium-nuclei-isolation-kit-3-1-standard) | mouse | Adult kidney nuclei | Universal 3' v3.1 | 1,385 |
-| [mouse_liver_nuclei_5k_3pv31](https://www.10xgenomics.com/datasets/5k-adult-mouse-liver-nuclei-isolated-with-chromium-nuclei-isolation-kit-3-1-standard) | mouse | Adult liver nuclei | Universal 3' v3.1 | 6,311 |
-| [mouse_brain_gemx](https://www.10xgenomics.com/datasets/10k-Mouse-Neurons-3p-gemx) | mouse | E18 brain neurons | Universal 3' GEM-X | 12,441 |
+| # | Dataset | Cancer Type | Sample | n_cells | Tumor % (meta) | Ref |
+|---|---------|-------------|--------|---------|----------------|-----|
+| 1 | Gao2021_Breast | Breast cancer | DCIS1 | 1,480 | 74.4% | Gao et al. 2021 |
+| 2 | Chen2020_Head-and-Neck | Nasopharyngeal carcinoma | P11 | 6,890 | 26.3% | Chen et al. 2020 |
+| 3 | Laughney2020_Lung | Lung adenocarcinoma | RU681 | 993 | 77.0% | Laughney et al. 2020 |
+| 4 | Bi2021_Kidney | Renal cell carcinoma (RCC) | P90 | 8,426 | 39.4% | Bi et al. 2021 |
+| 5 | Dong2020_Prostate | Prostate cancer | patient #5 | 8,690 | 19.3% | Dong et al. 2020 |
+| 6 | Jerby-Arnon2021_Sarcoma | Synovial sarcoma | SyS14 | 2,522 | 94.4% | Jerby-Arnon et al. 2021 |
+| 7 | Choudhury2022_Brain | Meningioma | MSC6-BTI | 13,171 | 62.2% | Choudhury et al. 2022 |
+| 8 | Lin2020_Pancreas | PDAC | P08 | 1,139 | 74.1% | Lin et al. 2020 |
+| 9 | Lee2020_Colorectal | Colorectal cancer (CRC) | SMC09 | 2,272 | 77.9% | Lee et al. 2020 |
+| 10 | Geistlinger2020_Ovarian | HGSOC | T59 | 12,659 | 25.1% | Geistlinger et al. 2020 |
+| 11 | Ji2020_Skin | Cutaneous SCC | P4 | 7,956 | 53.0% | Ji et al. 2020 |
 
 </details>
 
 
 #### Side-by-Side Comparison: CopyKAT-R vs CopyKAT-Python
 
-**human_pbmc_10k_3pv3**
-<img width="1209" height="559" alt="image" src="https://github.com/user-attachments/assets/9a7f6b5f-884d-41d6-805b-59933e8daf1b" />
+<img width="1157" height="807" alt="image" src="https://github.com/user-attachments/assets/77fcaba2-8f5a-4b88-83fb-9245e38c881a" />
 
-**human_breast_idc_7p5k_3pv31**
-<img width="1216" height="587" alt="image" src="https://github.com/user-attachments/assets/22b0ffd1-075e-495e-856a-3a1c80a9b510" />
+<img width="1157" height="807" alt="image" src="https://github.com/user-attachments/assets/2cefece9-6d78-492e-8430-596f4cf4eab1" />
 
-**mouse_brain_e18_10k_si_3pv31**
-<img width="1207" height="568" alt="image" src="https://github.com/user-attachments/assets/aef52f54-aa80-430a-b719-7781fa91b792" />
+<img width="1163" height="807" alt="image" src="https://github.com/user-attachments/assets/5d8fb986-f126-4ca5-b1bb-340d0d373e13" />
 
 **Key Metrics Comparison**
-
-<img width="2700" height="1650" alt="image" src="https://github.com/user-attachments/assets/a4cd6b97-e448-419b-b28b-3293bc9501fa" />
+<img width="2198" height="1874" alt="image" src="https://github.com/user-attachments/assets/764b4b2c-aac6-4e57-8630-5bc0104cbe3a" />
 
 ---
 
