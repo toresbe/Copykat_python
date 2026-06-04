@@ -247,8 +247,6 @@ A total of 11 datasets with cell-type composition, aneuploid annotation, and UMA
 
 <img width="1157" height="807" alt="image" src="https://github.com/user-attachments/assets/2cefece9-6d78-492e-8430-596f4cf4eab1" />
 
-<img width="1163" height="807" alt="image" src="https://github.com/user-attachments/assets/5d8fb986-f126-4ca5-b1bb-340d0d373e13" />
-
 **Key Metrics Comparison**
 <img width="2198" height="1874" alt="image" src="https://github.com/user-attachments/assets/764b4b2c-aac6-4e57-8630-5bc0104cbe3a" />
 
