@@ -240,15 +240,14 @@ A total of 11 datasets with cell-type composition, aneuploid annotation, and UMA
 
 </details>
 
+**Key Metrics Comparison**
+<img width="2198" height="1874" alt="image" src="https://github.com/user-attachments/assets/764b4b2c-aac6-4e57-8630-5bc0104cbe3a" />
 
 #### Side-by-Side Comparison: CopyKAT-R vs CopyKAT-Python
 
 <img width="1157" height="807" alt="image" src="https://github.com/user-attachments/assets/77fcaba2-8f5a-4b88-83fb-9245e38c881a" />
 
 <img width="1157" height="807" alt="image" src="https://github.com/user-attachments/assets/2cefece9-6d78-492e-8430-596f4cf4eab1" />
-
-**Key Metrics Comparison**
-<img width="2198" height="1874" alt="image" src="https://github.com/user-attachments/assets/764b4b2c-aac6-4e57-8630-5bc0104cbe3a" />
 
 ---
 
