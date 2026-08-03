@@ -565,42 +565,21 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             if keep_cluster_anchor:
                 print("  low-data-quality mode: keeping cluster-based normal anchor")
             else:
-                basa_cluster = basa
-                basa_gmm = baseline_gmm(
+                basa = baseline_gmm(
                     norm_mat_smooth,
                     cell_name_list,
                     max_normal=5,
                     mu_cut=0.05,
                     Nfraq_cut=0.99,
-                    RE_before=basa_cluster,
+                    RE_before=basa,
                     n_cores=n_cores,
                     pca_components=selected_pca_components,
                     genome=genome,
                 )
-                # baseline_gmm anchors on a handful of individually-scanned
-                # cells (it stops at the first `max_normal` hits in raw cell
-                # order) and can be far noisier than the clustering candidate
-                # it is meant to replace -- a contaminated anchor set here
-                # silently inverts the final diploid/aneuploid call downstream,
-                # since cluster identity is decided purely by preN overlap.
-                # Only adopt the fallback when its baseline profile is actually
-                # flatter (closer to the neutral/diploid state) than the
-                # candidate it would discard; otherwise keep the clustering
-                # answer even though confidence is flagged low.
-                clustering_flatness = float(np.mean(np.abs(basa_cluster["basel"])))
-                gmm_flatness = float(np.mean(np.abs(basa_gmm["basel"])))
-                if gmm_flatness < clustering_flatness:
-                    basa = basa_gmm
-                else:
-                    print(
-                        f"  GMM fallback baseline (flatness={gmm_flatness:.4f}) is not flatter than "
-                        f"the clustering candidate (flatness={clustering_flatness:.4f}); "
-                        "keeping cluster-based normal anchor"
-                    )
                 basel = basa["basel"]
+                WNS = basa["WNS"]
                 preN = basa["preN"]
-                WNS = "unclassified.prediction"
-
+        
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     baseline_cluster_info = get_last_cluster_info()
     elapsed = _record_step(runtime_info, "baseline_estimation", step_start, parallel_info=baseline_cluster_info, extra={"warning": WNS})
