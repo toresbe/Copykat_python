@@ -46,6 +46,7 @@ from copykat_py.baseline import (
     baseline_gmm,
     baseline_synthetic,
     _hierarchical_cluster,
+    _fit_gmm_3component,
     get_last_cluster_info,
     resolve_adaptive_pca_components,
 )
@@ -565,20 +566,60 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             if keep_cluster_anchor:
                 print("  low-data-quality mode: keeping cluster-based normal anchor")
             else:
-                basa = baseline_gmm(
+                basa_cluster = basa
+                basa_gmm = baseline_gmm(
                     norm_mat_smooth,
                     cell_name_list,
                     max_normal=5,
                     mu_cut=0.05,
                     Nfraq_cut=0.99,
-                    RE_before=basa,
+                    RE_before=basa_cluster,
                     n_cores=n_cores,
                     pca_components=selected_pca_components,
                     genome=genome,
                 )
+                # baseline_gmm anchors on a handful of individually-scanned
+                # cells (it stops at the first `max_normal` hits in raw cell
+                # order) and can be far noisier than the clustering candidate
+                # it is meant to replace -- a contaminated anchor set here
+                # silently inverts the final diploid/aneuploid call downstream,
+                # since cluster identity is decided purely by preN overlap.
+                # Only adopt the fallback when its baseline profile is a
+                # tighter, more confidently-neutral fit than the candidate it
+                # would discard; otherwise keep the clustering answer even
+                # though confidence is flagged low.
+                #
+                # Compare the two candidates with the same 3-component GMM
+                # sigma that baseline_norm_cl already uses to rank its own
+                # six clusters against each other, rather than a raw
+                # mean(|basel|) magnitude. Magnitude is fit over genes for
+                # both candidates, so it isn't literally biased by the
+                # cell-count each basel was averaged over -- but a bigger,
+                # more heterogeneous candidate can still land on a smaller
+                # mean(|basel|) via cross-subpopulation cancellation rather
+                # than genuine uniform neutrality, without that cancellation
+                # showing up as a tighter (lower-sigma) GMM fit. Sigma
+                # measures how cleanly the profile separates into
+                # loss/neutral/gain, which is what "confidently neutral"
+                # actually means here, so it is the more consistent yardstick
+                # to reuse for this cross-candidate comparison.
+                def _basel_sigma(basel_vec):
+                    sigma_init = max(0.05, 0.5 * np.std(basel_vec))
+                    return _fit_gmm_3component(basel_vec, sigma_init=sigma_init, max_iter=5000)[2]
+
+                clustering_sigma = float(_basel_sigma(basa_cluster["basel"]))
+                gmm_sigma = float(_basel_sigma(basa_gmm["basel"]))
+                if gmm_sigma < clustering_sigma:
+                    basa = basa_gmm
+                else:
+                    print(
+                        f"  GMM fallback baseline (sigma={gmm_sigma:.4f}) is not tighter/more confidently "
+                        f"neutral than the clustering candidate (sigma={clustering_sigma:.4f}); "
+                        "keeping cluster-based normal anchor"
+                    )
                 basel = basa["basel"]
-                WNS = basa["WNS"]
                 preN = basa["preN"]
+                WNS = "unclassified.prediction"
         
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     baseline_cluster_info = get_last_cluster_info()
