@@ -1,5 +1,3 @@
-# ------------ Under Internal Testing ------------ #
-
 # CopyKAT-Python
 
 CopyKAT-Python is a Python reimplementation of the [CopyKAT](https://github.com/navinlabcode/copykat) workflow for inferring large-scale copy number alterations (CNAs) from single-cell RNA-seq data. It reproduces the core CopyKAT strategy while improving scalability, usability, and integration with modern `AnnData`/`Scanpy` pipelines.
@@ -52,7 +50,7 @@ copykat_anndata --help
 **Singularity container** (recommended for HPC environments):
 
 ```bash
-wget https://github.com/navinlabcode/Copykat_python/releases/download/v1.0.0/copykat_py.sif
+wget https://github.com/navinlabcode/Copykat_python/releases/download/sif/copykat_py.sif
 singularity exec copykat_py.sif copykat-py --help
 ```
 
@@ -292,6 +290,7 @@ CopyKAT-Python results may not be identical to CopyKAT-R due to differences in:
 
 **Disclaimer:** 
 CopyKAT-Python is an independent reimplementation focused on scalability and usability, while faithfully reproducing the core CopyKAT analytical strategy.
+Currently, CopyKat-Python is under internal testing.
 
 - Gene annotation versions
 - Filtering and preprocessing steps
