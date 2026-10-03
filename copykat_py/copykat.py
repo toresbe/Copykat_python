@@ -30,7 +30,7 @@ try:
 except ImportError:
     HAS_PYARROW = False
 
-from copykat_py.annotation import annotate_genes
+from copykat_py.annotation import annotate_gene_rows
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 from copykat_py.baseline import (
     AUTO_PCA_CELL_COUNT_CUTOFF,
@@ -55,23 +55,43 @@ from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
 
 
-def _write_cna_csv(df, path, float_fmt="%.6f", round_floats=True, quote_strings=True):
-    """Write CNA DataFrame as TSV using pyarrow (fast) with 6 d.p. float precision.
+_WRITE_CHUNK_BYTES = 512 << 20
 
-    With ``round_floats=False`` floats keep their shortest round-trip repr, and
-    with ``quote_strings=False`` strings and the header are left unquoted; both
-    together match pandas ``.to_csv(sep="\\t", index=False)`` output.
+
+def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round_floats=True, quote_strings=True):
+    """Write ``lead_df`` columns followed by ``values`` columns as TSV, in row chunks.
+
+    Equivalent to writing ``pd.concat([lead_df, pd.DataFrame(values, columns=value_columns)], axis=1)``
+    but never materializes that frame (or a rounded copy of it); only one chunk
+    of rows is converted at a time. Uses pyarrow (fast) with 6 d.p. float
+    precision. With ``round_floats=False`` floats keep their shortest
+    round-trip repr, and with ``quote_strings=False`` strings and the header
+    are left unquoted; both together match pandas ``.to_csv(sep="\\t", index=False)``
+    output.
 
     Falls back to pandas .to_csv() when pyarrow is not available.
     """
+    lead_df = lead_df.reset_index(drop=True)
+    if round_floats:
+        lead_float_cols = [c for c in lead_df.columns if pd.api.types.is_float_dtype(lead_df[c])]
+        if lead_float_cols:
+            lead_df = lead_df.copy()
+            lead_df[lead_float_cols] = lead_df[lead_float_cols].round(6)
+    value_columns = list(value_columns)
+    n_rows = values.shape[0]
+    row_bytes = max(1, len(value_columns) * values.itemsize)
+    chunk_rows = max(1, _WRITE_CHUNK_BYTES // row_bytes)
+
+    def _value_chunks():
+        for start in range(0, n_rows, chunk_rows):
+            stop = min(start + chunk_rows, n_rows)
+            block = values[start:stop]
+            if round_floats and np.issubdtype(block.dtype, np.floating):
+                block = np.round(block, 6)
+            yield start, stop, block
+
+    write_options = None
     if HAS_PYARROW:
-        out = df
-        if round_floats:
-            anno_cols = [c for c in df.columns if not pd.api.types.is_float_dtype(df[c])]
-            float_cols = [c for c in df.columns if c not in anno_cols]
-            out = df.copy()
-            if float_cols:
-                out[float_cols] = out[float_cols].round(6)
         write_kwargs = {"delimiter": "\t"}
         if not quote_strings:
             write_kwargs["quoting_style"] = "none"
@@ -80,12 +100,68 @@ def _write_cna_csv(df, path, float_fmt="%.6f", round_floats=True, quote_strings=
             write_options = pa_csv.WriteOptions(**write_kwargs)
         except TypeError:
             write_options = None  # pyarrow too old for quoting_style/quoting_header
-        if write_options is not None:
-            table = pa.Table.from_pandas(out, preserve_index=False)
-            with open(path, "wb") as f:
-                pa_csv.write_csv(table, f, write_options=write_options)
-            return
-    df.to_csv(path, sep="\t", index=False, float_format=float_fmt if round_floats else None)
+
+    if write_options is not None:
+        lead_table = pa.Table.from_pandas(lead_df, preserve_index=False).replace_schema_metadata(None)
+        value_type = pa.from_numpy_dtype(values.dtype)
+        schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
+        with open(path, "wb") as f, pa_csv.CSVWriter(f, schema, write_options=write_options) as writer:
+            for start, stop, block in _value_chunks():
+                block = np.asfortranarray(block)  # contiguous columns
+                arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
+                arrays += [pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1])]
+                writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
+        return
+
+    with open(path, "w", newline="") as f:
+        header = True
+        for start, stop, block in _value_chunks():
+            chunk = pd.concat(
+                [lead_df.iloc[start:stop].reset_index(drop=True), pd.DataFrame(block, columns=value_columns)],
+                axis=1,
+            )
+            chunk.to_csv(f, sep="\t", index=False, header=header, float_format=float_fmt if round_floats else None)
+            header = False
+        if header:  # no rows: still write the header
+            pd.concat([lead_df, pd.DataFrame(values, columns=value_columns)], axis=1).to_csv(
+                f, sep="\t", index=False, float_format=float_fmt if round_floats else None
+            )
+
+
+def _frame_with_leading_columns(lead_df, values, value_columns):
+    """DataFrame of ``lead_df`` columns followed by ``values``, without copying ``values``."""
+    frame = pd.DataFrame(values, columns=list(value_columns), copy=False)
+    lead_df = lead_df.reset_index(drop=True)
+    for pos, col in enumerate(lead_df.columns):
+        frame.insert(pos, col, lead_df[col].to_numpy())
+    return frame
+
+
+def _adjust_baseline_inplace(mat, diploid_mask, chunk_elems=1 << 24):
+    """Subtract the diploid baseline and flatten noise around it, overwriting ``mat``.
+
+    Same arithmetic as the original out-of-place version: center on the
+    diploid mean, re-center cells, replace values within 0.25 SD of the
+    diploid profile with the cell mean, and re-center cells again.
+    """
+    mat -= mat[:, diploid_mask].mean(axis=1, keepdims=True)
+    mat -= mat.mean(axis=0, keepdims=True)
+
+    diploid = mat[:, diploid_mask]
+    cf_h = np.std(diploid, axis=1)
+    base = np.mean(diploid, axis=1)
+    del diploid
+    threshold = 0.25 * cf_h
+    cell_means = mat.mean(axis=0, keepdims=True)
+
+    step = max(1, chunk_elems // max(1, mat.shape[1]))
+    for start in range(0, mat.shape[0], step):
+        block = mat[start:start + step]
+        noise_mask = np.abs(block - base[start:start + step, np.newaxis]) <= threshold[start:start + step, np.newaxis]
+        np.copyto(block, np.broadcast_to(cell_means, block.shape), where=noise_mask)
+
+    mat -= mat.mean(axis=0, keepdims=True)
+    return mat
 
 
 def _meta_with_pred(meta_csv, pred_dict, sample_name):
@@ -247,7 +323,12 @@ def _aggregate_duplicate_genes_frame(df):
     return df.groupby(level=0, sort=True).sum()
 
 
-def _prepare_input_dataframe(rawmat, min_gene_per_cell, low_dr):
+def _prepare_input_matrix(rawmat, min_gene_per_cell, low_dr):
+    """Filter cells and genes; returns (matrix, genes, barcodes, original_cell_names, stats).
+
+    The matrix is genes x cells, scipy CSR for sparse dict input (so it is
+    only densified after annotation and cell filtering) or a numpy array.
+    """
     if isinstance(rawmat, dict):
         mat = rawmat.get("matrix")
         genes = np.asarray(rawmat.get("genes"))
@@ -269,10 +350,9 @@ def _prepare_input_dataframe(rawmat, min_gene_per_cell, low_dr):
             detection_rate = np.asarray(mat.getnnz(axis=1)).ravel() / max(mat.shape[1], 1)
             keep_genes = detection_rate > low_dr
             filtered_gene_rows = int((~keep_genes).sum())
-            mat = mat[keep_genes, :]
+            mat = mat[keep_genes, :].tocsr()
             genes = genes[keep_genes]
-            df = pd.DataFrame(mat.toarray(), index=genes.tolist(), columns=barcodes.tolist())
-            return df, original_cell_names, {
+            return mat, genes, barcodes.tolist(), original_cell_names, {
                 "input_type": "sparse_dict",
                 "filtered_cells": filtered_cells,
                 "filtered_gene_rows": filtered_gene_rows,
@@ -293,7 +373,7 @@ def _prepare_input_dataframe(rawmat, min_gene_per_cell, low_dr):
     filtered_gene_rows = int((~keep_genes).sum())
     if keep_genes.sum() >= 1:
         loaded = loaded.loc[keep_genes]
-    return loaded, original_cell_names, {
+    return loaded.to_numpy(), loaded.index, list(loaded.columns), original_cell_names, {
         "input_type": "dense",
         "filtered_cells": filtered_cells,
         "filtered_gene_rows": filtered_gene_rows,
@@ -302,11 +382,19 @@ def _prepare_input_dataframe(rawmat, min_gene_per_cell, low_dr):
 
 def _keep_cells_by_chr_coverage(values, chroms, ngene_chr):
     chrom_codes, unique_chroms = pd.factorize(chroms, sort=False)
-    nonzero = values != 0
-    counts = np.vstack([
-        nonzero[chrom_codes == chrom_idx].sum(axis=0)
-        for chrom_idx in range(len(unique_chroms))
-    ])
+    if sparse.issparse(values):
+        # Per-chromosome nonzero counts as (chromosome indicator) @ (nonzero pattern)
+        indicator = sparse.csr_matrix(
+            (np.ones(len(chrom_codes), dtype=np.int64), (chrom_codes, np.arange(len(chrom_codes)))),
+            shape=(len(unique_chroms), len(chrom_codes)),
+        )
+        counts = (indicator @ (values != 0).astype(np.int64)).toarray()
+    else:
+        nonzero = values != 0
+        counts = np.vstack([
+            nonzero[chrom_codes == chrom_idx].sum(axis=0)
+            for chrom_idx in range(len(unique_chroms))
+        ])
     keep = (counts.sum(axis=0) >= 5) & (counts > 0).all(axis=0) & (counts.min(axis=0) >= ngene_chr)
     return keep
 
@@ -393,7 +481,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     # =========================================================================
     print("step 1: read and filter data ...")
     step_start = time.perf_counter()
-    rawmat, original_cell_names, prep_stats = _prepare_input_dataframe(rawmat, min_gene_per_cell, LOW_DR)
+    rawmat, gene_names, barcodes, original_cell_names, prep_stats = _prepare_input_matrix(rawmat, min_gene_per_cell, LOW_DR)
     input_cell_count = int(len(original_cell_names))
     selected_pca_components = resolve_adaptive_pca_components(
         input_cell_count,
@@ -437,7 +525,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     # =========================================================================
     print("step 2: annotating gene coordinates ...")
     step_start = time.perf_counter()
-    anno_mat = annotate_genes(rawmat, id_type=id_type, genome=genome)
+    anno_mat, anno_rows = annotate_gene_rows(gene_names, id_type=id_type, genome=genome)
     
     # =========================================================================
     # Step 3: Remove cell cycle genes and HLA genes (hg20 only)
@@ -447,7 +535,9 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         cyclegenes = load_cyclegenes()
         hla_genes = anno_mat[symbol_col][anno_mat[symbol_col].str.startswith("HLA-", na=False)].tolist()
         genes_to_remove = set(cyclegenes) | set(hla_genes)
-        anno_mat = anno_mat[~anno_mat[symbol_col].isin(genes_to_remove)].reset_index(drop=True)
+        keep_genes = ~anno_mat[symbol_col].isin(genes_to_remove).to_numpy()
+        anno_mat = anno_mat[keep_genes].reset_index(drop=True)
+        anno_rows = anno_rows[keep_genes]
     else:
         symbol_col = "mgi_symbol"
     elapsed = _record_step(runtime_info, "annotate_genes", step_start, extra={"genes_after_annotation": int(anno_mat.shape[0])})
@@ -456,23 +546,45 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     # Secondary cell filtering: ensure each cell has genes across chromosomes
     anno_cols = ["abspos", "chromosome_name", "start_position", "end_position",
                  "ensembl_gene_id", symbol_col, "band"]
-    cell_cols = [c for c in anno_mat.columns if c not in anno_cols]
     step_start = time.perf_counter()
-    expr_values = anno_mat[cell_cols].to_numpy()
+    expr_values = rawmat[anno_rows]
+    del rawmat
     keep_cells = _keep_cells_by_chr_coverage(expr_values, anno_mat["chromosome_name"].values, ngene_chr)
     if keep_cells.sum() == 0:
         raise ValueError("All cells are filtered out")
+    cell_cols = list(barcodes)
     if not np.all(keep_cells):
         cell_cols = [cell_cols[i] for i in np.where(keep_cells)[0]]
-        anno_mat = pd.concat([anno_mat[anno_cols], anno_mat[cell_cols]], axis=1)
-    rawmat3 = anno_mat[cell_cols].to_numpy(dtype=np.float64, copy=False)
+        expr_values = expr_values[:, keep_cells]
+    # Column-major, as pandas' DataFrame.to_numpy() returned it before: the
+    # per-cell centering below sums down each column, and numpy's summation
+    # order (hence the last bits of every value) depends on the layout. Those
+    # bits can flip near-tie merges in the step-4 clustering on low-confidence
+    # samples, so keep the original layout to reproduce results exactly.
+    if sparse.issparse(expr_values):
+        rawmat3 = expr_values.astype(np.float64).toarray(order="F")
+    else:
+        rawmat3 = np.asfortranarray(expr_values, dtype=np.float64)
+    del expr_values
     _record_step(runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": int(len(cell_cols))})
+
+    # Gene detection rates and post-UP_DR cell coverage only need the raw
+    # counts; compute them now so rawmat3 can be transformed in place.
+    DR2 = (rawmat3 > 0).sum(axis=1) / rawmat3.shape[1]
+    seg_mask = DR2 >= UP_DR
+    keep_cells2 = _keep_cells_by_chr_coverage((rawmat3 != 0)[seg_mask], anno_mat["chromosome_name"].values[seg_mask], ngene_chr)
     
-    # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1))
+    # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1)), in place
     step_start = time.perf_counter()
-    norm_mat = np.log(np.sqrt(rawmat3) + np.sqrt(rawmat3 + 1))
+    sqrt_plus_one = rawmat3 + 1
+    np.sqrt(sqrt_plus_one, out=sqrt_plus_one)
+    norm_mat = np.sqrt(rawmat3, out=rawmat3)
+    del rawmat3
+    norm_mat += sqrt_plus_one
+    del sqrt_plus_one
+    np.log(norm_mat, out=norm_mat)
     # Center each cell
-    norm_mat = norm_mat - norm_mat.mean(axis=0, keepdims=True)
+    norm_mat -= norm_mat.mean(axis=0, keepdims=True)
     _record_step(runtime_info, "freeman_tukey_transform", step_start, extra={"matrix_shape": list(norm_mat.shape)})
     
     print(f"  {norm_mat.shape[0]} genes, {norm_mat.shape[1]} cells after preprocessing")
@@ -483,6 +595,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     print("step 3: smoothing data with DLM ...")
     step_start = time.perf_counter()
     norm_mat_smooth = dlm_smooth(norm_mat, n_cores=n_cores)
+    del norm_mat
     dlm_info = get_last_dlm_smooth_info()
     elapsed = _record_step(runtime_info, "dlm_smoothing", step_start, parallel_info=dlm_info)
     print(
@@ -638,6 +751,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
                 WNS = "unclassified.prediction"
         
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
+    del norm_mat_smooth
     baseline_cluster_info = get_last_cluster_info()
     elapsed = _record_step(runtime_info, "baseline_estimation", step_start, parallel_info=baseline_cluster_info, extra={"warning": WNS})
     print(
@@ -650,13 +764,10 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     # Apply stricter gene filtering for segmentation
     # =========================================================================
     step_start = time.perf_counter()
-    DR2 = (rawmat3 > 0).sum(axis=1) / rawmat3.shape[1]
-    seg_mask = DR2 >= UP_DR
     norm_mat_relat = norm_mat_relat[seg_mask, :]
     anno_mat2 = anno_mat.iloc[seg_mask].reset_index(drop=True)
     
-    # Filter cells again with the reduced gene set
-    keep_cells2 = _keep_cells_by_chr_coverage(anno_mat2[cell_cols].to_numpy(), anno_mat2["chromosome_name"].values, ngene_chr)
+    # Filter cells again with the reduced gene set (keep_cells2 computed before the transform)
     if keep_cells2.sum() == 0:
         raise ValueError("All cells are filtered out after UP_DR filtering")
     if not np.all(keep_cells2):
@@ -708,17 +819,19 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     )
     
     results_com = results["logCNA"]
+    del results, norm_mat_relat
     # Center each cell
-    results_com = results_com - results_com.mean(axis=0, keepdims=True)
+    results_com -= results_com.mean(axis=0, keepdims=True)
     
     # Save gene-by-cell CNA results
-    RNA_copycat = anno_mat2[anno_cols].copy()
-    cna_df = pd.DataFrame(results_com, columns=cell_cols_seg)
-    RNA_copycat = pd.concat([RNA_copycat.reset_index(drop=True), cna_df], axis=1)
+    gene_anno = anno_mat2[anno_cols].reset_index(drop=True)
     
     step_start = time.perf_counter()
-    _write_cna_csv(RNA_copycat, f"{sample_name}CNA_raw_results_gene_by_cell.txt", round_floats=False, quote_strings=False)
-    _record_step(runtime_info, "write_gene_level_output", step_start, extra={"rows": int(RNA_copycat.shape[0]), "cols": int(RNA_copycat.shape[1])})
+    _write_cna_csv(
+        f"{sample_name}CNA_raw_results_gene_by_cell.txt", gene_anno, results_com, cell_cols_seg,
+        round_floats=False, quote_strings=False,
+    )
+    _record_step(runtime_info, "write_gene_level_output", step_start, extra={"rows": int(results_com.shape[0]), "cols": int(len(anno_cols) + results_com.shape[1])})
     
     # =========================================================================
     # Step 6: Convert to genomic bins (hg20 only)
@@ -726,7 +839,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     if genome == "hg20":
         print("step 6: convert to genomic bins ...")
         step_start = time.perf_counter()
-        Aj = convert_to_bins(RNA_copycat, genome=genome, n_cores=n_cores)
+        Aj = convert_to_bins(gene_anno, genome=genome, n_cores=n_cores, values=results_com, cell_names=cell_cols_seg)
+        del results_com
         convert_info = get_last_convert_bins_info()
         elapsed = _record_step(runtime_info, "convert_to_bins", step_start, parallel_info=convert_info)
         print(
@@ -734,15 +848,18 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             f"(parallel={convert_info['parallel']}, cores={convert_info['effective_cores']})"
         )
         
-        uber_mat_adj = Aj["RNA_adj"].iloc[:, 3:].values  # skip chrom, chrompos, abspos
+        # uber_mat_adj is adjusted in place below, so drop the DataFrame view of it
+        uber_mat_adj = Aj["RNA_adj_values"]
+        bin_coords = Aj["RNA_adj"][["chrom", "chrompos", "abspos"]].copy()
         chrom_info = Aj["DNA_adj"]["chrom"].values
+        del Aj
         
         print("step 7: adjust baseline ...")
         step_start = time.perf_counter()
         step7_reduce = uber_mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
         
         if cell_line == "yes":
-            mat_adj = uber_mat_adj.copy()
+            mat_adj = uber_mat_adj
         else:
             # First hierarchical clustering for initial prediction
             labels, Z = _hierarchical_cluster(
@@ -776,19 +893,10 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             # Baseline adjustment: subtract diploid mean, then denoise
             diploid_mask = com_pred == "diploid"
             if diploid_mask.sum() > 0:
-                results_com_rat = uber_mat_adj - uber_mat_adj[:, diploid_mask].mean(axis=1, keepdims=True)
-                results_com_rat = results_com_rat - results_com_rat.mean(axis=0, keepdims=True)
-                
-                results_com_rat_norm = results_com_rat[:, diploid_mask]
-                cf_h = np.std(results_com_rat_norm, axis=1)
-                base = np.mean(results_com_rat_norm, axis=1)
-                noise_mask = np.abs(results_com_rat - base[:, np.newaxis]) <= (0.25 * cf_h)[:, np.newaxis]
-                cell_means = results_com_rat.mean(axis=0, keepdims=True)
-                adj_results = np.where(noise_mask, cell_means, results_com_rat)
-                
-                mat_adj = adj_results - adj_results.mean(axis=0, keepdims=True)
+                mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
             else:
-                mat_adj = uber_mat_adj.copy()
+                mat_adj = uber_mat_adj
+        del uber_mat_adj
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(runtime_info, "baseline_adjustment", step_start, parallel_info=cluster_info, extra={"warning": WNS})
         print(
@@ -871,9 +979,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
         
         # Save CNA results
-        cna_out = Aj["RNA_adj"].copy()
-        cna_out.iloc[:, 3:] = mat_adj
-        _write_cna_csv(cna_out, f"{sample_name}CNA_results.txt")
+        cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
+        _write_cna_csv(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg)
         
         # Save clustering
         clustering_data = {"labels": labels_final if cell_line != "yes" else labels,
@@ -928,7 +1035,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         # =========================================================================
         if output_seg:
             print("  generating seg files for IGV viewer")
-            _write_seg_file(Aj["RNA_adj"], mat_adj, cell_cols_seg, sample_name)
+            _write_seg_file(bin_coords, mat_adj, cell_cols_seg, sample_name)
         runtime_info["total_seconds"] = round(time.perf_counter() - start_time, 4)
         with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as f:
             json.dump(runtime_info, f, indent=2)
@@ -951,7 +1058,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     
     else:
         # mm10: no bin conversion, use gene-level results directly
-        uber_mat_adj = results_com.copy()
+        uber_mat_adj = results_com  # adjusted in place below; results_com is not used again
+        del results_com
         chrom_info = anno_mat2["chromosome_name"].values
         
         print("step 7: adjust baseline ...")
@@ -991,17 +1099,10 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         # Baseline adjustment
         diploid_mask = com_pred == "diploid"
         if diploid_mask.sum() > 0:
-            results_com_rat = uber_mat_adj - uber_mat_adj[:, diploid_mask].mean(axis=1, keepdims=True)
-            results_com_rat = results_com_rat - results_com_rat.mean(axis=0, keepdims=True)
-            results_com_rat_norm = results_com_rat[:, diploid_mask]
-            cf_h = np.std(results_com_rat_norm, axis=1)
-            base = np.mean(results_com_rat_norm, axis=1)
-            noise_mask = np.abs(results_com_rat - base[:, np.newaxis]) <= (0.25 * cf_h)[:, np.newaxis]
-            cell_means = results_com_rat.mean(axis=0, keepdims=True)
-            adj_results = np.where(noise_mask, cell_means, results_com_rat)
-            mat_adj = adj_results - adj_results.mean(axis=0, keepdims=True)
+            mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
         else:
-            mat_adj = uber_mat_adj.copy()
+            mat_adj = uber_mat_adj
+        del uber_mat_adj
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(runtime_info, "baseline_adjustment", step_start, parallel_info=cluster_info, extra={"warning": WNS})
         print(
@@ -1063,9 +1164,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         })
         res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
         
-        cna_df = pd.DataFrame(mat_adj, columns=cell_cols_seg)
-        cna_out = pd.concat([anno_mat2[anno_cols].reset_index(drop=True), cna_df], axis=1)
-        _write_cna_csv(cna_out, f"{sample_name}CNA_results.txt")
+        cna_out = _frame_with_leading_columns(gene_anno, mat_adj, cell_cols_seg)
+        _write_cna_csv(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg)
         
         clustering_data = {"labels": labels_final, "Z": Z_final}
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:

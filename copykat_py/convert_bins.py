@@ -24,7 +24,7 @@ def get_last_convert_bins_info():
     return dict(_LAST_PAR_INFO)
 
 
-def convert_to_bins(RNA_mat, genome="hg20", n_cores=1):
+def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=None):
     """Convert gene-by-cell CNA results to 220KB genomic bins.
     
     Parameters
@@ -36,12 +36,19 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1):
         "hg20" (bins conversion only supported for hg20).
     n_cores : int
         Number of parallel workers.
+    values : np.ndarray or None
+        Optional (n_genes, n_cells) CNA values. When given, ``RNA_mat`` only
+        needs the annotation columns and ``cell_names`` names the columns of
+        ``values``; this avoids copying the cell columns out of a DataFrame.
+    cell_names : list or None
+        Cell names for ``values``.
     
     Returns
     -------
     dict with keys:
         'DNA_adj': pd.DataFrame - DNA bin coordinates
         'RNA_adj': pd.DataFrame - CNA values at genomic bins (chrom, chrompos, abspos, cell1, ...)
+        'RNA_adj_values': np.ndarray - the (n_bins, n_cells) values backing 'RNA_adj'
     """
     if genome != "hg20":
         # For mm10, return gene-level results (no bin conversion, same as R)
@@ -67,8 +74,12 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1):
     # Cell data columns (after the 7 annotation columns)
     anno_cols = ["abspos", "chromosome_name", "start_position", "end_position",
                  "ensembl_gene_id", symbol_col, "band"]
-    cell_cols = [c for c in RNA_mat.columns if c not in anno_cols]
-    RNA_values = RNA_mat[cell_cols].values.astype(np.float32, copy=False)  # shape: (n_genes, n_cells)
+    if values is not None:
+        cell_cols = list(cell_names)
+        RNA_values = np.asarray(values, dtype=np.float32)  # shape: (n_genes, n_cells)
+    else:
+        cell_cols = [c for c in RNA_mat.columns if c not in anno_cols]
+        RNA_values = RNA_mat[cell_cols].values.astype(np.float32, copy=False)  # shape: (n_genes, n_cells)
     gene_symbols = RNA_mat[symbol_col].values
     
     # Map genes in RNA_mat to indices for fast lookup.
@@ -113,11 +124,17 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1):
             if row_indices:
                 bin_gene_indices[bin_i] = row_indices
 
+    # Column-major so each cell's profile is contiguous, matching the layout
+    # the downstream baseline adjustment has always operated on.
+    n_cells = len(cell_cols)
+    RNA_adj = np.zeros((len(DNA), n_cells), order="F")
+    valid_mask = np.zeros(len(DNA), dtype=bool)
+
     def _process_bin(i):
         row_idx = bin_gene_indices[i]
         if row_idx:
-            return np.median(RNA_values[row_idx, :], axis=0)
-        return None
+            RNA_adj[i, :] = np.median(RNA_values[row_idx, :], axis=0)
+            valid_mask[i] = True
     
     n_bins = len(DNA)
     max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
@@ -132,25 +149,15 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1):
     })
 
     def _process_chunk(start, end):
-        return [_process_bin(i) for i in range(start, end)]
+        for i in range(start, end):
+            _process_bin(i)
 
-    # Threads share RNA_values; a process pool would pickle the whole matrix
-    # into every task through the closure.
+    # Threads share RNA_values and write disjoint rows of RNA_adj; a process
+    # pool would pickle the whole matrix into every task through the closure.
     ranges = [(s, min(s + chunk_size, n_bins)) for s in range(0, n_bins, chunk_size)]
-    chunk_results = Parallel(n_jobs=n_jobs, prefer="threads")(
+    Parallel(n_jobs=n_jobs, prefer="threads")(
         delayed(_process_chunk)(s, e) for s, e in ranges
     )
-    results = [r for chunk in chunk_results for r in chunk]
-    
-    # Separate bins with data from empty bins
-    n_cells = len(cell_cols)
-    RNA_adj = np.zeros((len(DNA), n_cells))
-    valid_mask = np.zeros(len(DNA), dtype=bool)
-    
-    for i, r in enumerate(results):
-        if r is not None:
-            RNA_adj[i, :] = r
-            valid_mask[i] = True
     
     # Fill empty bins with nearest valid bin
     valid_indices = np.where(valid_mask)[0]
@@ -161,11 +168,13 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1):
             nearest = valid_indices[np.argmin(distances)]
             RNA_adj[ei, :] = RNA_adj[nearest, :]
     
-    # Build output DataFrame
-    RNA_adj_df = pd.DataFrame(RNA_adj, columns=cell_cols)
-    RNA_adj_df = pd.concat([DNA[["chrom", "chrompos", "abspos"]].reset_index(drop=True), RNA_adj_df], axis=1)
+    # Build output DataFrame on top of RNA_adj without copying it
+    RNA_adj_df = pd.DataFrame(RNA_adj, columns=cell_cols, copy=False)
+    for pos, col in enumerate(["chrom", "chrompos", "abspos"]):
+        RNA_adj_df.insert(pos, col, DNA[col].to_numpy())
     
     return {
         "DNA_adj": DNA,
         "RNA_adj": RNA_adj_df,
+        "RNA_adj_values": RNA_adj,
     }
