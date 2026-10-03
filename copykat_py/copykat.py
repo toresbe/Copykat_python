@@ -12,9 +12,12 @@ Faithfully reimplements the R copykat() function workflow:
 9. Output files + heatmap
 """
 
+import io
 import time
 import os
 import json
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 from scipy.io import mmread
@@ -46,6 +49,7 @@ from copykat_py.baseline import (
     baseline_gmm,
     baseline_synthetic,
     _hierarchical_cluster,
+    _effective_threads,
     _fit_gmm_3component,
     get_last_cluster_info,
     resolve_adaptive_pca_components,
@@ -56,9 +60,16 @@ from copykat_py.data_loader import load_cyclegenes
 
 
 _WRITE_CHUNK_BYTES = 512 << 20
+# Parallel formatting keeps several chunks (plus their rounded copies and
+# text) in flight, so it gets a smaller total budget. Below the minimum rows
+# per chunk, per-column pyarrow overhead outweighs the gain from parallelism,
+# so very wide matrices stay serial.
+_PARALLEL_WRITE_BYTES = 128 << 20
+_PARALLEL_WRITE_MIN_ROWS = 128
 
 
-def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round_floats=True, quote_strings=True):
+def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round_floats=True, quote_strings=True,
+                   n_cores=1):
     """Write ``lead_df`` columns followed by ``values`` columns as TSV, in row chunks.
 
     Equivalent to writing ``pd.concat([lead_df, pd.DataFrame(values, columns=value_columns)], axis=1)``
@@ -68,6 +79,10 @@ def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round
     round-trip repr, and with ``quote_strings=False`` strings and the header
     are left unquoted; both together match pandas ``.to_csv(sep="\\t", index=False)``
     output.
+
+    With ``n_cores > 1`` (pyarrow only), up to ``n_cores`` chunks are formatted
+    concurrently and written in order, producing the same bytes; the total
+    in-flight chunk size stays within ``_PARALLEL_WRITE_BYTES``.
 
     Falls back to pandas .to_csv() when pyarrow is not available.
     """
@@ -105,12 +120,45 @@ def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round
         lead_table = pa.Table.from_pandas(lead_df, preserve_index=False).replace_schema_metadata(None)
         value_type = pa.from_numpy_dtype(values.dtype)
         schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
-        with open(path, "wb") as f, pa_csv.CSVWriter(f, schema, write_options=write_options) as writer:
-            for start, stop, block in _value_chunks():
-                block = np.asfortranarray(block)  # contiguous columns
-                arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
-                arrays += [pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1])]
-                writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
+
+        def _chunk_table(start, stop, block):
+            block = np.asfortranarray(block)  # contiguous columns
+            arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
+            arrays += [pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1])]
+            return pa.Table.from_arrays(arrays, schema=schema)
+
+        n_threads = _effective_threads(n_cores)
+        parallel_rows = _PARALLEL_WRITE_BYTES // (n_threads * row_bytes)
+        if n_threads > 1 and parallel_rows >= _PARALLEL_WRITE_MIN_ROWS and n_rows > parallel_rows:
+            chunk_rows = parallel_rows
+
+            def _format(start):
+                stop = min(start + chunk_rows, n_rows)
+                block = values[start:stop]
+                if round_floats and np.issubdtype(block.dtype, np.floating):
+                    block = np.round(block, 6)
+                buf = io.BytesIO()
+                options = pa_csv.WriteOptions(include_header=(start == 0), **write_kwargs)
+                pa_csv.write_csv(_chunk_table(start, stop, block), buf, write_options=options)
+                return buf.getvalue()
+
+            pending = deque()
+            with open(path, "wb") as f, ThreadPoolExecutor(n_threads) as executor:
+                for start in range(0, n_rows, chunk_rows):
+                    pending.append(executor.submit(_format, start))
+                    if len(pending) >= n_threads:
+                        f.write(pending.popleft().result())
+                while pending:
+                    f.write(pending.popleft().result())
+        else:
+            with open(path, "wb") as f, pa_csv.CSVWriter(f, schema, write_options=write_options) as writer:
+                for start, stop, block in _value_chunks():
+                    writer.write_table(_chunk_table(start, stop, block))
+        # Arrow's allocator keeps freed chunk buffers cached; hand them back
+        # so they don't inflate the peak of the steps that follow.
+        release_unused = getattr(pa.default_memory_pool(), "release_unused", None)
+        if release_unused is not None:
+            release_unused()
         return
 
     with open(path, "w", newline="") as f:
@@ -626,7 +674,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         preN = None
     elif isinstance(norm_cell_names, list) and len(norm_cell_names) > 1:
         # Known normal cells provided
-        known_normal_mask = np.array([c in norm_cell_names for c in cell_name_list])
+        norm_cell_set = set(norm_cell_names)
+        known_normal_mask = np.array([c in norm_cell_set for c in cell_name_list], dtype=bool)
         NNN = known_normal_mask.sum()
         print(f"  {NNN} known normal cells found in dataset")
         
@@ -829,7 +878,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     step_start = time.perf_counter()
     _write_cna_csv(
         f"{sample_name}CNA_raw_results_gene_by_cell.txt", gene_anno, results_com, cell_cols_seg,
-        round_floats=False, quote_strings=False,
+        round_floats=False, quote_strings=False, n_cores=n_cores,
     )
     _record_step(runtime_info, "write_gene_level_output", step_start, extra={"rows": int(results_com.shape[0]), "cols": int(len(anno_cols) + results_com.shape[1])})
     
@@ -980,7 +1029,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         
         # Save CNA results
         cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
-        _write_cna_csv(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg)
+        _write_cna_csv(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg, n_cores=n_cores)
         
         # Save clustering
         clustering_data = {"labels": labels_final if cell_line != "yes" else labels,
@@ -1165,7 +1214,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
         
         cna_out = _frame_with_leading_columns(gene_anno, mat_adj, cell_cols_seg)
-        _write_cna_csv(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg)
+        _write_cna_csv(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg, n_cores=n_cores)
         
         clustering_data = {"labels": labels_final, "Z": Z_final}
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:

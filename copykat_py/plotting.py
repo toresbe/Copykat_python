@@ -13,7 +13,7 @@ from matplotlib.gridspec import GridSpec
 from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
 from scipy.spatial.distance import pdist
 
-from copykat_py.baseline import _ward_linkage
+from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
 
 # Try to use fastcluster for faster linkage computation on large datasets
 try:
@@ -145,7 +145,9 @@ def _safe_linkage(mat, distance="euclidean", method="ward", n_cores=1, max_cells
     n_cells = mat.shape[1]
 
     if HAS_FASTCLUSTER and distance == "euclidean" and method.startswith("ward"):
-        return _ward_linkage(mat.T)[0]
+        data = mat.T
+        collapsed = _collapse_repeated_features(data)
+        return _ward_linkage(data if collapsed is None else collapsed, n_cores=n_cores)[0]
 
     dist = _compute_distance(mat, distance, n_cores)
     if HAS_FASTCLUSTER:

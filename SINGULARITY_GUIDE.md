@@ -224,3 +224,5 @@ singularity run \
 **Blank / missing plots** — `MPLBACKEND=Agg` is set in the container so matplotlib writes files without a display. If you still see Qt/Tk errors, add `--env MPLBACKEND=Agg` to your `singularity run` call.
 
 **Out of memory** — reduce `--n-cores` or request more RAM in your scheduler job; the DLM smoothing step scales with `n_cells × n_genes`.
+
+**Clustering memory** — exact Ward clustering uses a precomputed distance matrix (fast) when it fits in `COPYKAT_WARD_PDIST_MAX_GB` (default `8`, about 44,700 cells) and a slower low-memory method above that. The matrix needs `n_cells² × 4` bytes (30,000 cells: 3.6 GB; 60,000: 14.4 GB). Raise the limit on large-memory nodes for much faster runs on big samples, e.g. `export SINGULARITYENV_COPYKAT_WARD_PDIST_MAX_GB=24`, or lower it if jobs run out of memory. Results are the same either way.

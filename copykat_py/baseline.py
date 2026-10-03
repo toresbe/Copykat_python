@@ -3,8 +3,10 @@
 Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R package.
 """
 
+import os
 import numpy as np
-from scipy.spatial.distance import pdist, squareform
+from concurrent.futures import ThreadPoolExecutor
+from scipy.spatial.distance import cdist, pdist, squareform
 from scipy.cluster.hierarchy import linkage, fcluster
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
@@ -28,11 +30,18 @@ _LAST_CLUSTER_INFO = {
 }
 
 FULL_CLUSTER_MAX_CELLS = 2000
-# Up to this many cells, Ward linkage runs on a precomputed condensed distance
-# matrix (n*(n-1)/2 doubles, ~1.6 GB at 20,000 cells), which is several times
-# faster than fastcluster.linkage_vector; above it, linkage_vector avoids the
-# quadratic memory.
-WARD_PDIST_MAX_CELLS = 20000
+# Ward linkage runs on a precomputed condensed distance matrix (n*(n-1)/2
+# doubles) when it fits in this many GB, which is roughly 10x faster than
+# fastcluster.linkage_vector at 30,000 cells; above it, linkage_vector avoids
+# the quadratic memory. 8 GB covers ~44,700 cells (20,000 cells: 1.6 GB;
+# 30,000: 3.6 GB). Override with the COPYKAT_WARD_PDIST_MAX_GB environment
+# variable.
+WARD_PDIST_MAX_GB = 8.0
+
+
+def _ward_pdist_fits(n_samples):
+    budget_gb = float(os.getenv("COPYKAT_WARD_PDIST_MAX_GB", WARD_PDIST_MAX_GB))
+    return n_samples * (n_samples - 1) / 2 * 8 <= budget_gb * 1e9
 AUTO_PCA_CELL_COUNT_CUTOFF = 50000
 AUTO_PCA_SMALL_SAMPLE = 256
 AUTO_PCA_LARGE_SAMPLE = 128
@@ -93,7 +102,67 @@ def _reduce_for_clustering(data, max_components=64):
     return reducer.fit_transform(data), n_components
 
 
-def _ward_linkage(data):
+def _effective_threads(n_cores):
+    max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
+    return max(1, min(int(n_cores), max_cores))
+
+
+def _pdist_euclidean(data, n_cores=1, block_bytes=64 << 20):
+    """Condensed Euclidean distances, bit-identical to ``pdist(data, "euclidean")``.
+
+    With several cores, row blocks are computed with ``cdist`` in threads
+    (scipy releases the GIL); each distance is still computed by the same
+    kernel from the same two rows, so the result is unchanged.
+    """
+    n_samples = data.shape[0]
+    n_threads = _effective_threads(n_cores)
+    if n_threads == 1 or n_samples < 1000:
+        return pdist(data, metric="euclidean")
+
+    data = np.ascontiguousarray(data, dtype=np.float64)
+    dist = np.empty(n_samples * (n_samples - 1) // 2)
+    rows_per_block = max(1, block_bytes // (8 * n_samples))
+    # Condensed offset of row i (its distances to j > i)
+    row_start = np.concatenate([[0], np.cumsum(np.arange(n_samples - 1, 0, -1))])
+
+    def _block(lo):
+        hi = min(lo + rows_per_block, n_samples - 1)
+        block = cdist(data[lo:hi], data[lo:], metric="euclidean")
+        for i in range(lo, hi):
+            dist[row_start[i]:row_start[i] + n_samples - 1 - i] = block[i - lo, i - lo + 1:]
+
+    with ThreadPoolExecutor(n_threads) as executor:
+        list(executor.map(_block, range(0, n_samples - 1, rows_per_block)))
+    return dist
+
+
+def _collapse_repeated_features(data, block_rows=4096):
+    """Merge runs of identical adjacent feature columns into one column each.
+
+    Each kept column is scaled by sqrt(run length), so Euclidean distances
+    between rows are mathematically unchanged:
+    sum_b (x_b - y_b)^2 == sum_runs len * (x_run - y_run)^2.
+    Segmented CNA profiles repeat each value across all bins of a segment, so
+    this typically shrinks ~12k bins to roughly the number of segments.
+
+    Returns the collapsed matrix, or None when no columns repeat.
+    """
+    n_samples, n_features = data.shape
+    if n_features < 2:
+        return None
+    changes = np.zeros(n_features - 1, dtype=bool)
+    for lo in range(0, n_samples, block_rows):
+        block = data[lo:lo + block_rows]
+        changes |= np.any(block[:, 1:] != block[:, :-1], axis=0)
+    starts = np.concatenate([[0], np.flatnonzero(changes) + 1])
+    if len(starts) == n_features:
+        return None
+    run_lengths = np.diff(np.concatenate([starts, [n_features]]))
+    # float64 like pdist's internal arithmetic, so float32 inputs lose nothing extra
+    return data[:, starts].astype(np.float64) * np.sqrt(run_lengths)
+
+
+def _ward_linkage(data, n_cores=1):
     """Exact Ward linkage of the rows of ``data`` (Euclidean), fastest engine that fits.
 
     Returns the linkage matrix and the engine name. Both fastcluster engines
@@ -101,11 +170,11 @@ def _ward_linkage(data):
     """
     n_samples = data.shape[0]
     if HAS_FASTCLUSTER:
-        if n_samples <= WARD_PDIST_MAX_CELLS:
-            dist = pdist(data, metric="euclidean")
+        if _ward_pdist_fits(n_samples):
+            dist = _pdist_euclidean(data, n_cores=n_cores)
             return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
         return fastcluster.linkage_vector(data, method="ward", metric="euclidean"), "fastcluster.linkage_vector"
-    return linkage(pdist(data, metric="euclidean"), method="ward"), "scipy.linkage"
+    return linkage(_pdist_euclidean(data, n_cores=n_cores), method="ward"), "scipy.linkage"
 
 
 def _hierarchical_cluster(
@@ -122,8 +191,11 @@ def _hierarchical_cluster(
 
     For Ward + Euclidean clustering, use exact fastcluster Ward linkage for
     both small and large inputs (see ``_ward_linkage``: a precomputed distance
-    matrix up to ``WARD_PDIST_MAX_CELLS`` cells, ``linkage_vector`` above).
-    The ``max_cells`` argument is kept for compatibility but is not used.
+    matrix within ``WARD_PDIST_MAX_GB``, ``linkage_vector`` above).
+    Runs of identical adjacent feature columns (bins inside one CNA segment)
+    are collapsed first, which leaves distances unchanged; when the collapsed
+    width fits within the PCA component cap, that PCA would be lossless and is
+    skipped. The ``max_cells`` argument is kept for compatibility but is not used.
     
     Parameters
     ----------
@@ -152,7 +224,7 @@ def _hierarchical_cluster(
     linkage_matrix : np.ndarray or None
         Linkage matrix if available.
     """
-    n_samples = data.shape[0]
+    n_samples, n_features = data.shape
     _LAST_CLUSTER_INFO.update({
         "requested_cores": int(n_cores),
         "effective_cores": 1,
@@ -163,8 +235,14 @@ def _hierarchical_cluster(
     
     if not reduce:
         if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
-            Z, engine = _ward_linkage(data)
-            _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
+            collapsed = _collapse_repeated_features(data)
+            if collapsed is not None:
+                Z, engine = _ward_linkage(collapsed, n_cores=n_cores)
+                _LAST_CLUSTER_INFO["engine"] = f"full_matrix+dedup{collapsed.shape[1]}+{engine}"
+            else:
+                Z, engine = _ward_linkage(data, n_cores=n_cores)
+                _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
+            _LAST_CLUSTER_INFO["effective_cores"] = _effective_threads(n_cores)
         else:
             dist = pdist(data, metric=metric)
             if HAS_FASTCLUSTER:
@@ -178,8 +256,20 @@ def _hierarchical_cluster(
 
     # Keep Ward + Euclidean on the vectorized full/PCA matrix path.
     if metric == "euclidean" and method.startswith("ward"):
+        _LAST_CLUSTER_INFO["effective_cores"] = _effective_threads(n_cores)
+        collapsed = _collapse_repeated_features(data)
+        if collapsed is not None:
+            # Mirror _reduce_for_clustering's decision: PCA applies only for
+            # large, wide inputs and keeps at most this many components.
+            pca_components_used = min(pca_components, n_samples - 1, n_features)
+            pca_applies = n_samples > FULL_CLUSTER_MAX_CELLS and n_features > 256 and pca_components_used >= 8
+            if not pca_applies or collapsed.shape[1] <= pca_components_used:
+                Z, engine = _ward_linkage(collapsed, n_cores=n_cores)
+                _LAST_CLUSTER_INFO["engine"] = f"dedup{collapsed.shape[1]}+{engine}"
+                labels = fcluster(Z, t=n_clusters, criterion="maxclust")
+                return labels, Z
         cluster_data, n_components = _reduce_for_clustering(data, max_components=pca_components)
-        Z, engine = _ward_linkage(cluster_data)
+        Z, engine = _ward_linkage(cluster_data, n_cores=n_cores)
         _LAST_CLUSTER_INFO["engine"] = engine
         if n_components is not None:
             _LAST_CLUSTER_INFO["approximate"] = True
