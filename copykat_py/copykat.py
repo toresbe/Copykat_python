@@ -55,22 +55,37 @@ from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
 
 
-def _write_cna_csv(df, path, float_fmt="%.6f"):
+def _write_cna_csv(df, path, float_fmt="%.6f", round_floats=True, quote_strings=True):
     """Write CNA DataFrame as TSV using pyarrow (fast) with 6 d.p. float precision.
+
+    With ``round_floats=False`` floats keep their shortest round-trip repr, and
+    with ``quote_strings=False`` strings and the header are left unquoted; both
+    together match pandas ``.to_csv(sep="\\t", index=False)`` output.
 
     Falls back to pandas .to_csv() when pyarrow is not available.
     """
     if HAS_PYARROW:
-        anno_cols = [c for c in df.columns if not pd.api.types.is_float_dtype(df[c])]
-        float_cols = [c for c in df.columns if c not in anno_cols]
-        rounded = df.copy()
-        if float_cols:
-            rounded[float_cols] = rounded[float_cols].round(6)
-        table = pa.Table.from_pandas(rounded, preserve_index=False)
-        with open(path, "wb") as f:
-            pa_csv.write_csv(table, f, write_options=pa_csv.WriteOptions(delimiter="\t"))
-    else:
-        df.to_csv(path, sep="\t", index=False, float_format=float_fmt)
+        out = df
+        if round_floats:
+            anno_cols = [c for c in df.columns if not pd.api.types.is_float_dtype(df[c])]
+            float_cols = [c for c in df.columns if c not in anno_cols]
+            out = df.copy()
+            if float_cols:
+                out[float_cols] = out[float_cols].round(6)
+        write_kwargs = {"delimiter": "\t"}
+        if not quote_strings:
+            write_kwargs["quoting_style"] = "none"
+            write_kwargs["quoting_header"] = "none"
+        try:
+            write_options = pa_csv.WriteOptions(**write_kwargs)
+        except TypeError:
+            write_options = None  # pyarrow too old for quoting_style/quoting_header
+        if write_options is not None:
+            table = pa.Table.from_pandas(out, preserve_index=False)
+            with open(path, "wb") as f:
+                pa_csv.write_csv(table, f, write_options=write_options)
+            return
+    df.to_csv(path, sep="\t", index=False, float_format=float_fmt if round_floats else None)
 
 
 def _meta_with_pred(meta_csv, pred_dict, sample_name):
@@ -577,6 +592,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
                     n_cores=n_cores,
                     pca_components=selected_pca_components,
                     genome=genome,
+                    cluster=False,  # only basel/preN are used; CL stays from clustering
                 )
                 # baseline_gmm anchors on a handful of individually-scanned
                 # cells (it stops at the first `max_normal` hits in raw cell
@@ -701,7 +717,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     RNA_copycat = pd.concat([RNA_copycat.reset_index(drop=True), cna_df], axis=1)
     
     step_start = time.perf_counter()
-    RNA_copycat.to_csv(f"{sample_name}CNA_raw_results_gene_by_cell.txt", sep="\t", index=False)
+    _write_cna_csv(RNA_copycat, f"{sample_name}CNA_raw_results_gene_by_cell.txt", round_floats=False, quote_strings=False)
     _record_step(runtime_info, "write_gene_level_output", step_start, extra={"rows": int(RNA_copycat.shape[0]), "cols": int(RNA_copycat.shape[1])})
     
     # =========================================================================

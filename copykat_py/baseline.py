@@ -310,17 +310,19 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     SSD = []
     unique_clusters = sorted(set(labels))
     
-    def fit_gmm_for_cluster(cl_id):
-        """Fit GMM for a single cluster (for parallel execution)."""
-        mask = labels == cl_id
-        cluster_consensus = np.median(norm_mat_smooth[:, mask], axis=1)
+    def fit_gmm_for_consensus(cluster_consensus):
+        """Fit GMM for a single cluster consensus (for parallel execution)."""
         sx = max(0.05, 0.5 * np.std(cluster_consensus))
         means, weights, sigma = _fit_gmm_3component(cluster_consensus, sigma_init=sx, max_iter=5000)
         return sigma, np.std(cluster_consensus)
     
-    # Parallel GMM fitting
-    results = Parallel(n_jobs=n_cores)(
-        delayed(fit_gmm_for_cluster)(cl_id) for cl_id in unique_clusters
+    # Parallel GMM fitting. Consensus profiles are computed up front and fitted
+    # in threads so workers never receive a copy of the full matrix.
+    consensus_profiles = [
+        np.median(norm_mat_smooth[:, labels == cl_id], axis=1) for cl_id in unique_clusters
+    ]
+    results = Parallel(n_jobs=n_cores, prefer="threads")(
+        delayed(fit_gmm_for_consensus)(consensus) for consensus in consensus_profiles
     )
     
     SDM = np.array([r[0] for r in results])
@@ -390,7 +392,8 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
 
 
 def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
-                  RE_before=None, n_cores=1, pca_components=None, genome="hg20"):
+                  RE_before=None, n_cores=1, pca_components=None, genome="hg20",
+                  cluster=True):
     """Identify diploid cells one-by-one using GMM (fallback when clustering is uncertain).
     
     Mirrors baseline.GMM.R.
@@ -411,17 +414,16 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
         Previous baseline result to fall back on.
     n_cores : int
         Number of cores.
+    cluster : bool
+        Whether to hierarchically cluster all cells for the returned 'cl'.
+        Callers that only need 'basel'/'preN' can pass False to skip it, in
+        which case 'cl' is None (unless RE_before is returned).
     
     Returns
     -------
     dict with keys: 'basel', 'WNS', 'preN', 'cl'
     """
     n_genes, n_cells = CNA_mat.shape
-    selected_pca_components = resolve_adaptive_pca_components(
-        n_cells,
-        pca_components=pca_components,
-        genome=genome,
-    )
     N_normal = []
     N_normal_labels = []
     
@@ -453,18 +455,22 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
             break
     
     # Hierarchical clustering for the full dataset
-    data_t = CNA_mat.T
-    step4_reduce = n_cells > FULL_CLUSTER_MAX_CELLS
-    km = 6
-    labels, Z = _hierarchical_cluster(
-        data_t,
-        km,
-        method="ward",
-        metric="euclidean",
-        n_cores=n_cores,
-        reduce=step4_reduce,
-        pca_components=selected_pca_components,
-    )
+    labels = None
+    if cluster and (len(N_normal) > 2 or RE_before is None):
+        selected_pca_components = resolve_adaptive_pca_components(
+            n_cells,
+            pca_components=pca_components,
+            genome=genome,
+        )
+        labels, Z = _hierarchical_cluster(
+            CNA_mat.T,
+            6,
+            method="ward",
+            metric="euclidean",
+            n_cores=n_cores,
+            reduce=n_cells > FULL_CLUSTER_MAX_CELLS,
+            pca_components=selected_pca_components,
+        )
     
     if len(N_normal) > 2:
         WNS = ""
