@@ -3,6 +3,7 @@
 Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R package.
 """
 
+import os
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
 from scipy.cluster.hierarchy import linkage, fcluster
@@ -28,6 +29,20 @@ _LAST_CLUSTER_INFO = {
 }
 
 FULL_CLUSTER_MAX_CELLS = 2000
+# Ward linkage runs on a precomputed condensed distance matrix (n*(n-1)/2
+# doubles) when the memory it needs fits in this many GB; above it,
+# fastcluster.linkage_vector avoids the quadratic memory but is 4-6x slower.
+# fastcluster.linkage copies the matrix even with preserve_input=False
+# (fastcluster 1.3.0), so the peak is two matrices, n*(n-1)*8 bytes: 8 GB
+# covers ~31,600 cells (20,000 cells: 3.2 GB; 30,000: 7.2 GB). Override with
+# the COPYKAT_WARD_PDIST_MAX_GB environment variable.
+WARD_PDIST_MAX_GB = 8.0
+
+
+def _ward_pdist_fits(n_samples):
+    budget_gb = float(os.getenv("COPYKAT_WARD_PDIST_MAX_GB", WARD_PDIST_MAX_GB))
+    # the condensed matrix plus fastcluster.linkage's working copy of it
+    return n_samples * (n_samples - 1) * 8 <= budget_gb * 1e9
 AUTO_PCA_CELL_COUNT_CUTOFF = 50000
 AUTO_PCA_SMALL_SAMPLE = 256
 AUTO_PCA_LARGE_SAMPLE = 128
@@ -88,6 +103,21 @@ def _reduce_for_clustering(data, max_components=64):
     return reducer.fit_transform(data), n_components
 
 
+def _ward_linkage(data):
+    """Exact Ward linkage of the rows of ``data`` (Euclidean), fastest engine that fits.
+
+    Returns the linkage matrix and the engine name. Both fastcluster engines
+    produce the same merge tree; merge heights can differ in the last bits.
+    """
+    n_samples = data.shape[0]
+    if HAS_FASTCLUSTER:
+        if _ward_pdist_fits(n_samples):
+            dist = pdist(data, metric="euclidean")
+            return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
+        return fastcluster.linkage_vector(data, method="ward", metric="euclidean"), "fastcluster.linkage_vector"
+    return linkage(pdist(data, metric="euclidean"), method="ward"), "scipy.linkage"
+
+
 def _hierarchical_cluster(
     data,
     n_clusters,
@@ -100,11 +130,10 @@ def _hierarchical_cluster(
 ):
     """Hierarchical clustering with fastcluster-first execution.
 
-    For Ward + Euclidean clustering, prefer ``fastcluster.linkage_vector``
-    regardless of cell count so the main pipeline stays on the same exact
-    hierarchical engine for both small and large inputs. The ``max_cells``
-    argument is kept for compatibility but is no longer used to switch away
-    from fastcluster.
+    For Ward + Euclidean clustering, use exact fastcluster Ward linkage for
+    both small and large inputs (see ``_ward_linkage``: a precomputed distance
+    matrix within ``WARD_PDIST_MAX_GB``, ``linkage_vector`` above).
+    The ``max_cells`` argument is kept for compatibility but is not used.
     
     Parameters
     ----------
@@ -144,8 +173,8 @@ def _hierarchical_cluster(
     
     if not reduce:
         if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
-            Z = fastcluster.linkage_vector(data, method="ward", metric="euclidean")
-            _LAST_CLUSTER_INFO["engine"] = "full_matrix+fastcluster.linkage_vector"
+            Z, engine = _ward_linkage(data)
+            _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
         else:
             dist = pdist(data, metric=metric)
             if HAS_FASTCLUSTER:
@@ -160,16 +189,10 @@ def _hierarchical_cluster(
     # Keep Ward + Euclidean on the vectorized full/PCA matrix path.
     if metric == "euclidean" and method.startswith("ward"):
         cluster_data, n_components = _reduce_for_clustering(data, max_components=pca_components)
-        if HAS_FASTCLUSTER:
-            Z = fastcluster.linkage_vector(cluster_data, method="ward", metric="euclidean")
-            _LAST_CLUSTER_INFO["engine"] = "fastcluster.linkage_vector"
-        else:
-            dist = pdist(cluster_data, metric="euclidean")
-            Z = linkage(dist, method=method)
-            _LAST_CLUSTER_INFO["engine"] = "scipy.linkage"
+        Z, engine = _ward_linkage(cluster_data)
+        _LAST_CLUSTER_INFO["engine"] = engine
         if n_components is not None:
             _LAST_CLUSTER_INFO["approximate"] = True
-            engine = "fastcluster.linkage_vector" if HAS_FASTCLUSTER else "scipy.linkage"
             _LAST_CLUSTER_INFO["engine"] = f"pca{n_components}+{engine}"
         labels = fcluster(Z, t=n_clusters, criterion="maxclust")
         return labels, Z
