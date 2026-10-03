@@ -59,7 +59,7 @@ def _dlm_gains(n, dV=0.16, dW=0.001):
 _BLOCK_CELLS = 64
 
 
-@njit(parallel=True, cache=True)
+@njit(parallel=True)
 def _dlm_smooth_blocks(y, K, B, out):
     """Apply the shared filter/smoother gains to every column of ``y``.
 
