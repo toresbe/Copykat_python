@@ -28,6 +28,11 @@ _LAST_CLUSTER_INFO = {
 }
 
 FULL_CLUSTER_MAX_CELLS = 2000
+# Up to this many cells, Ward linkage runs on a precomputed condensed distance
+# matrix (n*(n-1)/2 doubles, ~1.6 GB at 20,000 cells), which is several times
+# faster than fastcluster.linkage_vector; above it, linkage_vector avoids the
+# quadratic memory.
+WARD_PDIST_MAX_CELLS = 20000
 AUTO_PCA_CELL_COUNT_CUTOFF = 50000
 AUTO_PCA_SMALL_SAMPLE = 256
 AUTO_PCA_LARGE_SAMPLE = 128
@@ -88,6 +93,21 @@ def _reduce_for_clustering(data, max_components=64):
     return reducer.fit_transform(data), n_components
 
 
+def _ward_linkage(data):
+    """Exact Ward linkage of the rows of ``data`` (Euclidean), fastest engine that fits.
+
+    Returns the linkage matrix and the engine name. Both fastcluster engines
+    produce the same merge tree; merge heights can differ in the last bits.
+    """
+    n_samples = data.shape[0]
+    if HAS_FASTCLUSTER:
+        if n_samples <= WARD_PDIST_MAX_CELLS:
+            dist = pdist(data, metric="euclidean")
+            return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
+        return fastcluster.linkage_vector(data, method="ward", metric="euclidean"), "fastcluster.linkage_vector"
+    return linkage(pdist(data, metric="euclidean"), method="ward"), "scipy.linkage"
+
+
 def _hierarchical_cluster(
     data,
     n_clusters,
@@ -100,11 +120,10 @@ def _hierarchical_cluster(
 ):
     """Hierarchical clustering with fastcluster-first execution.
 
-    For Ward + Euclidean clustering, prefer ``fastcluster.linkage_vector``
-    regardless of cell count so the main pipeline stays on the same exact
-    hierarchical engine for both small and large inputs. The ``max_cells``
-    argument is kept for compatibility but is no longer used to switch away
-    from fastcluster.
+    For Ward + Euclidean clustering, use exact fastcluster Ward linkage for
+    both small and large inputs (see ``_ward_linkage``: a precomputed distance
+    matrix up to ``WARD_PDIST_MAX_CELLS`` cells, ``linkage_vector`` above).
+    The ``max_cells`` argument is kept for compatibility but is not used.
     
     Parameters
     ----------
@@ -144,8 +163,8 @@ def _hierarchical_cluster(
     
     if not reduce:
         if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
-            Z = fastcluster.linkage_vector(data, method="ward", metric="euclidean")
-            _LAST_CLUSTER_INFO["engine"] = "full_matrix+fastcluster.linkage_vector"
+            Z, engine = _ward_linkage(data)
+            _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
         else:
             dist = pdist(data, metric=metric)
             if HAS_FASTCLUSTER:
@@ -160,16 +179,10 @@ def _hierarchical_cluster(
     # Keep Ward + Euclidean on the vectorized full/PCA matrix path.
     if metric == "euclidean" and method.startswith("ward"):
         cluster_data, n_components = _reduce_for_clustering(data, max_components=pca_components)
-        if HAS_FASTCLUSTER:
-            Z = fastcluster.linkage_vector(cluster_data, method="ward", metric="euclidean")
-            _LAST_CLUSTER_INFO["engine"] = "fastcluster.linkage_vector"
-        else:
-            dist = pdist(cluster_data, metric="euclidean")
-            Z = linkage(dist, method=method)
-            _LAST_CLUSTER_INFO["engine"] = "scipy.linkage"
+        Z, engine = _ward_linkage(cluster_data)
+        _LAST_CLUSTER_INFO["engine"] = engine
         if n_components is not None:
             _LAST_CLUSTER_INFO["approximate"] = True
-            engine = "fastcluster.linkage_vector" if HAS_FASTCLUSTER else "scipy.linkage"
             _LAST_CLUSTER_INFO["engine"] = f"pca{n_components}+{engine}"
         labels = fcluster(Z, t=n_clusters, criterion="maxclust")
         return labels, Z
