@@ -4,11 +4,13 @@ Mirrors convert.all.bins.hg20.R from the R package.
 Maps gene-level copy number values into 220KB variable genomic bins.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
-import os
 from joblib import Parallel, delayed
-from copykat_py.data_loader import load_full_anno, load_dna_bins
+
+from copykat_py.data_loader import load_dna_bins, load_full_anno
 
 _LAST_PAR_INFO = {
     "step": "convert_to_bins",

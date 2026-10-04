@@ -3,19 +3,19 @@
 import sys
 import time
 from contextlib import contextmanager
-import numpy as np
+
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import fastcluster
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.gridspec import GridSpec
-from scipy.cluster.hierarchy import dendrogram, fcluster
+from scipy.cluster.hierarchy import dendrogram
 from scipy.spatial.distance import pdist
-
-import fastcluster
-from sklearn.cluster import MiniBatchKMeans, KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.decomposition import TruncatedSVD
 from threadpoolctl import threadpool_limits
 
@@ -26,9 +26,11 @@ from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
 def _thread_limited_numeric_ops(max_threads=1):
     """Limit BLAS/OpenMP thread fan-out during plotting-time clustering."""
     try:
-        with threadpool_limits(limits=max_threads, user_api="blas"):
-            with threadpool_limits(limits=max_threads, user_api="openmp"):
-                yield
+        with (
+            threadpool_limits(limits=max_threads, user_api="blas"),
+            threadpool_limits(limits=max_threads, user_api="openmp"),
+        ):
+            yield
     except ValueError:
         with threadpool_limits(limits=max_threads):
             yield
@@ -53,7 +55,6 @@ def _build_plot_embedding(mat, random_state=1234):
 
 def _simple_cell_order(mat, predictions=None):
     """Cheap fallback ordering used when clustering is unavailable or unsafe."""
-    n_cells = mat.shape[1]
     if predictions is not None:
         pred_list = list(predictions.values())
         pred_rank = np.array(
@@ -105,8 +106,6 @@ def _safe_linkage(mat, distance="euclidean", method="ward", n_cores=1, max_cells
     regardless of cell count so plotting matches the main clustering path.
     The ``max_cells`` argument is retained for compatibility.
     """
-    n_cells = mat.shape[1]
-
     if distance == "euclidean" and method.startswith("ward"):
         data = mat.T
         collapsed = _collapse_repeated_features(data)
@@ -209,7 +208,7 @@ def _draw_cluster_dendrogram(ax, centroid_linkage, cluster_sizes):
 
     segments = []
     max_height = 0.0
-    for icoord, dcoord in zip(dendro["icoord"], dendro["dcoord"]):
+    for icoord, dcoord in zip(dendro["icoord"], dendro["dcoord"], strict=True):
         ys = _map_y(np.asarray(icoord, dtype=float))
         xs = np.asarray(dcoord, dtype=float)
         max_height = max(max_height, float(xs.max()))
@@ -293,7 +292,7 @@ def _add_chr_labels(ax, chrom_info):
     # x in data coords, y in axes fraction — place labels just above the bar
     trans = ax.get_xaxis_transform()
     ax.set_xlim(-0.5, n_bins - 0.5)
-    for cid, s, e in zip(chr_ids, starts, ends):
+    for cid, s, e in zip(chr_ids, starts, ends, strict=True):
         mid = (s + e - 1) / 2.0
         ax.text(
             mid,
@@ -352,7 +351,7 @@ def plot_heatmap(
         output_path = f"{sample_name}_copykat_heatmap.png"
 
     plot_start = time.perf_counter()
-    n_bins, n_cells = mat.shape
+    n_cells = mat.shape[1]
 
     # Determine cell ordering strategy based on dataset size
     # Strategy 1: Standard hierarchical clustering (up to 20k cells)
@@ -474,10 +473,10 @@ def plot_heatmap(
     # --- Dendrogram (left) ------------------------------------------------
     ax_dendro = fig.add_subplot(gs[1, col_dendro])
     if Z is not None and not skip_dendrogram:
-        print(f"  Step 10b: Rendering dendrogram...")
+        print("  Step 10b: Rendering dendrogram...")
         _safe_dendrogram_with_recursion_management(Z, ax_dendro, n_cells)
     elif Z_summary is not None and cluster_sizes is not None:
-        print(f"  Step 10b: Rendering cluster dendrogram...")
+        print("  Step 10b: Rendering cluster dendrogram...")
         _draw_cluster_dendrogram(ax_dendro, Z_summary, cluster_sizes)
     else:
         msg = "fast order\n(no dendrogram)" if skip_dendrogram else "dendrogram\nskipped"

@@ -13,23 +13,22 @@ Faithfully reimplements the R copykat() function workflow:
 """
 
 import io
-import time
-import os
 import json
+import os
+import pickle
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pandas as pd
-from scipy.io import mmread
-from scipy import sparse
-from scipy.spatial.distance import pdist
-from scipy.cluster.hierarchy import linkage, fcluster
-import pickle
 import pyarrow as pa
 import pyarrow.csv as pa_csv
+from scipy import sparse
+from scipy.cluster.hierarchy import fcluster
+from scipy.io import mmread
 
 from copykat_py.annotation import annotate_gene_rows
-from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 from copykat_py.baseline import (
     AUTO_PCA_CELL_COUNT_CUTOFF,
     AUTO_PCA_LARGE_SAMPLE,
@@ -40,19 +39,19 @@ from copykat_py.baseline import (
     MOUSE_AUTO_PCA_MEDIUM_SAMPLE,
     MOUSE_AUTO_PCA_SMALL_CELL_COUNT_CUTOFF,
     MOUSE_AUTO_PCA_SMALL_SAMPLE,
-    baseline_norm_cl,
-    baseline_gmm,
-    baseline_synthetic,
-    _hierarchical_cluster,
     _effective_threads,
     _fit_gmm_3component,
+    _hierarchical_cluster,
+    baseline_gmm,
+    baseline_norm_cl,
+    baseline_synthetic,
     get_last_cluster_info,
     resolve_adaptive_pca_components,
 )
-from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
 from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
-
+from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
+from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 
 _WRITE_CHUNK_BYTES = 512 << 20
 # Parallel formatting keeps several chunks (plus their rounded copies and
@@ -511,7 +510,9 @@ def copykat(
         'hclustering': linkage matrix or cluster labels
     """
     start_time = time.perf_counter()
-    np.random.seed(1234)
+    # Global seed kept for reproducibility with earlier versions; moving to a
+    # Generator would change any random stream that depends on it.
+    np.random.seed(1234)  # noqa: NPY002
     sample_name = f"{sam_name}_copykat_"
     runtime_info = {
         "sample_name": sam_name,
@@ -530,7 +531,7 @@ def copykat(
     rawmat, gene_names, barcodes, original_cell_names, prep_stats = _prepare_input_matrix(
         rawmat, min_gene_per_cell, LOW_DR
     )
-    input_cell_count = int(len(original_cell_names))
+    input_cell_count = len(original_cell_names)
     selected_pca_components = resolve_adaptive_pca_components(
         input_cell_count,
         pca_components=pca_components,
@@ -558,7 +559,8 @@ def copykat(
     )
     if prep_stats["filtered_cells"] > 0:
         print(
-            f"  filtered out {prep_stats['filtered_cells']} cells with <= {min_gene_per_cell} genes; remaining {rawmat.shape[1]} cells"
+            f"  filtered out {prep_stats['filtered_cells']} cells with <= {min_gene_per_cell} genes; "
+            f"remaining {rawmat.shape[1]} cells"
         )
     print(f"  {rawmat.shape[0]} genes past LOW_DR filtering")
 
@@ -617,9 +619,7 @@ def copykat(
     else:
         rawmat3 = np.asfortranarray(expr_values, dtype=np.float64)
     del expr_values
-    _record_step(
-        runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": int(len(cell_cols))}
-    )
+    _record_step(runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": len(cell_cols)})
 
     # Gene detection rates and post-UP_DR cell coverage only need the raw
     # counts; compute them now so rawmat3 can be transformed in place.
@@ -839,7 +839,7 @@ def copykat(
         runtime_info,
         "cell_filter_pre_segmentation",
         step_start,
-        extra={"cells_after_filter": int(len(cell_cols_seg)), "genes_after_filter": int(norm_mat_relat.shape[0])},
+        extra={"cells_after_filter": len(cell_cols_seg), "genes_after_filter": int(norm_mat_relat.shape[0])},
     )
 
     # Ensure CL alignment
@@ -880,11 +880,12 @@ def copykat(
         "segmentation",
         step_start,
         parallel_info=seg_info,
-        extra={"breakpoints": int(len(results["breaks"]))},
+        extra={"breakpoints": len(results["breaks"])},
     )
     print(
         f"  segmentation runtime: {_format_seconds(elapsed)} "
-        f"(parallel={seg_info['parallel']}, cores={seg_info['effective_cores']}, engine={seg_info.get('engine', 'n/a')})"
+        f"(parallel={seg_info['parallel']}, cores={seg_info['effective_cores']}, "
+        f"engine={seg_info.get('engine', 'n/a')})"
     )
 
     results_com = results["logCNA"]
@@ -982,7 +983,8 @@ def copykat(
         )
         print(
             f"  step 7 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, engine={cluster_info.get('engine', 'n/a')})"
+            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
+            f"engine={cluster_info.get('engine', 'n/a')})"
         )
 
         # =========================================================================
@@ -1038,7 +1040,8 @@ def copykat(
         )
         print(
             f"  step 8 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, engine={cluster_info.get('engine', 'n/a')})"
+            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
+            f"engine={cluster_info.get('engine', 'n/a')})"
         )
 
         # =========================================================================
@@ -1202,7 +1205,8 @@ def copykat(
         )
         print(
             f"  step 7 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, engine={cluster_info.get('engine', 'n/a')})"
+            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
+            f"engine={cluster_info.get('engine', 'n/a')})"
         )
 
         # Final prediction
@@ -1244,7 +1248,8 @@ def copykat(
         )
         print(
             f"  step 8 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, engine={cluster_info.get('engine', 'n/a')})"
+            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
+            f"engine={cluster_info.get('engine', 'n/a')})"
         )
 
         # Save
@@ -1273,7 +1278,7 @@ def copykat(
             runtime_info,
             "write_final_outputs",
             step_start,
-            extra={"bins": int(cna_out.shape[0]), "cells": int(len(cell_cols_seg))},
+            extra={"bins": int(cna_out.shape[0]), "cells": len(cell_cols_seg)},
         )
         print(f"  step 9 runtime: {_format_seconds(elapsed)}")
 
@@ -1352,7 +1357,7 @@ def _write_seg_file(RNA_adj_df, mat_adj, cell_cols, sample_name):
             starts = np.concatenate([[0], changes])
             ends = np.concatenate([changes, [len(sub_vals)]])
 
-            for s, e in zip(starts, ends):
+            for s, e in zip(starts, ends, strict=True):
                 rows.append(
                     {
                         "ID": cell,

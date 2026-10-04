@@ -2,9 +2,9 @@
 
 import argparse
 import os
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -382,7 +382,7 @@ def _run_copykat_analysis(
     from copykat_py.copykat import copykat
 
     log_path = output_dir / "copykat_run.log"
-    log_handle = open(log_path, "a", encoding="utf-8")
+    log_handle = open(log_path, "a", encoding="utf-8")  # noqa: SIM115 - closed in the `finally` below
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     sys.stdout = TeeStream(sys.stdout, log_handle)

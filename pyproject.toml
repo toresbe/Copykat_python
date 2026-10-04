@@ -56,6 +56,11 @@ select = [
     "NPY",     # numpy-specific rules
     "RUF",     # ruff-specific rules
 ]
+ignore = [
+    "SIM108",  # if/else blocks are often clearer than the ternary it suggests
+]
+# Docstrings and messages use "×" for matrix dimensions ("cells × genes").
+allowed-confusables = ["×"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["copykat_py"]

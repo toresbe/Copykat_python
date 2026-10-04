@@ -7,9 +7,10 @@ Implements a first-order polynomial DLM (local level model):
 The Kalman smoother produces smoothed state estimates.
 """
 
-import numpy as np
 import os
+
 import numba
+import numpy as np
 from numba import njit, prange
 
 _LAST_PAR_INFO = {

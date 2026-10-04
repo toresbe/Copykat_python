@@ -4,14 +4,15 @@ Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R 
 """
 
 import os
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor
-from scipy.spatial.distance import cdist, pdist, squareform
-from scipy.cluster.hierarchy import fcluster
-from sklearn.metrics import silhouette_score
-from sklearn.decomposition import PCA
-from joblib import Parallel, delayed
+
 import fastcluster
+import numpy as np
+from joblib import Parallel, delayed
+from scipy.cluster.hierarchy import fcluster
+from scipy.spatial.distance import cdist, pdist
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
 
 _LAST_CLUSTER_INFO = {
     "step": "hierarchical_cluster",
@@ -400,25 +401,21 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
             break
 
     # GMM on each cluster consensus - parallelized for speed
-    SDM = []
-    SSD = []
     unique_clusters = sorted(set(labels))
 
-    def fit_gmm_for_consensus(cluster_consensus):
-        """Fit GMM for a single cluster consensus (for parallel execution)."""
+    def fit_gmm_sigma(cluster_consensus):
+        """Fit GMM for a single cluster consensus and return its sigma (for parallel execution)."""
         sx = max(0.05, 0.5 * np.std(cluster_consensus))
-        means, weights, sigma = _fit_gmm_3component(cluster_consensus, sigma_init=sx, max_iter=5000)
-        return sigma, np.std(cluster_consensus)
+        return _fit_gmm_3component(cluster_consensus, sigma_init=sx, max_iter=5000)[2]
 
     # Parallel GMM fitting. Consensus profiles are computed up front and fitted
     # in threads so workers never receive a copy of the full matrix.
     consensus_profiles = [np.median(norm_mat_smooth[:, labels == cl_id], axis=1) for cl_id in unique_clusters]
-    results = Parallel(n_jobs=n_cores, prefer="threads")(
-        delayed(fit_gmm_for_consensus)(consensus) for consensus in consensus_profiles
+    SDM = np.array(
+        Parallel(n_jobs=n_cores, prefer="threads")(
+            delayed(fit_gmm_sigma)(consensus) for consensus in consensus_profiles
+        )
     )
-
-    SDM = np.array([r[0] for r in results])
-    SSD = np.array([r[1] for r in results])
 
     # Silhouette width for 2-cluster separation
     if Z is not None:
@@ -525,7 +522,7 @@ def baseline_gmm(
     -------
     dict with keys: 'basel', 'WNS', 'preN', 'cl'
     """
-    n_genes, n_cells = CNA_mat.shape
+    n_cells = CNA_mat.shape[1]
     N_normal = []
     N_normal_labels = []
 
@@ -533,7 +530,7 @@ def baseline_gmm(
         sam = CNA_mat[:, m]
         sg = max(0.05, 0.5 * np.std(sam))
 
-        means, weights, sigma = _fit_gmm_3component(sam, sigma_init=sg, max_iter=500)
+        means, weights, _sigma = _fit_gmm_3component(sam, sigma_init=sg, max_iter=500)
 
         # Check if any component mean is near zero (neutral)
         neutral_mask = np.abs(means) <= mu_cut
@@ -564,7 +561,7 @@ def baseline_gmm(
             pca_components=pca_components,
             genome=genome,
         )
-        labels, Z = _hierarchical_cluster(
+        labels, _ = _hierarchical_cluster(
             CNA_mat.T,
             6,
             method="ward",
@@ -607,7 +604,7 @@ def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, g
     -------
     dict with keys: 'expr_relat', 'cl'
     """
-    n_genes, n_cells = norm_mat.shape
+    n_cells = norm_mat.shape[1]
     selected_pca_components = resolve_adaptive_pca_components(
         n_cells,
         pca_components=pca_components,
