@@ -83,6 +83,7 @@ module = [
     "copykat_py.convert_bins",
     "copykat_py.baseline",
     "copykat_py.copykat",
+    "copykat_py.plotting",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

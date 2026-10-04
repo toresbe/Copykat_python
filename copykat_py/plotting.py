@@ -1,16 +1,22 @@
 """Heatmap plotting for CNA results, mirroring heatmap.3.R visualizations."""
 
+import re
 import sys
 import time
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from typing import Any, TypedDict, cast
 
 import matplotlib
 import numpy as np
+import numpy.typing as npt
+import pandas as pd
 
 matplotlib.use("Agg")
 import fastcluster
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from matplotlib.gridspec import GridSpec
 from scipy.cluster.hierarchy import dendrogram
@@ -19,11 +25,12 @@ from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.decomposition import TruncatedSVD
 from threadpoolctl import threadpool_limits
 
+from copykat_py._types import FloatArray, IntArray, LinkageMatrix
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
 
 
 @contextmanager
-def _thread_limited_numeric_ops(max_threads=1):
+def _thread_limited_numeric_ops(max_threads: int = 1) -> Iterator[None]:
     """Limit BLAS/OpenMP thread fan-out during plotting-time clustering."""
     try:
         with (
@@ -36,7 +43,7 @@ def _thread_limited_numeric_ops(max_threads=1):
             yield
 
 
-def _build_plot_embedding(mat, random_state=1234):
+def _build_plot_embedding(mat: FloatArray, random_state: int = 1234) -> npt.NDArray[np.float32]:
     """Return a float32 embedding optimized for large-cell heatmap ordering."""
     data = np.asarray(mat.T, dtype=np.float32, order="C")
     n_cells, n_features = data.shape
@@ -53,7 +60,7 @@ def _build_plot_embedding(mat, random_state=1234):
     return np.asarray(reduced, dtype=np.float32, order="C")
 
 
-def _simple_cell_order(mat, predictions=None):
+def _simple_cell_order(mat: FloatArray, predictions: Mapping[str, str] | None = None) -> IntArray:
     """Cheap fallback ordering used when clustering is unavailable or unsafe."""
     if predictions is not None:
         pred_list = list(predictions.values())
@@ -68,7 +75,7 @@ def _simple_cell_order(mat, predictions=None):
     return np.argsort(cna_magnitude)[::-1]
 
 
-def _compute_distance(mat, distance="euclidean", n_cores=1):
+def _compute_distance(mat: FloatArray, distance: str = "euclidean", n_cores: int = 1) -> FloatArray:
     """Compute distance matrix for cells.
 
     Parameters
@@ -96,10 +103,12 @@ def _compute_distance(mat, distance="euclidean", n_cores=1):
         corr = np.clip(corr, -1, 1)
         return pdist(1 - corr)
     else:
-        return pdist(mat.T, metric=distance)
+        return pdist(mat.T, metric=cast(Any, distance))  # validated by scipy at runtime
 
 
-def _safe_linkage(mat, distance="euclidean", method="ward", n_cores=1, max_cells=65536):
+def _safe_linkage(
+    mat: FloatArray, distance: str = "euclidean", method: str = "ward", n_cores: int = 1, max_cells: int = 65536
+) -> LinkageMatrix:
     """Compute linkage with fastcluster-first execution.
 
     For Ward + Euclidean linkage, keep the full matrix on fastcluster
@@ -115,7 +124,15 @@ def _safe_linkage(mat, distance="euclidean", method="ward", n_cores=1, max_cells
     return fastcluster.linkage(dist, method=method)
 
 
-def _clustered_block_layout(mat, n_clusters=128, random_state=1234):
+class _BlockLayout(TypedDict):
+    cell_order: IntArray
+    labels: IntArray
+    cluster_order: list[int]
+    cluster_sizes: IntArray
+    centroid_linkage: LinkageMatrix | None
+
+
+def _clustered_block_layout(mat: FloatArray, n_clusters: int = 128, random_state: int = 1234) -> _BlockLayout:
     """Fast cell ordering plus a cluster-level dendrogram layout."""
     n_cells = mat.shape[1]
     if n_cells <= 1:
@@ -186,11 +203,11 @@ def _clustered_block_layout(mat, n_clusters=128, random_state=1234):
     }
 
 
-def _clustered_block_order(mat, n_clusters=128, random_state=1234):
+def _clustered_block_order(mat: FloatArray, n_clusters: int = 128, random_state: int = 1234) -> IntArray:
     return _clustered_block_layout(mat, n_clusters=n_clusters, random_state=random_state)["cell_order"]
 
 
-def _draw_cluster_dendrogram(ax, centroid_linkage, cluster_sizes):
+def _draw_cluster_dendrogram(ax: Axes, centroid_linkage: LinkageMatrix | None, cluster_sizes: IntArray) -> None:
     """Render a cluster-level dendrogram aligned to block heights in the heatmap."""
     if centroid_linkage is None or len(cluster_sizes) <= 1:
         ax.text(0.5, 0.5, "cluster\ndendrogram\nunavailable", ha="center", va="center", fontsize=8)
@@ -204,7 +221,7 @@ def _draw_cluster_dendrogram(ax, centroid_linkage, cluster_sizes):
 
     src_centers = np.array([5.0 + 10.0 * i for i in range(len(cluster_sizes))], dtype=float)
 
-    def _map_y(yvals):
+    def _map_y(yvals: FloatArray) -> FloatArray:
         return np.interp(yvals, src_centers, block_centers)
 
     segments = []
@@ -230,7 +247,7 @@ def _draw_cluster_dendrogram(ax, centroid_linkage, cluster_sizes):
     ax.set_yticks([])
 
 
-def _safe_dendrogram_with_recursion_management(Z, ax, n_cells):
+def _safe_dendrogram_with_recursion_management(Z: LinkageMatrix, ax: Axes, n_cells: int) -> None:
     """Safely plot dendrogram with increased recursion limit.
 
     Parameters
@@ -267,7 +284,7 @@ def _safe_dendrogram_with_recursion_management(Z, ax, n_cells):
         sys.setrecursionlimit(old_limit)
 
 
-def _add_chr_labels(ax, chrom_info):
+def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any]) -> None:
     """Place chromosome name labels just above the chromosome-bar axes.
 
     Uses a mixed-coordinate transform (x in data coordinates, y in axes
@@ -283,7 +300,7 @@ def _add_chr_labels(ax, chrom_info):
     ends = np.concatenate([starts[1:], [n_bins]])
     chr_ids = chrom_arr[starts]
 
-    def _chr_label(c):
+    def _chr_label(c: object) -> str:
         try:
             v = int(float(str(c)))
             return {23: "X", 24: "Y"}.get(v, str(v))
@@ -309,16 +326,16 @@ def _add_chr_labels(ax, chrom_info):
 
 
 def plot_heatmap(
-    mat,
-    chrom_info,
-    predictions=None,
-    sample_name="",
-    distance="euclidean",
-    n_cores=1,
-    WNS1="",
-    WNS="",
-    output_path=None,
-):
+    mat: FloatArray,
+    chrom_info: npt.NDArray[Any],
+    predictions: Mapping[str, str] | None = None,
+    sample_name: str = "",
+    distance: str = "euclidean",
+    n_cores: int = 1,
+    WNS1: str = "",
+    WNS: str = "",
+    output_path: str | None = None,
+) -> None:
     """Plot CNA heatmap with hierarchical clustering dendrogram.
 
     Layout mirrors R copykat heatmap.3:
@@ -496,7 +513,7 @@ def plot_heatmap(
         spine.set_visible(False)
 
     # --- Prediction sidebar (outside heatmap area, on the right) ----------
-    if has_pred:
+    if predictions is not None:
         ax_pred = fig.add_subplot(gs[1, col_pred], sharey=ax_heat)
         pred_colors = np.zeros(n_cells)
         pred_list = list(predictions.values())
@@ -564,9 +581,8 @@ def plot_heatmap(
 # ---------------------------------------------------------------------------
 
 
-def _natural_sort_key(s):
+def _natural_sort_key(s: object) -> list[int | str]:
     """Sort key that orders numeric substrings numerically (e.g. "10" after "9")."""
-    import re
 
     return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", str(s))]
 
@@ -582,7 +598,7 @@ _COPYKAT_PRED_COLORS = {
 }
 
 
-def _assign_cat_colors(values):
+def _assign_cat_colors(values: Iterable[object]) -> dict[str, str]:
     """Return {category: hex_color} for every unique value in *values*.
 
     CopyKAT prediction columns (containing "aneuploid" or "diploid" values)
@@ -609,13 +625,12 @@ def _assign_cat_colors(values):
     return cmap
 
 
-def _detect_csv_header(path):
+def _detect_csv_header(path: str) -> bool:
     """Return True if the CSV first row looks like column names.
 
     Heuristic: if the second field of row 0 can be parsed as a float it is
     data (no header); otherwise the row is a header.
     """
-    import pandas as pd
 
     row0 = pd.read_csv(path, header=None, nrows=1).iloc[0]
     if len(row0) > 1:
@@ -627,13 +642,12 @@ def _detect_csv_header(path):
     return True
 
 
-def _read_meta_csv(path):
+def _read_meta_csv(path: str) -> pd.DataFrame:
     """Read annotation CSV; first column is used as the cell-name index.
 
     Auto-detects whether the file has a header row.  All column names are
     cast to strings so they are safe for dict keys and plot labels.
     """
-    import pandas as pd
 
     header = 0 if _detect_csv_header(path) else None
     df = pd.read_csv(path, header=header)
@@ -643,7 +657,7 @@ def _read_meta_csv(path):
     return df
 
 
-def _order_group(mat_grp, distance="euclidean", n_cores=1):
+def _order_group(mat_grp: FloatArray, distance: str = "euclidean", n_cores: int = 1) -> IntArray:
     """Return a cell-ordering index array for one CNA sub-matrix.
 
     Uses full Ward linkage for groups ≤ 3 000 cells; K-means block ordering
@@ -673,16 +687,16 @@ def _order_group(mat_grp, distance="euclidean", n_cores=1):
 
 
 def plot_heatmap_annotated(
-    mat,
-    cell_names,
-    chrom_info,
-    meta_csv,
-    row_split_col=None,
-    sample_name="",
-    distance="euclidean",
-    n_cores=1,
-    output_path=None,
-):
+    mat: FloatArray,
+    cell_names: Sequence[str],
+    chrom_info: npt.NDArray[Any],
+    meta_csv: str,
+    row_split_col: str | None = None,
+    sample_name: str = "",
+    distance: str = "euclidean",
+    n_cores: int = 1,
+    output_path: str | None = None,
+) -> None:
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
     Reads a CSV where the first column is the cell name and every remaining
@@ -740,7 +754,7 @@ def plot_heatmap_annotated(
     meta_aligned = meta_df.reindex(cell_names_str).fillna("unknown")
 
     # ── 2. Per-group ordering: sort groups, then cluster cells within ─────
-    split_vals = meta_aligned[row_split_col].astype(str).values
+    split_vals = meta_aligned[row_split_col].astype(str).to_numpy()
     group_names = sorted(np.unique(split_vals), key=_natural_sort_key)
 
     ordered_indices = []

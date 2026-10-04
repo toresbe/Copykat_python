@@ -230,7 +230,7 @@ def _meta_with_pred(meta_csv: str, pred_dict: dict[str, str] | None, sample_name
 
 def _run_plot_heatmap(
     mat_adj: FloatArray,
-    chrom_info: npt.ArrayLike,
+    chrom_info: npt.NDArray[Any],
     predictions: dict[str, str] | None,
     sample_name: str,
     distance: str,

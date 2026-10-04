@@ -439,7 +439,7 @@ def _run_copykat_analysis(
             cna_df = result["CNAmat"]
             ann_mat = cna_df.iloc[:, 3:].values.astype(np.float32)
             ann_cell_names = cna_df.columns[3:].tolist()
-            ann_chrom_info = cna_df.iloc[:, 0].values
+            ann_chrom_info = cna_df.iloc[:, 0].to_numpy()
             ann_output = f"{args.sample_name}_copykat_annotated_heatmap.png"
             plot_heatmap_annotated(
                 mat=ann_mat,
@@ -668,7 +668,7 @@ Meta CSV format
     print(f"Loading CNA results: {args.cna}")
     cna_df = pd.read_csv(args.cna, sep="\t", index_col=False)
     cell_names = cna_df.columns[3:].tolist()
-    chrom_info = cna_df.iloc[:, 0].values
+    chrom_info = cna_df.iloc[:, 0].to_numpy()
     mat = cna_df.iloc[:, 3:].values.astype(np.float32)
     print(f"  {mat.shape[1]} cells x {mat.shape[0]} bins")
 
