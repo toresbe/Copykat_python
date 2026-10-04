@@ -7,17 +7,11 @@ import os
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from scipy.spatial.distance import cdist, pdist, squareform
-from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.cluster.hierarchy import fcluster
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 from joblib import Parallel, delayed
-
-try:
-    import fastcluster
-    HAS_FASTCLUSTER = True
-except ImportError:
-    fastcluster = None
-    HAS_FASTCLUSTER = False
+import fastcluster
 
 _LAST_CLUSTER_INFO = {
     "step": "hierarchical_cluster",
@@ -171,12 +165,10 @@ def _ward_linkage(data, n_cores=1):
     produce the same merge tree; merge heights can differ in the last bits.
     """
     n_samples = data.shape[0]
-    if HAS_FASTCLUSTER:
-        if _ward_pdist_fits(n_samples):
-            dist = _pdist_euclidean(data, n_cores=n_cores)
-            return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
-        return fastcluster.linkage_vector(data, method="ward", metric="euclidean"), "fastcluster.linkage_vector"
-    return linkage(_pdist_euclidean(data, n_cores=n_cores), method="ward"), "scipy.linkage"
+    if _ward_pdist_fits(n_samples):
+        dist = _pdist_euclidean(data, n_cores=n_cores)
+        return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
+    return fastcluster.linkage_vector(data, method="ward", metric="euclidean"), "fastcluster.linkage_vector"
 
 
 def _hierarchical_cluster(
@@ -236,7 +228,7 @@ def _hierarchical_cluster(
     })
     
     if not reduce:
-        if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
+        if metric == "euclidean" and method.startswith("ward"):
             collapsed = _collapse_repeated_features(data)
             if collapsed is not None:
                 Z, engine = _ward_linkage(collapsed, n_cores=n_cores)
@@ -247,12 +239,8 @@ def _hierarchical_cluster(
             _LAST_CLUSTER_INFO["effective_cores"] = _effective_threads(n_cores)
         else:
             dist = pdist(data, metric=metric)
-            if HAS_FASTCLUSTER:
-                Z = fastcluster.linkage(dist, method=method, preserve_input=True)
-                _LAST_CLUSTER_INFO["engine"] = "full_pdist+fastcluster.linkage"
-            else:
-                Z = linkage(dist, method=method)
-                _LAST_CLUSTER_INFO["engine"] = "full_pdist+scipy.linkage"
+            Z = fastcluster.linkage(dist, method=method, preserve_input=True)
+            _LAST_CLUSTER_INFO["engine"] = "full_pdist+fastcluster.linkage"
         labels = fcluster(Z, t=n_clusters, criterion="maxclust")
         return labels, Z
 
@@ -284,11 +272,8 @@ def _hierarchical_cluster(
     else:
         dist = pdist(data, metric=metric)
 
-    if HAS_FASTCLUSTER:
-        Z = fastcluster.linkage(dist, method=method, preserve_input=True)
-        _LAST_CLUSTER_INFO["engine"] = "fastcluster.linkage"
-    else:
-        Z = linkage(dist, method=method)
+    Z = fastcluster.linkage(dist, method=method, preserve_input=True)
+    _LAST_CLUSTER_INFO["engine"] = "fastcluster.linkage"
 
     labels = fcluster(Z, t=n_clusters, criterion="maxclust")
     return labels, Z

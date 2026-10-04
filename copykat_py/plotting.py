@@ -10,50 +10,20 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.collections import LineCollection
 from matplotlib.gridspec import GridSpec
-from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+from scipy.cluster.hierarchy import dendrogram, fcluster
 from scipy.spatial.distance import pdist
 
+import fastcluster
+from sklearn.cluster import MiniBatchKMeans, KMeans
+from sklearn.decomposition import TruncatedSVD
+from threadpoolctl import threadpool_limits
+
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
-
-# Try to use fastcluster for faster linkage computation on large datasets
-try:
-    import fastcluster
-    from fastcluster import linkage as fastcluster_linkage
-    HAS_FASTCLUSTER = True
-except ImportError:
-    fastcluster = None
-    HAS_FASTCLUSTER = False
-
-try:
-    from sklearn.cluster import MiniBatchKMeans, KMeans
-    HAS_SKLEARN_CLUSTER = True
-except ImportError:
-    MiniBatchKMeans = None
-    KMeans = None
-    HAS_SKLEARN_CLUSTER = False
-
-try:
-    from sklearn.decomposition import TruncatedSVD
-    HAS_SKLEARN_DECOMP = True
-except ImportError:
-    TruncatedSVD = None
-    HAS_SKLEARN_DECOMP = False
-
-try:
-    from threadpoolctl import threadpool_limits
-    HAS_THREADPOOLCTL = True
-except ImportError:
-    threadpool_limits = None
-    HAS_THREADPOOLCTL = False
 
 
 @contextmanager
 def _thread_limited_numeric_ops(max_threads=1):
     """Limit BLAS/OpenMP thread fan-out during plotting-time clustering."""
-    if not HAS_THREADPOOLCTL:
-        yield
-        return
-
     try:
         with threadpool_limits(limits=max_threads, user_api="blas"):
             with threadpool_limits(limits=max_threads, user_api="openmp"):
@@ -67,11 +37,7 @@ def _build_plot_embedding(mat, random_state=1234):
     """Return a float32 embedding optimized for large-cell heatmap ordering."""
     data = np.asarray(mat.T, dtype=np.float32, order="C")
     n_cells, n_features = data.shape
-    if (
-        n_cells < 12000
-        or n_features <= 64
-        or not HAS_SKLEARN_DECOMP
-    ):
+    if n_cells < 12000 or n_features <= 64:
         return data
 
     n_components = min(48, n_features - 1)
@@ -144,21 +110,19 @@ def _safe_linkage(mat, distance="euclidean", method="ward", n_cores=1, max_cells
     """
     n_cells = mat.shape[1]
 
-    if HAS_FASTCLUSTER and distance == "euclidean" and method.startswith("ward"):
+    if distance == "euclidean" and method.startswith("ward"):
         data = mat.T
         collapsed = _collapse_repeated_features(data)
         return _ward_linkage(data if collapsed is None else collapsed, n_cores=n_cores)[0]
 
     dist = _compute_distance(mat, distance, n_cores)
-    if HAS_FASTCLUSTER:
-        return fastcluster_linkage(dist, method=method)
-    return linkage(dist, method=method if distance == "euclidean" else "ward")
+    return fastcluster.linkage(dist, method=method)
 
 
 def _clustered_block_layout(mat, n_clusters=128, random_state=1234):
     """Fast cell ordering plus a cluster-level dendrogram layout."""
     n_cells = mat.shape[1]
-    if not HAS_SKLEARN_CLUSTER or n_cells <= 1:
+    if n_cells <= 1:
         return {
             "cell_order": np.arange(n_cells, dtype=int),
             "labels": np.zeros(n_cells, dtype=int),
@@ -192,10 +156,7 @@ def _clustered_block_layout(mat, n_clusters=128, random_state=1234):
     if len(present_clusters) > 1:
         centroid_mat = centroids[present_clusters]
         with _thread_limited_numeric_ops(1):
-            if HAS_FASTCLUSTER:
-                centroid_linkage = fastcluster.linkage_vector(centroid_mat, method="ward", metric="euclidean")
-            else:
-                centroid_linkage = linkage(pdist(centroid_mat, metric="euclidean"), method="ward")
+            centroid_linkage = fastcluster.linkage_vector(centroid_mat, method="ward", metric="euclidean")
         cluster_order_local = dendrogram(centroid_linkage, no_plot=True)["leaves"]
         cluster_order = [present_clusters[i] for i in cluster_order_local]
     else:

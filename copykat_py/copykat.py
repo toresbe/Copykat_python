@@ -25,13 +25,8 @@ from scipy import sparse
 from scipy.spatial.distance import pdist
 from scipy.cluster.hierarchy import linkage, fcluster
 import pickle
-
-try:
-    import pyarrow as pa
-    import pyarrow.csv as pa_csv
-    HAS_PYARROW = True
-except ImportError:
-    HAS_PYARROW = False
+import pyarrow as pa
+import pyarrow.csv as pa_csv
 
 from copykat_py.annotation import annotate_gene_rows
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
@@ -68,8 +63,7 @@ _PARALLEL_WRITE_BYTES = 128 << 20
 _PARALLEL_WRITE_MIN_ROWS = 128
 
 
-def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round_floats=True, quote_strings=True,
-                   n_cores=1):
+def _write_cna_csv(path, lead_df, values, value_columns, round_floats=True, quote_strings=True, n_cores=1):
     """Write ``lead_df`` columns followed by ``values`` columns as TSV, in row chunks.
 
     Equivalent to writing ``pd.concat([lead_df, pd.DataFrame(values, columns=value_columns)], axis=1)``
@@ -80,11 +74,9 @@ def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round
     are left unquoted; both together match pandas ``.to_csv(sep="\\t", index=False)``
     output.
 
-    With ``n_cores > 1`` (pyarrow only), up to ``n_cores`` chunks are formatted
+    With ``n_cores > 1``, up to ``n_cores`` chunks are formatted
     concurrently and written in order, producing the same bytes; the total
     in-flight chunk size stays within ``_PARALLEL_WRITE_BYTES``.
-
-    Falls back to pandas .to_csv() when pyarrow is not available.
     """
     lead_df = lead_df.reset_index(drop=True)
     if round_floats:
@@ -105,75 +97,52 @@ def _write_cna_csv(path, lead_df, values, value_columns, float_fmt="%.6f", round
                 block = np.round(block, 6)
             yield start, stop, block
 
-    write_options = None
-    if HAS_PYARROW:
-        write_kwargs = {"delimiter": "\t"}
-        if not quote_strings:
-            write_kwargs["quoting_style"] = "none"
-            write_kwargs["quoting_header"] = "none"
-        try:
-            write_options = pa_csv.WriteOptions(**write_kwargs)
-        except TypeError:
-            write_options = None  # pyarrow too old for quoting_style/quoting_header
+    write_kwargs = {"delimiter": "\t"}
+    if not quote_strings:
+        write_kwargs["quoting_style"] = "none"
+        write_kwargs["quoting_header"] = "none"
+    write_options = pa_csv.WriteOptions(**write_kwargs)
 
-    if write_options is not None:
-        lead_table = pa.Table.from_pandas(lead_df, preserve_index=False).replace_schema_metadata(None)
-        value_type = pa.from_numpy_dtype(values.dtype)
-        schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
+    lead_table = pa.Table.from_pandas(lead_df, preserve_index=False).replace_schema_metadata(None)
+    value_type = pa.from_numpy_dtype(values.dtype)
+    schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
 
-        def _chunk_table(start, stop, block):
-            block = np.asfortranarray(block)  # contiguous columns
-            arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
-            arrays += [pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1])]
-            return pa.Table.from_arrays(arrays, schema=schema)
+    def _chunk_table(start, stop, block):
+        block = np.asfortranarray(block)  # contiguous columns
+        arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
+        arrays += [pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1])]
+        return pa.Table.from_arrays(arrays, schema=schema)
 
-        n_threads = _effective_threads(n_cores)
-        parallel_rows = _PARALLEL_WRITE_BYTES // (n_threads * row_bytes)
-        if n_threads > 1 and parallel_rows >= _PARALLEL_WRITE_MIN_ROWS and n_rows > parallel_rows:
-            chunk_rows = parallel_rows
+    n_threads = _effective_threads(n_cores)
+    parallel_rows = _PARALLEL_WRITE_BYTES // (n_threads * row_bytes)
+    if n_threads > 1 and parallel_rows >= _PARALLEL_WRITE_MIN_ROWS and n_rows > parallel_rows:
+        chunk_rows = parallel_rows
 
-            def _format(start):
-                stop = min(start + chunk_rows, n_rows)
-                block = values[start:stop]
-                if round_floats and np.issubdtype(block.dtype, np.floating):
-                    block = np.round(block, 6)
-                buf = io.BytesIO()
-                options = pa_csv.WriteOptions(include_header=(start == 0), **write_kwargs)
-                pa_csv.write_csv(_chunk_table(start, stop, block), buf, write_options=options)
-                return buf.getvalue()
+        def _format(start):
+            stop = min(start + chunk_rows, n_rows)
+            block = values[start:stop]
+            if round_floats and np.issubdtype(block.dtype, np.floating):
+                block = np.round(block, 6)
+            buf = io.BytesIO()
+            options = pa_csv.WriteOptions(include_header=(start == 0), **write_kwargs)
+            pa_csv.write_csv(_chunk_table(start, stop, block), buf, write_options=options)
+            return buf.getvalue()
 
-            pending = deque()
-            with open(path, "wb") as f, ThreadPoolExecutor(n_threads) as executor:
-                for start in range(0, n_rows, chunk_rows):
-                    pending.append(executor.submit(_format, start))
-                    if len(pending) >= n_threads:
-                        f.write(pending.popleft().result())
-                while pending:
+        pending = deque()
+        with open(path, "wb") as f, ThreadPoolExecutor(n_threads) as executor:
+            for start in range(0, n_rows, chunk_rows):
+                pending.append(executor.submit(_format, start))
+                if len(pending) >= n_threads:
                     f.write(pending.popleft().result())
-        else:
-            with open(path, "wb") as f, pa_csv.CSVWriter(f, schema, write_options=write_options) as writer:
-                for start, stop, block in _value_chunks():
-                    writer.write_table(_chunk_table(start, stop, block))
-        # Arrow's allocator keeps freed chunk buffers cached; hand them back
-        # so they don't inflate the peak of the steps that follow.
-        release_unused = getattr(pa.default_memory_pool(), "release_unused", None)
-        if release_unused is not None:
-            release_unused()
-        return
-
-    with open(path, "w", newline="") as f:
-        header = True
-        for start, stop, block in _value_chunks():
-            chunk = pd.concat(
-                [lead_df.iloc[start:stop].reset_index(drop=True), pd.DataFrame(block, columns=value_columns)],
-                axis=1,
-            )
-            chunk.to_csv(f, sep="\t", index=False, header=header, float_format=float_fmt if round_floats else None)
-            header = False
-        if header:  # no rows: still write the header
-            pd.concat([lead_df, pd.DataFrame(values, columns=value_columns)], axis=1).to_csv(
-                f, sep="\t", index=False, float_format=float_fmt if round_floats else None
-            )
+            while pending:
+                f.write(pending.popleft().result())
+    else:
+        with open(path, "wb") as f, pa_csv.CSVWriter(f, schema, write_options=write_options) as writer:
+            for start, stop, block in _value_chunks():
+                writer.write_table(_chunk_table(start, stop, block))
+    # Arrow's allocator keeps freed chunk buffers cached; hand them back
+    # so they don't inflate the peak of the steps that follow.
+    pa.default_memory_pool().release_unused()
 
 
 def _frame_with_leading_columns(lead_df, values, value_columns):
