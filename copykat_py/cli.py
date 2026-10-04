@@ -1,10 +1,12 @@
 """Command line interfaces for CopyKAT-Py wrappers."""
 
 import argparse
+import logging
 import os
 import sys
 import time
 from collections.abc import Iterable
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, TextIO, cast
 
@@ -13,7 +15,10 @@ import pandas as pd
 from scipy import sparse as sp
 from scipy.io import mmread
 
+from copykat_py._logging import default_progress_output, log_progress_to, with_default_progress_output
 from copykat_py._types import CopyKATResult, RawInput, RawMatrix, SparseMatrix
+
+logger = logging.getLogger(__name__)
 
 
 class TeeStream:
@@ -392,22 +397,26 @@ def _run_copykat_analysis(
 
     log_path = output_dir / "copykat_run.log"
     log_handle = open(log_path, "a", encoding="utf-8")  # noqa: SIM115 - closed in the `finally` below
-    old_stdout = sys.stdout
+    # Progress goes to the console (unless the caller configured logging) and
+    # to the run log. Anything else written to stderr, such as third-party
+    # warnings, is copied to the run log too.
+    progress_output = ExitStack()
+    progress_output.enter_context(default_progress_output())
+    progress_output.enter_context(log_progress_to(log_handle))
     old_stderr = sys.stderr
-    sys.stdout = TeeStream(sys.stdout, log_handle)
     sys.stderr = TeeStream(sys.stderr, log_handle)
 
-    print("=" * 80)
-    print(f"CopyKAT-Py run started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Working directory: {output_dir}")
-    print(f"Input: {input_label or getattr(args, 'input', '<in-memory>')}")
-    print(f"Requested cores: {args.n_cores}")
+    logger.info("=" * 80)
+    logger.info(f"CopyKAT-Py run started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Working directory: {output_dir}")
+    logger.info(f"Input: {input_label or getattr(args, 'input', '<in-memory>')}")
+    logger.info(f"Requested cores: {args.n_cores}")
     if args.pca_components is not None:
-        print(f"Requested adaptive PCA components: {args.pca_components}")
+        logger.info(f"Requested adaptive PCA components: {args.pca_components}")
     if meta_csv is not None:
-        print(f"Metadata source: {meta_csv}")
+        logger.info(f"Metadata source: {meta_csv}")
     if row_split_col is not None:
-        print(f"Row split column: {row_split_col}")
+        logger.info(f"Row split column: {row_split_col}")
 
     try:
         result = copykat(
@@ -432,14 +441,14 @@ def _run_copykat_analysis(
             row_split_col=row_split_col,
         )
 
-        print("CopyKAT-Py analysis complete.")
+        logger.info("CopyKAT-Py analysis complete.")
         if "prediction" in result:
             pred = result["prediction"]["copykat.pred"].value_counts()
             for key, value in pred.items():
-                print(f"  {key}: {value} cells")
+                logger.info(f"  {key}: {value} cells")
 
         if post_plot_meta and args.plot_genes and "CNAmat" in result:
-            print("\nGenerating annotated heatmap...")
+            logger.info("\nGenerating annotated heatmap...")
             from copykat_py.plotting import plot_heatmap_annotated
 
             cna_df = result["CNAmat"]
@@ -460,12 +469,11 @@ def _run_copykat_analysis(
             )
         return result
     finally:
-        print(f"CopyKAT-Py run finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Detailed log saved to: {log_path}")
-        sys.stdout.flush()
+        logger.info(f"CopyKAT-Py run finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Detailed log saved to: {log_path}")
         sys.stderr.flush()
-        sys.stdout = old_stdout
         sys.stderr = old_stderr
+        progress_output.close()
         log_handle.close()
 
 
@@ -499,6 +507,7 @@ def matrix_main() -> CopyKATResult:
     )
 
 
+@with_default_progress_output
 def copykat_anndata(
     adata: Any,
     *,
@@ -545,7 +554,7 @@ def copykat_anndata(
         row_split_col = selected_meta[0]
 
     if selected_meta:
-        print(f"Selected obs columns: {selected_meta}")
+        logger.info(f"Selected obs columns: {selected_meta}")
 
     args = argparse.Namespace(
         input="<AnnData object>",
@@ -581,6 +590,7 @@ def copykat_anndata(
     )
 
 
+@with_default_progress_output
 def plot_main() -> None:
     """Entry point for ``copykat-py-plot``: annotated heatmap from CNA results."""
     parser = argparse.ArgumentParser(
@@ -671,12 +681,12 @@ Meta CSV format
 
     args = parser.parse_args()
 
-    print(f"Loading CNA results: {args.cna}")
+    logger.info(f"Loading CNA results: {args.cna}")
     cna_df = pd.read_csv(args.cna, sep="\t", index_col=False)
     cell_names = cna_df.columns[3:].tolist()
     chrom_info = cna_df.iloc[:, 0].to_numpy()
     mat = cna_df.iloc[:, 3:].values.astype(np.float32)
-    print(f"  {mat.shape[1]} cells x {mat.shape[0]} bins")
+    logger.info(f"  {mat.shape[1]} cells x {mat.shape[0]} bins")
 
     from copykat_py.plotting import plot_heatmap_annotated
 

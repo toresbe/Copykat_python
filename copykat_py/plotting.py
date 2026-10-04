@@ -1,5 +1,6 @@
 """Heatmap plotting for CNA results, mirroring heatmap.3.R visualizations."""
 
+import logging
 import re
 import sys
 import time
@@ -25,8 +26,11 @@ from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.decomposition import TruncatedSVD
 from threadpoolctl import threadpool_limits
 
+from copykat_py._logging import with_default_progress_output
 from copykat_py._types import FloatArray, IntArray, LinkageMatrix
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -325,6 +329,7 @@ def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any]) -> None:
         )
 
 
+@with_default_progress_output
 def plot_heatmap(
     mat: FloatArray,
     chrom_info: npt.NDArray[Any],
@@ -386,7 +391,7 @@ def plot_heatmap(
 
     if n_cells <= max_dendro_cells:
         # Full hierarchical clustering with dendrogram
-        print(f"  Step 10a: Computing dendrogram for {n_cells} cells...")
+        logger.info(f"  Step 10a: Computing dendrogram for {n_cells} cells...")
         try:
             Z = _safe_linkage(mat, distance, "ward", n_cores)
             # Use safe dendrogram with recursion management
@@ -399,7 +404,7 @@ def plot_heatmap(
                 sys.setrecursionlimit(old_limit)
             except RecursionError:
                 sys.setrecursionlimit(old_limit)
-                print("  WARNING: dendrogram recursion limit reached; using K-means ordering.")
+                logger.warning("  WARNING: dendrogram recursion limit reached; using K-means ordering.")
                 leaves = None
 
             if leaves is not None:
@@ -408,25 +413,25 @@ def plot_heatmap(
                 # Fallback to fast block ordering
                 cell_order = _clustered_block_order(mat, n_clusters=min(96, max(24, n_cells // 40)))
         except Exception as e:
-            print(f"  WARNING: dendrogram computation failed ({e}); using fast ordering.")
+            logger.warning(f"  WARNING: dendrogram computation failed ({e}); using fast ordering.")
             cell_order = _clustered_block_order(mat, n_clusters=min(96, max(24, n_cells // 40)))
 
     elif n_cells <= max_kmeans_cells:
         # Fast clustered ordering for large datasets with a summarized dendrogram.
-        print(f"  Step 10a: Computing fast clustered ordering for {n_cells} cells...")
+        logger.info(f"  Step 10a: Computing fast clustered ordering for {n_cells} cells...")
         try:
             layout = _clustered_block_layout(mat, n_clusters=min(128, max(32, n_cells // 160)))
             cell_order = layout["cell_order"]
             Z_summary = layout["centroid_linkage"]
             cluster_sizes = layout["cluster_sizes"]
         except Exception as e:
-            print(f"  WARNING: fast clustered ordering failed ({e}); using simple ordering.")
+            logger.warning(f"  WARNING: fast clustered ordering failed ({e}); using simple ordering.")
             skip_dendrogram = True
             cell_order = _simple_cell_order(mat, predictions=predictions)
 
     else:
         # For very large datasets (>200k cells), use simple ordering
-        print(f"  Step 10a: Using simple ordering for {n_cells} cells (too large for clustering).")
+        logger.info(f"  Step 10a: Using simple ordering for {n_cells} cells (too large for clustering).")
         skip_dendrogram = True
         cell_order = _simple_cell_order(mat, predictions=predictions)
 
@@ -491,10 +496,10 @@ def plot_heatmap(
     # --- Dendrogram (left) ------------------------------------------------
     ax_dendro = fig.add_subplot(gs[1, col_dendro])
     if Z is not None and not skip_dendrogram:
-        print("  Step 10b: Rendering dendrogram...")
+        logger.info("  Step 10b: Rendering dendrogram...")
         _safe_dendrogram_with_recursion_management(Z, ax_dendro, n_cells)
     elif Z_summary is not None and cluster_sizes is not None:
-        print("  Step 10b: Rendering cluster dendrogram...")
+        logger.info("  Step 10b: Rendering cluster dendrogram...")
         _draw_cluster_dendrogram(ax_dendro, Z_summary, cluster_sizes)
     else:
         msg = "fast order\n(no dendrogram)" if skip_dendrogram else "dendrogram\nskipped"
@@ -573,7 +578,7 @@ def plot_heatmap(
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  Heatmap saved to {output_path} in {time.perf_counter() - plot_start:.2f}s")
+    logger.info(f"  Heatmap saved to {output_path} in {time.perf_counter() - plot_start:.2f}s")
 
 
 # ---------------------------------------------------------------------------
@@ -686,6 +691,7 @@ def _order_group(mat_grp: FloatArray, distance: str = "euclidean", n_cores: int 
         return np.arange(n, dtype=int)
 
 
+@with_default_progress_output
 def plot_heatmap_annotated(
     mat: FloatArray,
     cell_names: Sequence[str],
@@ -736,7 +742,7 @@ def plot_heatmap_annotated(
 
     t0 = time.perf_counter()
     n_bins, n_cells = mat.shape
-    print(f"  plot_heatmap_annotated: {n_cells} cells × {n_bins} bins")
+    logger.info(f"  plot_heatmap_annotated: {n_cells} cells × {n_bins} bins")
 
     # ── 1. Load and align metadata ────────────────────────────────────────
     meta_df = _read_meta_csv(meta_csv)
@@ -765,7 +771,7 @@ def plot_heatmap_annotated(
         local_order = _order_group(mat[:, grp_idx], distance, n_cores)
         ordered_indices.extend(grp_idx[local_order].tolist())
         group_boundaries.append(len(ordered_indices))
-        print(f"    '{grp}': {len(grp_idx)} cells ordered")
+        logger.info(f"    '{grp}': {len(grp_idx)} cells ordered")
 
     order = np.array(ordered_indices, dtype=int)
     mat_ordered = mat[:, order]
@@ -918,4 +924,4 @@ def plot_heatmap_annotated(
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  Saved → {output_path}  ({time.perf_counter() - t0:.2f}s)")
+    logger.info(f"  Saved → {output_path}  ({time.perf_counter() - t0:.2f}s)")

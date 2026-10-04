@@ -14,6 +14,7 @@ Faithfully reimplements the R copykat() function workflow:
 
 import io
 import json
+import logging
 import os
 import pickle
 import time
@@ -31,6 +32,7 @@ from scipy import sparse
 from scipy.cluster.hierarchy import fcluster
 from scipy.io import mmread
 
+from copykat_py._logging import with_default_progress_output
 from copykat_py._types import (
     BoolArray,
     ClusteringResult,
@@ -68,6 +70,8 @@ from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
 from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
+
+logger = logging.getLogger(__name__)
 
 _WRITE_CHUNK_BYTES = 512 << 20
 # Parallel formatting keeps several chunks (plus their rounded copies and
@@ -493,6 +497,7 @@ def _keep_cells_by_chr_coverage(
     return keep
 
 
+@with_default_progress_output
 def copykat(
     rawmat: RawMatrix,
     id_type: str = "S",
@@ -586,12 +591,12 @@ def copykat(
         "steps": [],
     }
 
-    print("running copykat-py v1.0.0")
+    logger.info("running copykat-py v1.0.0")
 
     # =========================================================================
     # Step 1: Read and filter data
     # =========================================================================
-    print("step 1: read and filter data ...")
+    logger.info("step 1: read and filter data ...")
     step_start = time.perf_counter()
     rawmat, gene_names, barcodes, original_cell_names, prep_stats = _prepare_input_matrix(
         rawmat, min_gene_per_cell, LOW_DR
@@ -617,30 +622,30 @@ def copykat(
             f"<{AUTO_PCA_CELL_COUNT_CUTOFF}->{AUTO_PCA_SMALL_SAMPLE},"
             f">={AUTO_PCA_CELL_COUNT_CUTOFF}->{AUTO_PCA_LARGE_SAMPLE}"
         )
-    print(f"  {rawmat.shape[0]} genes, {rawmat.shape[1]} cells in raw data")
-    print(
+    logger.info(f"  {rawmat.shape[0]} genes, {rawmat.shape[1]} cells in raw data")
+    logger.info(
         f"  adaptive PCA components: {selected_pca_components} "
         f"({'manual override' if pca_components is not None else f'auto from input cell count {input_cell_count}'})"
     )
     if prep_stats["filtered_cells"] > 0:
-        print(
+        logger.info(
             f"  filtered out {prep_stats['filtered_cells']} cells with <= {min_gene_per_cell} genes; "
             f"remaining {rawmat.shape[1]} cells"
         )
-    print(f"  {rawmat.shape[0]} genes past LOW_DR filtering")
+    logger.info(f"  {rawmat.shape[0]} genes past LOW_DR filtering")
 
     WNS1 = "data quality is ok"
     if rawmat.shape[0] < 7000:
         WNS1 = "low data quality"
         UP_DR = LOW_DR
-        print("  WARNING: low data quality; assigned LOW_DR to UP_DR...")
+        logger.warning("  WARNING: low data quality; assigned LOW_DR to UP_DR...")
     elapsed = _record_step(runtime_info, "read_and_filter", step_start, extra=prep_stats)
-    print(f"  step 1 runtime: {_format_seconds(elapsed)}")
+    logger.info(f"  step 1 runtime: {_format_seconds(elapsed)}")
 
     # =========================================================================
     # Step 2: Annotate gene coordinates
     # =========================================================================
-    print("step 2: annotating gene coordinates ...")
+    logger.info("step 2: annotating gene coordinates ...")
     step_start = time.perf_counter()
     anno_mat, anno_rows = annotate_gene_rows(gene_names, id_type=id_type, genome=genome)
 
@@ -660,7 +665,7 @@ def copykat(
     elapsed = _record_step(
         runtime_info, "annotate_genes", step_start, extra={"genes_after_annotation": int(anno_mat.shape[0])}
     )
-    print(f"  step 2 runtime: {_format_seconds(elapsed)}")
+    logger.info(f"  step 2 runtime: {_format_seconds(elapsed)}")
 
     # Secondary cell filtering: ensure each cell has genes across chromosomes
     anno_cols = ["abspos", "chromosome_name", "start_position", "end_position", "ensembl_gene_id", symbol_col, "band"]
@@ -707,18 +712,18 @@ def copykat(
     norm_mat -= norm_mat.mean(axis=0, keepdims=True)
     _record_step(runtime_info, "freeman_tukey_transform", step_start, extra={"matrix_shape": list(norm_mat.shape)})
 
-    print(f"  {norm_mat.shape[0]} genes, {norm_mat.shape[1]} cells after preprocessing")
+    logger.info(f"  {norm_mat.shape[0]} genes, {norm_mat.shape[1]} cells after preprocessing")
 
     # =========================================================================
     # Step 3: DLM smoothing
     # =========================================================================
-    print("step 3: smoothing data with DLM ...")
+    logger.info("step 3: smoothing data with DLM ...")
     step_start = time.perf_counter()
     norm_mat_smooth = dlm_smooth(norm_mat, n_cores=n_cores)
     del norm_mat
     dlm_info = get_last_dlm_smooth_info()
     elapsed = _record_step(runtime_info, "dlm_smoothing", step_start, parallel_info=dlm_info)
-    print(
+    logger.info(
         f"  smoothing runtime: {_format_seconds(elapsed)} "
         f"(parallel={dlm_info['parallel']}, cores={dlm_info['effective_cores']})"
     )
@@ -726,13 +731,13 @@ def copykat(
     # =========================================================================
     # Step 4: Measure baselines
     # =========================================================================
-    print("step 4: measuring baselines ...")
+    logger.info("step 4: measuring baselines ...")
     step_start = time.perf_counter()
 
     cell_name_list = cell_cols
 
     if cell_line == "yes":
-        print("  running pure cell line mode")
+        logger.info("  running pure cell line mode")
         relt = baseline_synthetic(
             norm_mat_smooth,
             min_cells=10,
@@ -749,12 +754,12 @@ def copykat(
         norm_cell_set = set(norm_cell_names)
         known_normal_mask = np.array([c in norm_cell_set for c in cell_name_list], dtype=bool)
         NNN = known_normal_mask.sum()
-        print(f"  {NNN} known normal cells found in dataset")
+        logger.info(f"  {NNN} known normal cells found in dataset")
 
         if NNN == 0:
             raise ValueError("Known normal cells provided but none found in dataset")
 
-        print("  run with known normal...")
+        logger.info("  run with known normal...")
         basel = np.median(norm_mat_smooth[:, known_normal_mask], axis=1)
 
         # Cluster all cells
@@ -814,7 +819,7 @@ def copykat(
                 50, int(0.05 * len(cell_name_list))
             )
             if keep_cluster_anchor:
-                print("  low-data-quality mode: keeping cluster-based normal anchor")
+                logger.info("  low-data-quality mode: keeping cluster-based normal anchor")
             else:
                 basa_cluster = basa
                 basa_gmm = baseline_gmm(
@@ -864,7 +869,7 @@ def copykat(
                 if gmm_sigma < clustering_sigma:
                     basa = basa_gmm
                 else:
-                    print(
+                    logger.info(
                         f"  GMM fallback baseline (sigma={gmm_sigma:.4f}) is not tighter/more confidently "
                         f"neutral than the clustering candidate (sigma={clustering_sigma:.4f}); "
                         "keeping cluster-based normal anchor"
@@ -879,7 +884,7 @@ def copykat(
     elapsed = _record_step(
         runtime_info, "baseline_estimation", step_start, parallel_info=baseline_cluster_info, extra={"warning": WNS}
     )
-    print(
+    logger.info(
         f"  baseline runtime: {_format_seconds(elapsed)} "
         f"(parallel={baseline_cluster_info['parallel']}, cores={baseline_cluster_info['effective_cores']}, "
         f"engine={baseline_cluster_info.get('engine', 'n/a')})"
@@ -927,16 +932,16 @@ def copykat(
     # =========================================================================
     # Step 5: Segmentation
     # =========================================================================
-    print("step 5: segmentation ...")
+    logger.info("step 5: segmentation ...")
     step_start = time.perf_counter()
     results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores)
 
     if len(results["breaks"]) < 25:
-        print("  too few breakpoints; decreased KS_cut to 50%")
+        logger.info("  too few breakpoints; decreased KS_cut to 50%")
         results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.5 * KS_cut, n_cores=n_cores)
 
     if len(results["breaks"]) < 25:
-        print("  too few breakpoints; decreased KS_cut to 25%")
+        logger.info("  too few breakpoints; decreased KS_cut to 25%")
         results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.25 * KS_cut, n_cores=n_cores)
 
     if len(results["breaks"]) < 25:
@@ -949,7 +954,7 @@ def copykat(
         parallel_info=seg_info,
         extra={"breakpoints": len(results["breaks"])},
     )
-    print(
+    logger.info(
         f"  segmentation runtime: {_format_seconds(elapsed)} "
         f"(parallel={seg_info['parallel']}, cores={seg_info['effective_cores']}, "
         f"engine={seg_info.get('engine', 'n/a')})"
@@ -984,13 +989,13 @@ def copykat(
     # Step 6: Convert to genomic bins (hg20 only)
     # =========================================================================
     if genome == "hg20":
-        print("step 6: convert to genomic bins ...")
+        logger.info("step 6: convert to genomic bins ...")
         step_start = time.perf_counter()
         Aj = convert_to_bins(gene_anno, genome=genome, n_cores=n_cores, values=results_com, cell_names=cell_cols_seg)
         del results_com
         convert_info = get_last_convert_bins_info()
         elapsed = _record_step(runtime_info, "convert_to_bins", step_start, parallel_info=convert_info)
-        print(
+        logger.info(
             f"  bin conversion runtime: {_format_seconds(elapsed)} "
             f"(parallel={convert_info['parallel']}, cores={convert_info['effective_cores']})"
         )
@@ -1002,7 +1007,7 @@ def copykat(
         chrom_info = Aj["DNA_adj"]["chrom"].to_numpy()
         del Aj
 
-        print("step 7: adjust baseline ...")
+        logger.info("step 7: adjust baseline ...")
         step_start = time.perf_counter()
         step7_reduce = uber_mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
 
@@ -1049,7 +1054,7 @@ def copykat(
         elapsed = _record_step(
             runtime_info, "baseline_adjustment", step_start, parallel_info=cluster_info, extra={"warning": WNS}
         )
-        print(
+        logger.info(
             f"  step 7 runtime: {_format_seconds(elapsed)} "
             f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
             f"engine={cluster_info.get('engine', 'n/a')})"
@@ -1058,7 +1063,7 @@ def copykat(
         # =========================================================================
         # Step 8: Final prediction
         # =========================================================================
-        print("step 8: final prediction ...")
+        logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
         step8_reduce = mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
         if cell_line != "yes":
@@ -1106,7 +1111,7 @@ def copykat(
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
         )
-        print(
+        logger.info(
             f"  step 8 runtime: {_format_seconds(elapsed)} "
             f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
             f"engine={cluster_info.get('engine', 'n/a')})"
@@ -1129,7 +1134,7 @@ def copykat(
                 }
             )
 
-        print("step 9: saving results ...")
+        logger.info("step 9: saving results ...")
         step_start = time.perf_counter()
 
         if res is not None:
@@ -1152,13 +1157,13 @@ def copykat(
             step_start,
             extra={"bins": int(cna_out.shape[0]), "cells": int(cna_out.shape[1] - 3)},
         )
-        print(f"  step 9 runtime: {_format_seconds(elapsed)}")
+        logger.info(f"  step 9 runtime: {_format_seconds(elapsed)}")
 
         # =========================================================================
         # Step 10: Plot heatmap
         # =========================================================================
         if plot_genes:
-            print("step 10: plotting heatmap ...")
+            logger.info("step 10: plotting heatmap ...")
             plot_step_start = time.perf_counter()
             predictions = pred_dict if cell_line != "yes" else None
             _run_plot_heatmap(
@@ -1173,10 +1178,10 @@ def copykat(
                 f"{sample_name}heatmap.png",
             )
             elapsed = _record_step(runtime_info, "plot_heatmap", plot_step_start)
-            print(f"  step 10 runtime: {_format_seconds(elapsed)}")
+            logger.info(f"  step 10 runtime: {_format_seconds(elapsed)}")
 
         if plot_genes and meta_csv is not None:
-            print("step 10b: plotting annotated heatmap ...")
+            logger.info("step 10b: plotting annotated heatmap ...")
             step_ann = time.perf_counter()
             from copykat_py.plotting import plot_heatmap_annotated
 
@@ -1193,19 +1198,19 @@ def copykat(
                 output_path=f"{sample_name}annotated_heatmap.png",
             )
             elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
-            print(f"  step 10b runtime: {_format_seconds(elapsed)}")
+            logger.info(f"  step 10b runtime: {_format_seconds(elapsed)}")
 
         # =========================================================================
         # Output SEG file
         # =========================================================================
         if output_seg:
-            print("  generating seg files for IGV viewer")
+            logger.info("  generating seg files for IGV viewer")
             _write_seg_file(bin_coords, mat_adj, cell_cols_seg, sample_name)
         runtime_info["total_seconds"] = round(time.perf_counter() - start_time, 4)
         with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as report:
             json.dump(runtime_info, report, indent=2)
-        print(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
-        print(f"Runtime report saved to: {sample_name}runtime.json")
+        logger.info(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
+        logger.info(f"Runtime report saved to: {sample_name}runtime.json")
 
         if res is None:  # cell-line mode makes no predictions
             return {
@@ -1226,7 +1231,7 @@ def copykat(
         del results_com
         chrom_info = anno_mat2["chromosome_name"].to_numpy()
 
-        print("step 7: adjust baseline ...")
+        logger.info("step 7: adjust baseline ...")
         step_start = time.perf_counter()
         step7_reduce = uber_mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
         # Same prediction logic as hg20 (mirroring the R code mm10 section)
@@ -1271,14 +1276,14 @@ def copykat(
         elapsed = _record_step(
             runtime_info, "baseline_adjustment", step_start, parallel_info=cluster_info, extra={"warning": WNS}
         )
-        print(
+        logger.info(
             f"  step 7 runtime: {_format_seconds(elapsed)} "
             f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
             f"engine={cluster_info.get('engine', 'n/a')})"
         )
 
         # Final prediction
-        print("step 8: final prediction ...")
+        logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
         step8_reduce = mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
         labels_final, Z_final = _hierarchical_cluster(
@@ -1314,14 +1319,14 @@ def copykat(
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
         )
-        print(
+        logger.info(
             f"  step 8 runtime: {_format_seconds(elapsed)} "
             f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
             f"engine={cluster_info.get('engine', 'n/a')})"
         )
 
         # Save
-        print("step 9: saving results ...")
+        logger.info("step 9: saving results ...")
         step_start = time.perf_counter()
         pred_dict = {cell_cols_seg[i]: com_preN[i] for i in range(len(cell_cols_seg))}
         for cell in original_cell_names:
@@ -1348,11 +1353,11 @@ def copykat(
             step_start,
             extra={"bins": int(cna_out.shape[0]), "cells": len(cell_cols_seg)},
         )
-        print(f"  step 9 runtime: {_format_seconds(elapsed)}")
+        logger.info(f"  step 9 runtime: {_format_seconds(elapsed)}")
 
         chrom_numeric = pd.to_numeric(anno_mat2["chromosome_name"], errors="coerce").fillna(0).values
         if plot_genes:
-            print("step 10: plotting heatmap ...")
+            logger.info("step 10: plotting heatmap ...")
             step_start = time.perf_counter()
             from copykat_py.plotting import plot_heatmap
 
@@ -1368,10 +1373,10 @@ def copykat(
                 output_path=f"{sample_name}heatmap.png",
             )
             elapsed = _record_step(runtime_info, "plot_heatmap", step_start)
-            print(f"  step 10 runtime: {_format_seconds(elapsed)}")
+            logger.info(f"  step 10 runtime: {_format_seconds(elapsed)}")
 
         if plot_genes and meta_csv is not None:
-            print("step 10b: plotting annotated heatmap ...")
+            logger.info("step 10b: plotting annotated heatmap ...")
             step_ann = time.perf_counter()
             from copykat_py.plotting import plot_heatmap_annotated
 
@@ -1388,12 +1393,12 @@ def copykat(
                 output_path=f"{sample_name}annotated_heatmap.png",
             )
             elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
-            print(f"  step 10b runtime: {_format_seconds(elapsed)}")
+            logger.info(f"  step 10b runtime: {_format_seconds(elapsed)}")
         runtime_info["total_seconds"] = round(time.perf_counter() - start_time, 4)
         with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as report:
             json.dump(runtime_info, report, indent=2)
-        print(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
-        print(f"Runtime report saved to: {sample_name}runtime.json")
+        logger.info(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
+        logger.info(f"Runtime report saved to: {sample_name}runtime.json")
 
         return {
             "prediction": res,

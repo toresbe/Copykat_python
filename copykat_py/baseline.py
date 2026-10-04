@@ -3,6 +3,7 @@
 Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R package.
 """
 
+import logging
 import os
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -29,6 +30,8 @@ from copykat_py._types import (
     ParallelInfo,
     SyntheticBaselineResult,
 )
+
+logger = logging.getLogger(__name__)
 
 _LAST_CLUSTER_INFO: ParallelInfo = {
     "step": "hierarchical_cluster",
@@ -485,7 +488,7 @@ def baseline_norm_cl(
 
     if wn <= 0.15 or not np.all(_cluster_sizes(labels) > min_cells) or PDt > 0.05:
         WNS: BaselineWarning = "unclassified.prediction"
-        print("  low confidence in classification")
+        logger.warning("  low confidence in classification")
     else:
         WNS = ""
 

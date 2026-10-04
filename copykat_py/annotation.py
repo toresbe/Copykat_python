@@ -1,5 +1,6 @@
 """Gene annotation: map genes to genomic coordinates, mirroring annotateGenes.hg20.R / annotateGenes.mm10.R."""
 
+import logging
 from collections.abc import Hashable, Sequence
 from typing import Any
 
@@ -8,6 +9,8 @@ import numpy.typing as npt
 import pandas as pd
 
 from copykat_py.data_loader import load_full_anno
+
+logger = logging.getLogger(__name__)
 
 
 def annotate_gene_rows(
@@ -32,7 +35,7 @@ def annotate_gene_rows(
     rows : np.ndarray
         For each annotation row, the index of the matching expression-matrix row.
     """
-    print("  start annotation ...")
+    logger.info("  start annotation ...")
     full_anno = load_full_anno(genome)
 
     if genome == "mm10":
@@ -69,7 +72,7 @@ def annotate_gene_rows(
     # chromosome_name can be 1..22, X=23, Y=24
     anno["chromosome_name"] = anno["chromosome_name"].astype(str)
 
-    print(f"  {len(anno)} genes annotated")
+    logger.info(f"  {len(anno)} genes annotated")
     return anno, rows
 
 

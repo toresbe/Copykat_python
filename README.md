@@ -152,6 +152,10 @@ All entry points produce the same outputs as copykat-R:
 
 When metadata is supplied, an additional annotated heatmap PNG is produced. AnnData workflows also write `*_selected_obs_meta.csv`.
 
+### Progress messages
+
+Progress messages are sent to the `copykat_py` logger. If your script or notebook has not configured logging, they are printed to stdout. Once logging is configured, they follow that configuration. For example, `logging.getLogger("copykat_py").setLevel(logging.WARNING)` shows only warnings, and `logging.basicConfig(level=logging.INFO)` routes progress through your own handlers.
+
 ---
 
 ## Annotated Heatmap with Metadata
