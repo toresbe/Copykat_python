@@ -71,20 +71,6 @@ files = ["copykat_py"]
 warn_unused_ignores = true
 warn_redundant_casts = true
 check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-# Fully annotated modules: keep them that way.
-module = [
-    "copykat_py._types",
-    "copykat_py.data_loader",
-    "copykat_py.annotation",
-    "copykat_py.smoothing",
-    "copykat_py.segmentation",
-    "copykat_py.convert_bins",
-    "copykat_py.baseline",
-    "copykat_py.copykat",
-    "copykat_py.plotting",
-]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 

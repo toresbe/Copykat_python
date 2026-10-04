@@ -4,36 +4,37 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import cast
+from typing import Any, TextIO, cast
 
 import numpy as np
 import pandas as pd
 from scipy import sparse as sp
 from scipy.io import mmread
 
-from copykat_py._types import SparseMatrix
+from copykat_py._types import CopyKATResult, RawInput, RawMatrix, SparseMatrix
 
 
 class TeeStream:
     """Write stream output to both terminal and file."""
 
-    def __init__(self, stream, logfile_handle):
+    def __init__(self, stream: TextIO, logfile_handle: TextIO) -> None:
         self.stream = stream
         self.logfile_handle = logfile_handle
 
-    def write(self, data):
+    def write(self, data: str) -> None:
         self.stream.write(data)
         self.logfile_handle.write(data)
         if "\n" in data or "\r" in data:
             self.flush()
 
-    def flush(self):
+    def flush(self) -> None:
         self.stream.flush()
         self.logfile_handle.flush()
 
 
-def _add_common_copykat_args(parser):
+def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
     """Attach CopyKAT runtime arguments shared by matrix and Python wrappers."""
     parser.add_argument(
         "--id-type",
@@ -143,7 +144,7 @@ def _add_common_copykat_args(parser):
     )
 
 
-def _add_matrix_metadata_args(parser):
+def _add_matrix_metadata_args(parser: argparse.ArgumentParser) -> None:
     """Attach metadata CSV arguments used by the matrix-style wrappers."""
     parser.add_argument(
         "--meta",
@@ -162,7 +163,7 @@ def _add_matrix_metadata_args(parser):
     )
 
 
-def _build_main_parser():
+def _build_main_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="copykat-py",
         description="CopyKAT-Py: Inference of genomic copy number from single cell RNA-seq data",
@@ -189,7 +190,7 @@ def _build_main_parser():
     return parser
 
 
-def _build_matrix_parser():
+def _build_matrix_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="copykat_matrix",
         description=(
@@ -219,7 +220,7 @@ def _build_matrix_parser():
     return parser
 
 
-def _normalize_selected_meta(values):
+def _normalize_selected_meta(values: str | Iterable[object] | None) -> list[str]:
     """Return selected AnnData obs columns, handling CSV-style input too."""
     if not values:
         return []
@@ -236,7 +237,9 @@ def _normalize_selected_meta(values):
     return columns
 
 
-def _load_matrix_input(input_path, genes_path=None, barcodes_path=None):
+def _load_matrix_input(
+    input_path: str | os.PathLike[str], genes_path: str | None = None, barcodes_path: str | None = None
+) -> RawInput | str:
     """Load raw matrix input from file paths used by CLI wrappers."""
     input_path = str(input_path)
     if input_path.endswith(".mtx") or input_path.endswith(".mtx.gz"):
@@ -259,25 +262,26 @@ def _load_matrix_input(input_path, genes_path=None, barcodes_path=None):
 
         if genes_path:
             genes = pd.read_csv(genes_path, sep="\t", header=None)
-            gene_names = genes.iloc[:, -1].values if genes.shape[1] > 1 else genes.iloc[:, 0].values
+            gene_names = genes.iloc[:, -1].to_numpy() if genes.shape[1] > 1 else genes.iloc[:, 0].to_numpy()
         else:
             gene_names = np.array([f"gene_{i}" for i in range(mat.shape[0])])
 
         if barcodes_path:
-            barcodes = pd.read_csv(barcodes_path, sep="\t", header=None, dtype=str).iloc[:, 0].values
+            barcodes = pd.read_csv(barcodes_path, sep="\t", header=None, dtype=str).iloc[:, 0].to_numpy()
         else:
             barcodes = np.array([f"cell_{i}" for i in range(mat.shape[1])], dtype=object)
 
-        return {
+        raw_input: RawInput = {
             "matrix": mat,
             "genes": gene_names,
             "barcodes": barcodes,
         }
+        return raw_input
 
     return input_path
 
 
-def _load_normal_cells(norm_cells_path):
+def _load_normal_cells(norm_cells_path: str) -> str | list[str]:
     """Read known-normal barcode names from a text file when provided."""
     if not norm_cells_path or not os.path.exists(norm_cells_path):
         return ""
@@ -286,7 +290,7 @@ def _load_normal_cells(norm_cells_path):
         return [line.strip() for line in handle if line.strip()]
 
 
-def _prepare_output_dir(output_dir):
+def _prepare_output_dir(output_dir: str | os.PathLike[str]) -> Path:
     """Create and activate the output directory used by a run."""
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
@@ -302,13 +306,13 @@ def _prepare_output_dir(output_dir):
     return output_path
 
 
-def _sample_stub(sample_name, default_name):
+def _sample_stub(sample_name: str, default_name: str) -> str:
     """Build a readable file stem for wrapper-created helper files."""
     cleaned = str(sample_name).strip()
     return cleaned if cleaned else default_name
 
 
-def _anndata_to_rawmat(adata, layer=None, use_raw=False):
+def _anndata_to_rawmat(adata: Any, layer: str | None = None, use_raw: bool = False) -> tuple[Any, RawInput, str]:
     """Convert an AnnData object to CopyKAT's rawmat structure."""
     if layer and use_raw:
         raise ValueError("--layer and --use-raw cannot be used together")
@@ -337,7 +341,7 @@ def _anndata_to_rawmat(adata, layer=None, use_raw=False):
     else:
         matrix_t = sp.csc_matrix(np.asarray(matrix, dtype=np.float32).T)
 
-    rawmat = {
+    rawmat: RawInput = {
         "matrix": matrix_t,
         "genes": gene_names,
         "barcodes": adata.obs_names.astype(str).to_numpy(),
@@ -345,7 +349,9 @@ def _anndata_to_rawmat(adata, layer=None, use_raw=False):
     return adata, rawmat, matrix_label
 
 
-def _write_selected_obs_meta_csv(adata, selecting_meta, output_dir, sample_name):
+def _write_selected_obs_meta_csv(
+    adata: Any, selecting_meta: str | Iterable[object] | None, output_dir: str | os.PathLike[str], sample_name: str
+) -> tuple[str | None, list[str]]:
     """Persist selected AnnData obs columns as the metadata CSV expected by copykat()."""
     columns = _normalize_selected_meta(selecting_meta)
     if not columns:
@@ -366,14 +372,14 @@ def _write_selected_obs_meta_csv(adata, selecting_meta, output_dir, sample_name)
 
 
 def _run_copykat_analysis(
-    args,
-    rawmat,
+    args: argparse.Namespace,
+    rawmat: RawMatrix,
     *,
-    meta_csv=None,
-    row_split_col=None,
-    input_label=None,
-    post_plot_meta=None,
-):
+    meta_csv: str | None = None,
+    row_split_col: str | None = None,
+    input_label: str | None = None,
+    post_plot_meta: str | None = None,
+) -> CopyKATResult:
     """Run copykat() with consistent logging and output-directory setup."""
     norm_cells_path = os.path.abspath(args.norm_cells) if args.norm_cells else ""
     meta_csv = os.path.abspath(meta_csv) if meta_csv is not None else None
@@ -463,7 +469,7 @@ def _run_copykat_analysis(
         log_handle.close()
 
 
-def main():
+def main() -> CopyKATResult:
     """Entry point for the legacy matrix-focused ``copykat-py`` CLI."""
     parser = _build_main_parser()
     args = parser.parse_args()
@@ -478,7 +484,7 @@ def main():
     )
 
 
-def matrix_main():
+def matrix_main() -> CopyKATResult:
     """Entry point for ``copykat_matrix``."""
     parser = _build_matrix_parser()
     args = parser.parse_args()
@@ -494,30 +500,30 @@ def matrix_main():
 
 
 def copykat_anndata(
-    adata,
+    adata: Any,
     *,
-    selecting_meta=None,
-    row_split=None,
-    sample_name="",
-    distance="euclidean",
-    genome="hg20",
-    n_cores=1,
-    output_dir=".",
-    layer=None,
-    use_raw=False,
-    id_type="S",
-    cell_line="no",
-    ngene_chr=5,
-    min_genes=200,
-    low_dr=0.05,
-    up_dr=0.1,
-    win_size=25,
-    norm_cells="",
-    ks_cut=0.1,
-    output_seg=False,
-    plot_genes=True,
-    pca_components=None,
-):
+    selecting_meta: str | Iterable[str] | None = None,
+    row_split: str | None = None,
+    sample_name: str = "",
+    distance: str = "euclidean",
+    genome: str = "hg20",
+    n_cores: int = 1,
+    output_dir: str | os.PathLike[str] = ".",
+    layer: str | None = None,
+    use_raw: bool = False,
+    id_type: str = "S",
+    cell_line: str = "no",
+    ngene_chr: int = 5,
+    min_genes: int = 200,
+    low_dr: float = 0.05,
+    up_dr: float = 0.1,
+    win_size: int = 25,
+    norm_cells: str | os.PathLike[str] = "",
+    ks_cut: float = 0.1,
+    output_seg: bool = False,
+    plot_genes: bool = True,
+    pca_components: int | None = None,
+) -> CopyKATResult:
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
     _, rawmat, matrix_label = _anndata_to_rawmat(
         adata,
@@ -575,7 +581,7 @@ def copykat_anndata(
     )
 
 
-def plot_main():
+def plot_main() -> None:
     """Entry point for ``copykat-py-plot``: annotated heatmap from CNA results."""
     parser = argparse.ArgumentParser(
         prog="copykat-py-plot",
