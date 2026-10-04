@@ -130,8 +130,7 @@ def _add_common_copykat_args(parser):
         "--pca-components",
         type=int,
         default=None,
-        help="[optional] Adaptive PCA component cap for large clustering steps "
-             "(default: automatic by cell count)",
+        help="[optional] Adaptive PCA component cap for large clustering steps (default: automatic by cell count)",
     )
     parser.add_argument(
         "--output-dir",
@@ -148,15 +147,15 @@ def _add_matrix_metadata_args(parser):
         default=None,
         metavar="CSV",
         help="[optional] Per-cell annotation CSV for the annotated heatmap. "
-             "First column = cell name; remaining columns are drawn as "
-             "coloured sidebars.",
+        "First column = cell name; remaining columns are drawn as "
+        "coloured sidebars.",
     )
     parser.add_argument(
         "--row-split",
         default=None,
         metavar="COLUMN",
         help="[optional] Column in --meta used to split and label heatmap rows. "
-             "Defaults to the second column of the CSV when not given.",
+        "Defaults to the second column of the CSV when not given.",
     )
 
 
@@ -320,8 +319,7 @@ def _anndata_to_rawmat(adata, layer=None, use_raw=False):
     elif layer:
         if layer not in adata.layers:
             raise ValueError(
-                f"Layer '{layer}' not found in adata.layers. "
-                f"Available layers: {list(adata.layers.keys())}"
+                f"Layer '{layer}' not found in adata.layers. Available layers: {list(adata.layers.keys())}"
             )
         matrix = adata.layers[layer]
         gene_names = adata.var_names.astype(str).to_numpy()
@@ -353,10 +351,7 @@ def _write_selected_obs_meta_csv(adata, selecting_meta, output_dir, sample_name)
     obs_columns = [str(col) for col in adata.obs.columns.tolist()]
     missing = [column for column in columns if column not in obs_columns]
     if missing:
-        raise ValueError(
-            f"Requested obs columns not found: {missing}. "
-            f"Available obs columns: {obs_columns}"
-        )
+        raise ValueError(f"Requested obs columns not found: {missing}. Available obs columns: {obs_columns}")
 
     meta_df = adata.obs.loc[:, columns].copy()
     meta_df.index = meta_df.index.astype(str)
@@ -621,29 +616,29 @@ Meta CSV format
         "-c",
         required=True,
         help="[required] CNA results file produced by copykat-py "
-             "(*_copykat_CNA_results.txt, tab-separated). "
-             "First three columns must be chrom / chrompos / abspos; "
-             "remaining columns are cells.",
+        "(*_copykat_CNA_results.txt, tab-separated). "
+        "First three columns must be chrom / chrompos / abspos; "
+        "remaining columns are cells.",
     )
     parser.add_argument(
         "--meta",
         "-m",
         required=True,
         help="[required] Annotation CSV. First column = cell name; remaining columns are "
-             "drawn as coloured sidebars. Header row is auto-detected.",
+        "drawn as coloured sidebars. Header row is auto-detected.",
     )
     parser.add_argument(
         "--row-split",
         default=None,
         metavar="COLUMN",
         help="[optional] Metadata column used to split and label rows. "
-             "Defaults to the second column of the CSV when not supplied.",
+        "Defaults to the second column of the CSV when not supplied.",
     )
     parser.add_argument(
         "--sample-name",
         default="",
         help="[optional] Label shown in the figure title and used as the output filename "
-             "prefix when --output is not given.",
+        "prefix when --output is not given.",
     )
     parser.add_argument(
         "--distance",
@@ -662,8 +657,7 @@ Meta CSV format
         "-o",
         default=None,
         metavar="PATH",
-        help="[optional] Output PNG path. Defaults to "
-             "{sample_name}_copykat_annotated_heatmap.png.",
+        help="[optional] Output PNG path. Defaults to {sample_name}_copykat_annotated_heatmap.png.",
     )
 
     args = parser.parse_args()

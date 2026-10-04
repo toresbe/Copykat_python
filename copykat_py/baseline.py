@@ -38,6 +38,8 @@ def _ward_pdist_fits(n_samples):
     budget_gb = float(os.getenv("COPYKAT_WARD_PDIST_MAX_GB", WARD_PDIST_MAX_GB))
     # the condensed matrix plus fastcluster.linkage's working copy of it
     return n_samples * (n_samples - 1) * 8 <= budget_gb * 1e9
+
+
 AUTO_PCA_CELL_COUNT_CUTOFF = 50000
 AUTO_PCA_SMALL_SAMPLE = 256
 AUTO_PCA_LARGE_SAMPLE = 128
@@ -125,7 +127,7 @@ def _pdist_euclidean(data, n_cores=1, block_bytes=64 << 20):
         hi = min(lo + rows_per_block, n_samples - 1)
         block = cdist(data[lo:hi], data[lo:], metric="euclidean")
         for i in range(lo, hi):
-            dist[row_start[i]:row_start[i] + n_samples - 1 - i] = block[i - lo, i - lo + 1:]
+            dist[row_start[i] : row_start[i] + n_samples - 1 - i] = block[i - lo, i - lo + 1 :]
 
     with ThreadPoolExecutor(n_threads) as executor:
         list(executor.map(_block, range(0, n_samples - 1, rows_per_block)))
@@ -148,7 +150,7 @@ def _collapse_repeated_features(data, block_rows=4096):
         return None
     changes = np.zeros(n_features - 1, dtype=bool)
     for lo in range(0, n_samples, block_rows):
-        block = data[lo:lo + block_rows]
+        block = data[lo : lo + block_rows]
         changes |= np.any(block[:, 1:] != block[:, :-1], axis=0)
     starts = np.concatenate([[0], np.flatnonzero(changes) + 1])
     if len(starts) == n_features:
@@ -190,7 +192,7 @@ def _hierarchical_cluster(
     are collapsed first, which leaves distances unchanged; when the collapsed
     width fits within the PCA component cap, that PCA would be lossless and is
     skipped. The ``max_cells`` argument is kept for compatibility but is not used.
-    
+
     Parameters
     ----------
     data : np.ndarray, shape (n_samples, n_features)
@@ -210,7 +212,7 @@ def _hierarchical_cluster(
         cells × features matrix through an explicit distance object.
     pca_components : int
         Maximum number of PCA components to retain when reduction is enabled.
-    
+
     Returns
     -------
     labels : np.ndarray
@@ -219,14 +221,16 @@ def _hierarchical_cluster(
         Linkage matrix if available.
     """
     n_samples, n_features = data.shape
-    _LAST_CLUSTER_INFO.update({
-        "requested_cores": int(n_cores),
-        "effective_cores": 1,
-        "tasks": int(n_samples),
-        "approximate": False,
-        "engine": "scipy.linkage",
-    })
-    
+    _LAST_CLUSTER_INFO.update(
+        {
+            "requested_cores": int(n_cores),
+            "effective_cores": 1,
+            "tasks": int(n_samples),
+            "approximate": False,
+            "engine": "scipy.linkage",
+        }
+    )
+
     if not reduce:
         if metric == "euclidean" and method.startswith("ward"):
             collapsed = _collapse_repeated_features(data)
@@ -281,7 +285,7 @@ def _hierarchical_cluster(
 
 def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1e-8):
     """Fit a 3-component Gaussian Mixture Model (gain, neutral, loss).
-    
+
     Parameters
     ----------
     data : np.ndarray, shape (n,)
@@ -290,7 +294,7 @@ def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1
         Initial means for 3 components.
     sigma_init : float or None
         Initial shared standard deviation.
-    
+
     Returns
     -------
     means : np.ndarray, shape (3,)
@@ -304,7 +308,7 @@ def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1
         sigma_init = max(0.05, 0.5 * np.std(data))
     if mu_init is None:
         mu_init = [-0.2, 0.0, 0.2]
-    
+
     x = np.asarray(data, dtype=np.float64).ravel()
     means = np.asarray(mu_init, dtype=np.float64).copy()
     weights = np.full(3, 1.0 / 3.0, dtype=np.float64)
@@ -330,19 +334,19 @@ def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1
         if abs(loglik - prev_loglik) < tol * (abs(prev_loglik) + tol):
             break
         prev_loglik = loglik
-    
+
     return means, weights, sigma
 
 
 def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, pca_components=None, genome="hg20"):
     """Find a cluster of diploid cells using integrative clustering + GMM variance test.
-    
-    Mirrors baseline.norm.cl.R: 
+
+    Mirrors baseline.norm.cl.R:
     1. Hierarchical clustering into 6 groups
     2. GMM on each cluster consensus to estimate variance
     3. Cluster with minimum variance is 'confident normal'
     4. Silhouette + F-test to validate
-    
+
     Parameters
     ----------
     norm_mat_smooth : np.ndarray, shape (n_genes, n_cells)
@@ -351,7 +355,7 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
         Minimum cells per cluster.
     n_cores : int
         Number of cores.
-    
+
     Returns
     -------
     dict with keys: 'basel', 'WNS', 'preN', 'cl'
@@ -362,7 +366,7 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
         pca_components=pca_components,
         genome=genome,
     )
-    
+
     # Hierarchical clustering
     data_t = norm_mat_smooth.T  # cells × genes
     step4_reduce = n_cells > FULL_CLUSTER_MAX_CELLS
@@ -376,7 +380,7 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
         reduce=step4_reduce,
         pca_components=selected_pca_components,
     )
-    
+
     # Reduce clusters until all have > min_cells
     while not np.all(_cluster_sizes(labels) > min_cells):
         km -= 1
@@ -394,30 +398,28 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
             )
         if km == 2:
             break
-    
+
     # GMM on each cluster consensus - parallelized for speed
     SDM = []
     SSD = []
     unique_clusters = sorted(set(labels))
-    
+
     def fit_gmm_for_consensus(cluster_consensus):
         """Fit GMM for a single cluster consensus (for parallel execution)."""
         sx = max(0.05, 0.5 * np.std(cluster_consensus))
         means, weights, sigma = _fit_gmm_3component(cluster_consensus, sigma_init=sx, max_iter=5000)
         return sigma, np.std(cluster_consensus)
-    
+
     # Parallel GMM fitting. Consensus profiles are computed up front and fitted
     # in threads so workers never receive a copy of the full matrix.
-    consensus_profiles = [
-        np.median(norm_mat_smooth[:, labels == cl_id], axis=1) for cl_id in unique_clusters
-    ]
+    consensus_profiles = [np.median(norm_mat_smooth[:, labels == cl_id], axis=1) for cl_id in unique_clusters]
     results = Parallel(n_jobs=n_cores, prefer="threads")(
         delayed(fit_gmm_for_consensus)(consensus) for consensus in consensus_profiles
     )
-    
+
     SDM = np.array([r[0] for r in results])
     SSD = np.array([r[1] for r in results])
-    
+
     # Silhouette width for 2-cluster separation
     if Z is not None:
         labels_2 = fcluster(Z, t=2, criterion="maxclust")
@@ -431,7 +433,7 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
             reduce=step4_reduce,
             pca_components=selected_pca_components,
         )
-    
+
     # Compute silhouette on a stratified subsample for medium/large datasets.
     # Stratify by labels_2 so each cluster (diploid/aneuploid) is proportionally
     # represented; floor at 200 per cluster to protect rare populations.
@@ -448,22 +450,23 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
         wn = silhouette_score(data_t[idx], labels_2[idx], metric="euclidean")
     else:
         wn = silhouette_score(data_t, labels_2, metric="euclidean")
-    
+
     # F-test: compare max variance to min variance
     from scipy.stats import f as f_dist
+
     f_stat = max(SDM) ** 2 / min(SDM) ** 2
     PDt = f_dist.sf(f_stat, n_genes, n_genes)
-    
+
     if wn <= 0.15 or not np.all(_cluster_sizes(labels) > min_cells) or PDt > 0.05:
         WNS = "unclassified.prediction"
         print("  low confidence in classification")
     else:
         WNS = ""
-    
+
     # Cluster with minimum sigma is the 'confident normal' cluster
     min_sigma_idx = np.argmin(SDM)
     normal_cluster_id = unique_clusters[min_sigma_idx]
-    
+
     normal_mask = labels == normal_cluster_id
     basel = np.median(norm_mat_smooth[:, normal_mask], axis=1)
     preN_indices = np.where(normal_mask)[0]
@@ -481,13 +484,22 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     }
 
 
-def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
-                  RE_before=None, n_cores=1, pca_components=None, genome="hg20",
-                  cluster=True):
+def baseline_gmm(
+    CNA_mat,
+    cell_names,
+    max_normal=5,
+    mu_cut=0.05,
+    Nfraq_cut=0.99,
+    RE_before=None,
+    n_cores=1,
+    pca_components=None,
+    genome="hg20",
+    cluster=True,
+):
     """Identify diploid cells one-by-one using GMM (fallback when clustering is uncertain).
-    
+
     Mirrors baseline.GMM.R.
-    
+
     Parameters
     ----------
     CNA_mat : np.ndarray, shape (n_genes, n_cells)
@@ -508,7 +520,7 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
         Whether to hierarchically cluster all cells for the returned 'cl'.
         Callers that only need 'basel'/'preN' can pass False to skip it, in
         which case 'cl' is None (unless RE_before is returned).
-    
+
     Returns
     -------
     dict with keys: 'basel', 'WNS', 'preN', 'cl'
@@ -516,17 +528,17 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
     n_genes, n_cells = CNA_mat.shape
     N_normal = []
     N_normal_labels = []
-    
+
     for m in range(n_cells):
         sam = CNA_mat[:, m]
         sg = max(0.05, 0.5 * np.std(sam))
-        
+
         means, weights, sigma = _fit_gmm_3component(sam, sigma_init=sg, max_iter=500)
-        
+
         # Check if any component mean is near zero (neutral)
         neutral_mask = np.abs(means) <= mu_cut
         s = np.sum(neutral_mask)
-        
+
         if s >= 1:
             frq = np.sum(weights[neutral_mask])
             if frq > Nfraq_cut:
@@ -535,15 +547,15 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
                 pred = "aneuploid"
         else:
             pred = "aneuploid"
-        
+
         N_normal_labels.append(pred)
-        
+
         if pred == "diploid":
             N_normal.append(cell_names[m])
-        
+
         if len(N_normal) >= max_normal:
             break
-    
+
     # Hierarchical clustering for the full dataset
     labels = None
     if cluster and (len(N_normal) > 2 or RE_before is None):
@@ -561,7 +573,7 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
             reduce=n_cells > FULL_CLUSTER_MAX_CELLS,
             pca_components=selected_pca_components,
         )
-    
+
     if len(N_normal) > 2:
         WNS = ""
         preN = N_normal
@@ -574,15 +586,14 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
         else:
             # Fallback: use the full dataset median as baseline
             WNS = "unclassified.prediction"
-            return {"basel": np.median(CNA_mat, axis=1), "WNS": WNS, 
-                    "preN": N_normal, "cl": labels}
+            return {"basel": np.median(CNA_mat, axis=1), "WNS": WNS, "preN": N_normal, "cl": labels}
 
 
 def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, genome="hg20"):
     """Estimate baseline using synthetic normal profiles (for cell line data).
-    
+
     Mirrors baseline.synthetic.R.
-    
+
     Parameters
     ----------
     norm_mat : np.ndarray, shape (n_genes, n_cells)
@@ -591,7 +602,7 @@ def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, g
         Min cells per cluster.
     n_cores : int
         Number of cores.
-    
+
     Returns
     -------
     dict with keys: 'expr_relat', 'cl'
@@ -603,7 +614,7 @@ def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, g
         genome=genome,
     )
     data_t = norm_mat.T
-    
+
     km = 6
     labels, Z = _hierarchical_cluster(
         data_t,
@@ -612,7 +623,7 @@ def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, g
         metric="euclidean",
         pca_components=selected_pca_components,
     )
-    
+
     while not all(np.bincount(labels)[np.bincount(labels) > 0] > min_cells):
         km -= 1
         if Z is not None:
@@ -627,11 +638,11 @@ def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, g
             )
         if km == 2:
             break
-    
+
     rng = np.random.RandomState(123)
     expr_relat_parts = []
     unique_clusters = sorted(set(labels))
-    
+
     for cl_id in unique_clusters:
         mask = labels == cl_id
         data_c = norm_mat[:, mask]
@@ -639,16 +650,16 @@ def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, g
         syn_norm = rng.normal(0, sd_per_gene)
         relat = data_c - syn_norm[:, np.newaxis]
         expr_relat_parts.append(relat)
-    
+
     expr_relat = np.hstack(expr_relat_parts)
-    
+
     # Reorder to match original cell order
     cluster_order = []
     for cl_id in unique_clusters:
         cluster_order.extend(np.where(labels == cl_id)[0])
-    
+
     # Create inverse permutation
     inv_perm = np.argsort(cluster_order)
     expr_relat = expr_relat[:, inv_perm]
-    
+
     return {"expr_relat": expr_relat, "cl": labels}

@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 import numpy as np
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -56,12 +57,7 @@ def _simple_cell_order(mat, predictions=None):
     if predictions is not None:
         pred_list = list(predictions.values())
         pred_rank = np.array(
-            [
-                0 if "aneuploid" in str(p)
-                else 1 if "diploid" in str(p)
-                else 2
-                for p in pred_list
-            ],
+            [0 if "aneuploid" in str(p) else 1 if "diploid" in str(p) else 2 for p in pred_list],
             dtype=np.int16,
         )
         cna_magnitude = np.sum(np.abs(mat), axis=0)
@@ -73,14 +69,14 @@ def _simple_cell_order(mat, predictions=None):
 
 def _compute_distance(mat, distance="euclidean", n_cores=1):
     """Compute distance matrix for cells.
-    
+
     Parameters
     ----------
     mat : np.ndarray, shape (n_bins, n_cells)
         CNA matrix.
     distance : str
         "euclidean", "pearson", or "spearman".
-    
+
     Returns
     -------
     dist : np.ndarray
@@ -94,6 +90,7 @@ def _compute_distance(mat, distance="euclidean", n_cores=1):
         return pdist(1 - corr)
     elif distance == "spearman":
         from scipy.stats import spearmanr
+
         corr, _ = spearmanr(mat, axis=0)
         corr = np.clip(corr, -1, 1)
         return pdist(1 - corr)
@@ -217,11 +214,13 @@ def _draw_cluster_dendrogram(ax, centroid_linkage, cluster_sizes):
         xs = np.asarray(dcoord, dtype=float)
         max_height = max(max_height, float(xs.max()))
         points = np.column_stack([xs, ys])
-        segments.extend([
-            [points[0], points[1]],
-            [points[1], points[2]],
-            [points[2], points[3]],
-        ])
+        segments.extend(
+            [
+                [points[0], points[1]],
+                [points[1], points[2]],
+                [points[2], points[3]],
+            ]
+        )
 
     lc = LineCollection(segments, colors="black", linewidths=0.8)
     ax.add_collection(lc)
@@ -233,7 +232,7 @@ def _draw_cluster_dendrogram(ax, centroid_linkage, cluster_sizes):
 
 def _safe_dendrogram_with_recursion_management(Z, ax, n_cells):
     """Safely plot dendrogram with increased recursion limit.
-    
+
     Parameters
     ----------
     Z : np.ndarray
@@ -247,13 +246,19 @@ def _safe_dendrogram_with_recursion_management(Z, ax, n_cells):
     # Rough estimate: depth ~ log2(n_cells) * 2
     estimated_depth = max(1000, int(np.log2(n_cells + 1) * 10 + 500))
     old_limit = sys.getrecursionlimit()
-    
+
     try:
         # Temporarily increase recursion limit
         sys.setrecursionlimit(min(estimated_depth, 1000000))  # Cap at 1M to avoid stack overflow
-        dendrogram(Z, orientation="left", ax=ax, no_labels=True,
-                   color_threshold=0, above_threshold_color="black",
-                   link_color_func=lambda _: "black")
+        dendrogram(
+            Z,
+            orientation="left",
+            ax=ax,
+            no_labels=True,
+            color_threshold=0,
+            above_threshold_color="black",
+            link_color_func=lambda _: "black",
+        )
     except RecursionError:
         # Still failed, draw placeholder
         ax.text(0.5, 0.5, "dendrogram\nskipped\n(recursion)", ha="center", va="center", fontsize=8)
@@ -275,7 +280,7 @@ def _add_chr_labels(ax, chrom_info):
     chrom_s = np.array([str(c) for c in chrom_arr])
     boundary_mask = np.concatenate([[True], chrom_s[1:] != chrom_s[:-1]])
     starts = np.where(boundary_mask)[0]
-    ends   = np.concatenate([starts[1:], [n_bins]])
+    ends = np.concatenate([starts[1:], [n_bins]])
     chr_ids = chrom_arr[starts]
 
     def _chr_label(c):
@@ -290,21 +295,36 @@ def _add_chr_labels(ax, chrom_info):
     ax.set_xlim(-0.5, n_bins - 0.5)
     for cid, s, e in zip(chr_ids, starts, ends):
         mid = (s + e - 1) / 2.0
-        ax.text(mid, 1.08, _chr_label(cid),
-                transform=trans,
-                ha="center", va="bottom", fontsize=8,
-                color="black", clip_on=False)
+        ax.text(
+            mid,
+            1.08,
+            _chr_label(cid),
+            transform=trans,
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color="black",
+            clip_on=False,
+        )
 
 
-def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
-                 distance="euclidean", n_cores=1, WNS1="", WNS="",
-                 output_path=None):
+def plot_heatmap(
+    mat,
+    chrom_info,
+    predictions=None,
+    sample_name="",
+    distance="euclidean",
+    n_cores=1,
+    WNS1="",
+    WNS="",
+    output_path=None,
+):
     """Plot CNA heatmap with hierarchical clustering dendrogram.
 
     Layout mirrors R copykat heatmap.3:
       Row 0 (thin):  [empty] [empty] [chr bar]
       Row 1 (main):  [dendrogram] [pred sidebar] [heatmap]
-    
+
     For datasets > 200k cells, uses optimized approximate clustering.
 
     Parameters
@@ -338,7 +358,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
     # Strategy 1: Standard hierarchical clustering (up to 20k cells)
     # Strategy 2: K-means clustering (20k-200k cells)
     # Strategy 3: Simple ordering by prediction/CNA (>200k cells)
-    
+
     max_dendro_cells = 3000
     max_kmeans_cells = 200000
     Z = None
@@ -346,7 +366,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
     cell_order = None
     skip_dendrogram = False
     cluster_sizes = None
-    
+
     if n_cells <= max_dendro_cells:
         # Full hierarchical clustering with dendrogram
         print(f"  Step 10a: Computing dendrogram for {n_cells} cells...")
@@ -364,7 +384,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
                 sys.setrecursionlimit(old_limit)
                 print("  WARNING: dendrogram recursion limit reached; using K-means ordering.")
                 dn_temp = {}
-            
+
             if dn_temp:
                 cell_order = dn_temp["leaves"]
             else:
@@ -373,7 +393,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
         except Exception as e:
             print(f"  WARNING: dendrogram computation failed ({e}); using fast ordering.")
             cell_order = _clustered_block_order(mat, n_clusters=min(96, max(24, n_cells // 40)))
-    
+
     elif n_cells <= max_kmeans_cells:
         # Fast clustered ordering for large datasets with a summarized dendrogram.
         print(f"  Step 10a: Computing fast clustered ordering for {n_cells} cells...")
@@ -386,7 +406,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
             print(f"  WARNING: fast clustered ordering failed ({e}); using simple ordering.")
             skip_dendrogram = True
             cell_order = _simple_cell_order(mat, predictions=predictions)
-    
+
     else:
         # For very large datasets (>200k cells), use simple ordering
         print(f"  Step 10a: Using simple ordering for {n_cells} cells (too large for clustering).")
@@ -396,7 +416,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
     # Ensure cell_order is valid
     if cell_order is None:
         cell_order = np.arange(n_cells)
-    
+
     # Reorder matrix
     mat_ordered = mat[:, cell_order]
 
@@ -414,15 +434,13 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
         width_ratios = [8, 50, 1.2]
         col_dendro, col_heat, col_cbar = 0, 1, 2
 
-    gs = GridSpec(2, n_cols, height_ratios=[1, 50], width_ratios=width_ratios,
-                  hspace=0.02, wspace=0.02)
+    gs = GridSpec(2, n_cols, height_ratios=[1, 50], width_ratios=width_ratios, hspace=0.02, wspace=0.02)
     fig = plt.figure(figsize=(22, h))
 
     # --- Chromosome bar (top, above heatmap only) -------------------------
     ax_chr = fig.add_subplot(gs[0, col_heat])
     chr_colors = (chrom_info.astype(int) % 2).astype(float)
-    ax_chr.imshow(chr_colors.reshape(1, -1), aspect="auto", cmap="binary",
-                  interpolation="nearest")
+    ax_chr.imshow(chr_colors.reshape(1, -1), aspect="auto", cmap="binary", interpolation="nearest")
     ax_chr.set_xticks([])
     ax_chr.set_yticks([])
     _add_chr_labels(ax_chr, chrom_info)
@@ -440,8 +458,9 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
     # downsampling). With nearest-neighbour interpolation both pick the same
     # source values and norm/colormap are per-pixel, so the image is the same,
     # at a fraction of the time and memory.
-    im = ax_heat.imshow(mat_ordered.T, aspect="auto", cmap=cmap, norm=norm,
-                        interpolation="nearest", interpolation_stage="data")
+    im = ax_heat.imshow(
+        mat_ordered.T, aspect="auto", cmap=cmap, norm=norm, interpolation="nearest", interpolation_stage="data"
+    )
     ax_heat.set_xlabel("Genomic position")
     ax_heat.set_yticks([])
     title_parts = [p for p in (WNS1, WNS) if p]
@@ -481,8 +500,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
         ax_pred = fig.add_subplot(gs[1, col_pred], sharey=ax_heat)
         pred_colors = np.zeros(n_cells)
         pred_list = list(predictions.values())
-        pred_ordered = [pred_list[i] if i < len(pred_list) else "not.defined"
-                        for i in cell_order]
+        pred_ordered = [pred_list[i] if i < len(pred_list) else "not.defined" for i in cell_order]
         for i, p in enumerate(pred_ordered):
             if "aneuploid" in str(p):
                 pred_colors[i] = 1.0
@@ -493,9 +511,9 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
 
         sidebar_cmap = mcolors.ListedColormap(["#1B9E77", "#7570B3", "#D95F02"])
         sidebar_norm = mcolors.BoundaryNorm([0, 0.3, 0.7, 1.0], 3)
-        ax_pred.imshow(pred_colors.reshape(-1, 1), aspect="auto",
-                       cmap=sidebar_cmap, norm=sidebar_norm,
-                       interpolation="nearest")
+        ax_pred.imshow(
+            pred_colors.reshape(-1, 1), aspect="auto", cmap=sidebar_cmap, norm=sidebar_norm, interpolation="nearest"
+        )
         ax_pred.set_xticks([])
         ax_pred.set_yticks([])
         ax_pred.set_title("Pred", fontsize=11, pad=4)
@@ -512,6 +530,7 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
     # --- Legend for predictions -------------------------------------------
     if has_pred:
         from matplotlib.patches import Patch
+
         legend_elements = [
             Patch(facecolor="#D95F02", label="pred aneuploid"),
             Patch(facecolor="#1B9E77", label="pred diploid"),
@@ -544,20 +563,22 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
 # Annotated heatmap with metadata sidebars and row splitting
 # ---------------------------------------------------------------------------
 
+
 def _natural_sort_key(s):
     """Sort key that orders numeric substrings numerically (e.g. "10" after "9")."""
     import re
+
     return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", str(s))]
 
 
 # Fixed colors for copykat prediction values (aneuploid=orange, diploid=blue)
 _COPYKAT_PRED_COLORS = {
-    "aneuploid"              : "#E8601C",  # orange
-    "c2:aneuploid:low.conf"  : "#F4A86A",  # light orange
-    "diploid"                : "#3A87C8",  # blue
-    "c1:diploid:low.conf"    : "#9EC8E8",  # light blue
-    "not.defined"            : "#B0B0B0",  # grey
-    "unknown"                : "#D4D4D4",  # light grey
+    "aneuploid": "#E8601C",  # orange
+    "c2:aneuploid:low.conf": "#F4A86A",  # light orange
+    "diploid": "#3A87C8",  # blue
+    "c1:diploid:low.conf": "#9EC8E8",  # light blue
+    "not.defined": "#B0B0B0",  # grey
+    "unknown": "#D4D4D4",  # light grey
 }
 
 
@@ -595,6 +616,7 @@ def _detect_csv_header(path):
     data (no header); otherwise the row is a header.
     """
     import pandas as pd
+
     row0 = pd.read_csv(path, header=None, nrows=1).iloc[0]
     if len(row0) > 1:
         try:
@@ -612,6 +634,7 @@ def _read_meta_csv(path):
     cast to strings so they are safe for dict keys and plot labels.
     """
     import pandas as pd
+
     header = 0 if _detect_csv_header(path) else None
     df = pd.read_csv(path, header=header)
     df = df.set_index(df.columns[0])
@@ -649,10 +672,17 @@ def _order_group(mat_grp, distance="euclidean", n_cores=1):
         return np.arange(n, dtype=int)
 
 
-def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
-                           row_split_col=None, sample_name="",
-                           distance="euclidean", n_cores=1,
-                           output_path=None):
+def plot_heatmap_annotated(
+    mat,
+    cell_names,
+    chrom_info,
+    meta_csv,
+    row_split_col=None,
+    sample_name="",
+    distance="euclidean",
+    n_cores=1,
+    output_path=None,
+):
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
     Reads a CSV where the first column is the cell name and every remaining
@@ -701,9 +731,7 @@ def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
     if row_split_col is None:
         row_split_col = ann_cols[0]
     if row_split_col not in ann_cols:
-        raise ValueError(
-            f"row_split_col '{row_split_col}' not found; available: {ann_cols}"
-        )
+        raise ValueError(f"row_split_col '{row_split_col}' not found; available: {ann_cols}")
 
     # Ensure row_split_col is always the leftmost annotation sidebar
     ann_cols = [row_split_col] + [c for c in ann_cols if c != row_split_col]
@@ -731,31 +759,31 @@ def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
 
     # ── 3. Build per-column categorical RGB image arrays ──────────────────
     ann_cmaps = {}  # col → {category: hex}
-    ann_imgs = {}   # col → float32 array (n_cells, 1, 3)
+    ann_imgs = {}  # col → float32 array (n_cells, 1, 3)
 
     for col in ann_cols:
         vals = meta_ordered[col].astype(str)
         cmap_dict = _assign_cat_colors(vals)
         ann_cmaps[col] = cmap_dict
-        ann_imgs[col] = np.array(
-            [mcolors.to_rgb(cmap_dict[v]) for v in vals], dtype=np.float32
-        ).reshape(n_cells, 1, 3)
+        ann_imgs[col] = np.array([mcolors.to_rgb(cmap_dict[v]) for v in vals], dtype=np.float32).reshape(n_cells, 1, 3)
 
     # ── 4. Figure layout ──────────────────────────────────────────────────
     k = len(ann_cols)
-    col_grp = 0          # group-name labels
-    col_ann0 = 1         # first annotation sidebar
-    col_heat = 1 + k     # main heatmap
-    col_cbar = 2 + k     # colour bar
-    col_leg = 3 + k      # categorical legend
+    col_grp = 0  # group-name labels
+    col_ann0 = 1  # first annotation sidebar
+    col_heat = 1 + k  # main heatmap
+    col_cbar = 2 + k  # colour bar
+    col_leg = 3 + k  # categorical legend
     n_cols_total = 4 + k
 
     width_ratios = [1.5] + [1.0] * k + [35.0, 0.8, 8.0]
     gs = GridSpec(
-        2, n_cols_total,
+        2,
+        n_cols_total,
         height_ratios=[1, 50],
         width_ratios=width_ratios,
-        hspace=0.02, wspace=0.02,
+        hspace=0.02,
+        wspace=0.02,
     )
     fig_h = max(15.0, min(28.0, 10.0 + n_cells / 20000.0))
     fig = plt.figure(figsize=(22, fig_h))
@@ -764,9 +792,12 @@ def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
     ax_heat = fig.add_subplot(gs[1, col_heat])
     norm = mcolors.TwoSlopeNorm(vmin=-0.5, vcenter=0, vmax=0.5)
     im = ax_heat.imshow(
-        mat_ordered.T, aspect="auto",
-        cmap=plt.cm.RdBu_r, norm=norm,
-        interpolation="nearest", interpolation_stage="data",  # see plot_heatmap
+        mat_ordered.T,
+        aspect="auto",
+        cmap=plt.cm.RdBu_r,
+        norm=norm,
+        interpolation="nearest",
+        interpolation_stage="data",  # see plot_heatmap
     )
     ax_heat.set_xticks([])
     ax_heat.set_yticks([])
@@ -781,7 +812,9 @@ def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
     ax_chr = fig.add_subplot(gs[0, col_heat])
     ax_chr.imshow(
         (chrom_info.astype(int) % 2).reshape(1, -1).astype(float),
-        aspect="auto", cmap="binary", interpolation="nearest",
+        aspect="auto",
+        cmap="binary",
+        interpolation="nearest",
     )
     ax_chr.set_xticks([])
     ax_chr.set_yticks([])
@@ -800,8 +833,13 @@ def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
         ax_top = fig.add_subplot(gs[0, col_ann0 + i])
         ax_top.axis("off")
         ax_top.text(
-            0.5, 0.02, col,
-            ha="center", va="bottom", fontsize=10, rotation=90,
+            0.5,
+            0.02,
+            col,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            rotation=90,
             transform=ax_top.transAxes,
         )
 
@@ -812,8 +850,12 @@ def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
     for i, grp in enumerate(group_names):
         y_mid = (group_boundaries[i] + group_boundaries[i + 1]) / 2.0
         ax_grp.text(
-            0.98, y_mid, str(grp),
-            ha="right", va="center", fontsize=10,
+            0.98,
+            y_mid,
+            str(grp),
+            ha="right",
+            va="center",
+            fontsize=10,
         )
 
     # ── 9. Colour bar ─────────────────────────────────────────────────────
@@ -824,23 +866,33 @@ def plot_heatmap_annotated(mat, cell_names, chrom_info, meta_csv,
 
     # ── 10. Categorical legend ────────────────────────────────────────────
     from matplotlib.patches import Patch
+
     ax_leg = fig.add_subplot(gs[1, col_leg])
     ax_leg.axis("off")
     patches = []
     for col in ann_cols:
-        patches.append(Patch(facecolor="none", edgecolor="none",
-                             label=f"── {col} ──"))
+        patches.append(Patch(facecolor="none", edgecolor="none", label=f"── {col} ──"))
         for cat in sorted(ann_cmaps[col], key=_natural_sort_key):
-            patches.append(Patch(
-                facecolor=ann_cmaps[col][cat], edgecolor="gray",
-                linewidth=0.3, label=str(cat),
-            ))
+            patches.append(
+                Patch(
+                    facecolor=ann_cmaps[col][cat],
+                    edgecolor="gray",
+                    linewidth=0.3,
+                    label=str(cat),
+                )
+            )
     ax_leg.legend(
-        handles=patches, loc="upper left",
-        bbox_to_anchor=(0.25, 1.0), fontsize=10,
-        frameon=True, fancybox=False, edgecolor="gray",
-        handlelength=1.0, handleheight=0.8,
-        borderaxespad=0, labelspacing=0.2,
+        handles=patches,
+        loc="upper left",
+        bbox_to_anchor=(0.25, 1.0),
+        fontsize=10,
+        frameon=True,
+        fancybox=False,
+        edgecolor="gray",
+        handlelength=1.0,
+        handleheight=0.8,
+        borderaxespad=0,
+        labelspacing=0.2,
     )
 
     # ── 11. Empty top-row placeholders ───────────────────────────────────

@@ -38,7 +38,7 @@ def load_cyclegenes():
 
 def load_example_data():
     """Load the built-in breast tumor example dataset (302 cells, 33694 genes).
-    
+
     Returns
     -------
     pd.DataFrame
@@ -47,6 +47,6 @@ def load_example_data():
     mtx = mmread(os.path.join(_DATA_DIR, "exp_rawdata_sparse.mtx"))
     genes = open(os.path.join(_DATA_DIR, "exp_rawdata_genes.txt")).read().strip().split("\n")
     barcodes = open(os.path.join(_DATA_DIR, "exp_rawdata_barcodes.txt")).read().strip().split("\n")
-    
+
     dense = np.array(mtx.todense())
     return pd.DataFrame(dense, index=genes, columns=barcodes)

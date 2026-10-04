@@ -94,14 +94,14 @@ def _dlm_smooth_blocks(y, K, B, out):
 
 def dlm_smooth(norm_mat, n_cores=1):
     """Apply DLM smoothing to all cells in parallel.
-    
+
     Parameters
     ----------
     norm_mat : np.ndarray, shape (n_genes, n_cells)
         Normalized gene expression matrix.
     n_cores : int
         Number of parallel threads.
-    
+
     Returns
     -------
     np.ndarray, shape (n_genes, n_cells)
@@ -111,14 +111,16 @@ def dlm_smooth(norm_mat, n_cores=1):
     max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
     n_blocks = -(-n_cells // _BLOCK_CELLS)
     n_jobs = max(1, min(int(n_cores), max_cores, n_blocks, numba.config.NUMBA_NUM_THREADS))
-    _LAST_PAR_INFO.update({
-        "parallel": n_jobs > 1,
-        "requested_cores": int(n_cores),
-        "effective_cores": int(n_jobs),
-        "tasks": int(n_cells),
-        "chunk_size": int(_BLOCK_CELLS),
-        "engine": "numba_shared_gains",
-    })
+    _LAST_PAR_INFO.update(
+        {
+            "parallel": n_jobs > 1,
+            "requested_cores": int(n_cores),
+            "effective_cores": int(n_jobs),
+            "tasks": int(n_cells),
+            "chunk_size": int(_BLOCK_CELLS),
+            "engine": "numba_shared_gains",
+        }
+    )
 
     K, B = _dlm_gains(n_genes)
     y = np.asarray(norm_mat, dtype=np.float64)
