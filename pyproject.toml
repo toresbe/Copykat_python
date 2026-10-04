@@ -81,6 +81,7 @@ module = [
     "copykat_py.smoothing",
     "copykat_py.segmentation",
     "copykat_py.convert_bins",
+    "copykat_py.baseline",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

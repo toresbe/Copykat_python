@@ -4,7 +4,9 @@ Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R 
 """
 
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, cast
 
 import fastcluster
 import numpy as np
@@ -14,7 +16,21 @@ from scipy.spatial.distance import cdist, pdist
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
-_LAST_CLUSTER_INFO = {
+from copykat_py._types import (
+    BaselineResult,
+    BaselineWarning,
+    CellByFeature,
+    ClusterLabels,
+    FloatArray,
+    GeneByCell,
+    GeneProfile,
+    IntArray,
+    LinkageMatrix,
+    ParallelInfo,
+    SyntheticBaselineResult,
+)
+
+_LAST_CLUSTER_INFO: ParallelInfo = {
     "step": "hierarchical_cluster",
     "parallel": False,
     "requested_cores": 1,
@@ -35,7 +51,7 @@ FULL_CLUSTER_MAX_CELLS = 2000
 WARD_PDIST_MAX_GB = 8.0
 
 
-def _ward_pdist_fits(n_samples):
+def _ward_pdist_fits(n_samples: int) -> bool:
     budget_gb = float(os.getenv("COPYKAT_WARD_PDIST_MAX_GB", WARD_PDIST_MAX_GB))
     # the condensed matrix plus fastcluster.linkage's working copy of it
     return n_samples * (n_samples - 1) * 8 <= budget_gb * 1e9
@@ -52,11 +68,11 @@ MOUSE_AUTO_PCA_LARGE_SAMPLE = 128
 ADAPTIVE_PCA_COMPONENTS = AUTO_PCA_LARGE_SAMPLE
 
 
-def get_last_cluster_info():
-    return dict(_LAST_CLUSTER_INFO)
+def get_last_cluster_info() -> ParallelInfo:
+    return _LAST_CLUSTER_INFO.copy()
 
 
-def resolve_adaptive_pca_components(n_cells, pca_components=None, genome="hg20"):
+def resolve_adaptive_pca_components(n_cells: int, pca_components: int | None = None, genome: str = "hg20") -> int:
     """Choose the PCA component cap for large-cell clustering.
 
     When ``pca_components`` is provided, that explicit value is used.
@@ -83,12 +99,12 @@ def resolve_adaptive_pca_components(n_cells, pca_components=None, genome="hg20")
     return AUTO_PCA_LARGE_SAMPLE
 
 
-def _cluster_sizes(labels):
+def _cluster_sizes(labels: ClusterLabels) -> IntArray:
     _, counts = np.unique(labels, return_counts=True)
     return counts
 
 
-def _reduce_for_clustering(data, max_components=64):
+def _reduce_for_clustering(data: CellByFeature, max_components: int = 64) -> tuple[CellByFeature, int | None]:
     n_samples, n_features = data.shape
     if n_samples <= FULL_CLUSTER_MAX_CELLS or n_features <= 256:
         return data, None
@@ -101,12 +117,12 @@ def _reduce_for_clustering(data, max_components=64):
     return reducer.fit_transform(data), n_components
 
 
-def _effective_threads(n_cores):
+def _effective_threads(n_cores: int) -> int:
     max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
     return max(1, min(int(n_cores), max_cores))
 
 
-def _pdist_euclidean(data, n_cores=1, block_bytes=64 << 20):
+def _pdist_euclidean(data: CellByFeature, n_cores: int = 1, block_bytes: int = 64 << 20) -> FloatArray:
     """Condensed Euclidean distances, bit-identical to ``pdist(data, "euclidean")``.
 
     With several cores, row blocks are computed with ``cdist`` in threads
@@ -124,7 +140,7 @@ def _pdist_euclidean(data, n_cores=1, block_bytes=64 << 20):
     # Condensed offset of row i (its distances to j > i)
     row_start = np.concatenate([[0], np.cumsum(np.arange(n_samples - 1, 0, -1))])
 
-    def _block(lo):
+    def _block(lo: int) -> None:
         hi = min(lo + rows_per_block, n_samples - 1)
         block = cdist(data[lo:hi], data[lo:], metric="euclidean")
         for i in range(lo, hi):
@@ -135,7 +151,7 @@ def _pdist_euclidean(data, n_cores=1, block_bytes=64 << 20):
     return dist
 
 
-def _collapse_repeated_features(data, block_rows=4096):
+def _collapse_repeated_features(data: CellByFeature, block_rows: int = 4096) -> CellByFeature | None:
     """Merge runs of identical adjacent feature columns into one column each.
 
     Each kept column is scaled by sqrt(run length), so Euclidean distances
@@ -161,7 +177,7 @@ def _collapse_repeated_features(data, block_rows=4096):
     return data[:, starts].astype(np.float64) * np.sqrt(run_lengths)
 
 
-def _ward_linkage(data, n_cores=1):
+def _ward_linkage(data: CellByFeature, n_cores: int = 1) -> tuple[LinkageMatrix, str]:
     """Exact Ward linkage of the rows of ``data`` (Euclidean), fastest engine that fits.
 
     Returns the linkage matrix and the engine name. Both fastcluster engines
@@ -175,15 +191,15 @@ def _ward_linkage(data, n_cores=1):
 
 
 def _hierarchical_cluster(
-    data,
-    n_clusters,
-    method="ward",
-    metric="euclidean",
-    max_cells=65536,
-    n_cores=1,
-    reduce=True,
-    pca_components=64,
-):
+    data: CellByFeature,
+    n_clusters: int,
+    method: str = "ward",
+    metric: str = "euclidean",
+    max_cells: int = 65536,
+    n_cores: int = 1,
+    reduce: bool = True,
+    pca_components: int = 64,
+) -> tuple[ClusterLabels, LinkageMatrix]:
     """Hierarchical clustering with fastcluster-first execution.
 
     For Ward + Euclidean clustering, use exact fastcluster Ward linkage for
@@ -243,7 +259,7 @@ def _hierarchical_cluster(
                 _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
             _LAST_CLUSTER_INFO["effective_cores"] = _effective_threads(n_cores)
         else:
-            dist = pdist(data, metric=metric)
+            dist = pdist(data, metric=cast(Any, metric))  # validated by scipy at runtime
             Z = fastcluster.linkage(dist, method=method, preserve_input=True)
             _LAST_CLUSTER_INFO["engine"] = "full_pdist+fastcluster.linkage"
         labels = fcluster(Z, t=n_clusters, criterion="maxclust")
@@ -275,7 +291,7 @@ def _hierarchical_cluster(
     if metric == "euclidean":
         dist = pdist(data, metric="euclidean")
     else:
-        dist = pdist(data, metric=metric)
+        dist = pdist(data, metric=cast(Any, metric))  # validated by scipy at runtime
 
     Z = fastcluster.linkage(dist, method=method, preserve_input=True)
     _LAST_CLUSTER_INFO["engine"] = "fastcluster.linkage"
@@ -284,7 +300,13 @@ def _hierarchical_cluster(
     return labels, Z
 
 
-def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1e-8):
+def _fit_gmm_3component(
+    data: FloatArray,
+    mu_init: Sequence[float] | None = None,
+    sigma_init: float | None = None,
+    max_iter: int = 500,
+    tol: float = 1e-8,
+) -> tuple[FloatArray, FloatArray, float]:
     """Fit a 3-component Gaussian Mixture Model (gain, neutral, loss).
 
     Parameters
@@ -306,7 +328,7 @@ def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1
         Fitted shared sigma.
     """
     if sigma_init is None:
-        sigma_init = max(0.05, 0.5 * np.std(data))
+        sigma_init = max(0.05, 0.5 * float(np.std(data)))
     if mu_init is None:
         mu_init = [-0.2, 0.0, 0.2]
 
@@ -339,7 +361,14 @@ def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1
     return means, weights, sigma
 
 
-def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, pca_components=None, genome="hg20"):
+def baseline_norm_cl(
+    norm_mat_smooth: GeneByCell,
+    min_cells: int = 5,
+    n_cores: int = 1,
+    cell_names: Sequence[str] | None = None,
+    pca_components: int | None = None,
+    genome: str = "hg20",
+) -> BaselineResult:
     """Find a cluster of diploid cells using integrative clustering + GMM variance test.
 
     Mirrors baseline.norm.cl.R:
@@ -403,9 +432,9 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     # GMM on each cluster consensus - parallelized for speed
     unique_clusters = sorted(set(labels))
 
-    def fit_gmm_sigma(cluster_consensus):
+    def fit_gmm_sigma(cluster_consensus: GeneProfile) -> float:
         """Fit GMM for a single cluster consensus and return its sigma (for parallel execution)."""
-        sx = max(0.05, 0.5 * np.std(cluster_consensus))
+        sx = max(0.05, 0.5 * float(np.std(cluster_consensus)))
         return _fit_gmm_3component(cluster_consensus, sigma_init=sx, max_iter=5000)[2]
 
     # Parallel GMM fitting. Consensus profiles are computed up front and fitted
@@ -455,7 +484,7 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     PDt = f_dist.sf(f_stat, n_genes, n_genes)
 
     if wn <= 0.15 or not np.all(_cluster_sizes(labels) > min_cells) or PDt > 0.05:
-        WNS = "unclassified.prediction"
+        WNS: BaselineWarning = "unclassified.prediction"
         print("  low confidence in classification")
     else:
         WNS = ""
@@ -468,8 +497,8 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     basel = np.median(norm_mat_smooth[:, normal_mask], axis=1)
     preN_indices = np.where(normal_mask)[0]
     if cell_names is not None:
-        cell_names = np.asarray(cell_names, dtype=object)
-        preN = cell_names[preN_indices].tolist()
+        names = np.asarray(cell_names, dtype=object)
+        preN = names[preN_indices].tolist()
     else:
         preN = preN_indices
 
@@ -482,17 +511,17 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
 
 
 def baseline_gmm(
-    CNA_mat,
-    cell_names,
-    max_normal=5,
-    mu_cut=0.05,
-    Nfraq_cut=0.99,
-    RE_before=None,
-    n_cores=1,
-    pca_components=None,
-    genome="hg20",
-    cluster=True,
-):
+    CNA_mat: GeneByCell,
+    cell_names: Sequence[str],
+    max_normal: int = 5,
+    mu_cut: float = 0.05,
+    Nfraq_cut: float = 0.99,
+    RE_before: BaselineResult | None = None,
+    n_cores: int = 1,
+    pca_components: int | None = None,
+    genome: str = "hg20",
+    cluster: bool = True,
+) -> BaselineResult:
     """Identify diploid cells one-by-one using GMM (fallback when clustering is uncertain).
 
     Mirrors baseline.GMM.R.
@@ -528,7 +557,7 @@ def baseline_gmm(
 
     for m in range(n_cells):
         sam = CNA_mat[:, m]
-        sg = max(0.05, 0.5 * np.std(sam))
+        sg = max(0.05, 0.5 * float(np.std(sam)))
 
         means, weights, _sigma = _fit_gmm_3component(sam, sigma_init=sg, max_iter=500)
 
@@ -572,7 +601,7 @@ def baseline_gmm(
         )
 
     if len(N_normal) > 2:
-        WNS = ""
+        WNS: BaselineWarning = ""
         preN = N_normal
         normal_mask = np.isin(np.asarray(cell_names, dtype=object), np.asarray(preN, dtype=object))
         basel = np.mean(CNA_mat[:, normal_mask], axis=1)
@@ -586,7 +615,13 @@ def baseline_gmm(
             return {"basel": np.median(CNA_mat, axis=1), "WNS": WNS, "preN": N_normal, "cl": labels}
 
 
-def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, genome="hg20"):
+def baseline_synthetic(
+    norm_mat: GeneByCell,
+    min_cells: int = 10,
+    n_cores: int = 1,
+    pca_components: int | None = None,
+    genome: str = "hg20",
+) -> SyntheticBaselineResult:
     """Estimate baseline using synthetic normal profiles (for cell line data).
 
     Mirrors baseline.synthetic.R.

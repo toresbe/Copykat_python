@@ -741,7 +741,9 @@ def copykat(
         basel = basa["basel"]
         WNS = basa["WNS"]
         preN = basa["preN"]
-        CL = basa["cl"]
+        clustered = basa["cl"]
+        assert clustered is not None  # baseline_norm_cl always clusters
+        CL = clustered
 
         if WNS == "unclassified.prediction":
             cluster_preN = list(preN) if preN is not None else []
@@ -791,7 +793,7 @@ def copykat(
                 # actually means here, so it is the more consistent yardstick
                 # to reuse for this cross-candidate comparison.
                 def _basel_sigma(basel_vec):
-                    sigma_init = max(0.05, 0.5 * np.std(basel_vec))
+                    sigma_init = max(0.05, 0.5 * float(np.std(basel_vec)))
                     return _fit_gmm_3component(basel_vec, sigma_init=sigma_init, max_iter=5000)[2]
 
                 clustering_sigma = float(_basel_sigma(basa_cluster["basel"]))
