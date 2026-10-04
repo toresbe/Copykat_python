@@ -2,8 +2,8 @@
 
 import os
 
-import numpy as np
 import pandas as pd
+from scipy import sparse
 from scipy.io import mmread
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -49,11 +49,11 @@ def load_example_data():
     pd.DataFrame
         UMI count matrix with genes as rows and cells as columns.
     """
-    mtx = mmread(os.path.join(_DATA_DIR, "exp_rawdata_sparse.mtx"))
+    mtx = sparse.coo_matrix(mmread(os.path.join(_DATA_DIR, "exp_rawdata_sparse.mtx")))
     with open(os.path.join(_DATA_DIR, "exp_rawdata_genes.txt")) as f:
         genes = f.read().strip().split("\n")
     with open(os.path.join(_DATA_DIR, "exp_rawdata_barcodes.txt")) as f:
         barcodes = f.read().strip().split("\n")
 
-    dense = np.array(mtx.todense())
+    dense = mtx.toarray()
     return pd.DataFrame(dense, index=genes, columns=barcodes)

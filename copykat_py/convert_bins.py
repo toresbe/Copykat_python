@@ -84,7 +84,7 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
     gene_symbols = RNA_mat[symbol_col].values
 
     # Map genes in RNA_mat to indices for fast lookup.
-    gene_to_idx = {}
+    gene_to_idx: dict[str, list[int]] = {}
     for i, g in enumerate(gene_symbols):
         if g not in gene_to_idx:
             gene_to_idx[g] = []
@@ -92,7 +92,7 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
 
     # Pre-compute which RNA rows belong to each DNA bin while preserving
     # the original R logic of using the full annotation table for bin membership.
-    bin_gene_indices = [[] for _ in range(len(DNA))]
+    bin_gene_indices: list[list[int]] = [[] for _ in range(len(DNA))]
     chrom_values = DNA["chrom"].values
 
     for chrom_id in np.unique(chrom_values):
@@ -119,7 +119,7 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
         for local_i, bin_i in enumerate(dna_idx):
             if right_idx[local_i] <= left_idx[local_i]:
                 continue
-            row_indices = []
+            row_indices: list[int] = []
             for symbol in symbols[left_idx[local_i] : right_idx[local_i]]:
                 row_indices.extend(gene_to_idx.get(symbol, ()))
             if row_indices:

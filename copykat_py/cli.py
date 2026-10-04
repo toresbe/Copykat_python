@@ -5,11 +5,14 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
 from scipy import sparse as sp
 from scipy.io import mmread
+
+from copykat_py._types import SparseMatrix
 
 
 class TeeStream:
@@ -258,7 +261,7 @@ def _load_matrix_input(input_path, genes_path=None, barcodes_path=None):
             genes = pd.read_csv(genes_path, sep="\t", header=None)
             gene_names = genes.iloc[:, -1].values if genes.shape[1] > 1 else genes.iloc[:, 0].values
         else:
-            gene_names = [f"gene_{i}" for i in range(mat.shape[0])]
+            gene_names = np.array([f"gene_{i}" for i in range(mat.shape[0])])
 
         if barcodes_path:
             barcodes = pd.read_csv(barcodes_path, sep="\t", header=None, dtype=str).iloc[:, 0].values
@@ -330,7 +333,7 @@ def _anndata_to_rawmat(adata, layer=None, use_raw=False):
         matrix_label = "adata.X"
 
     if sp.issparse(matrix):
-        matrix_t = matrix.T.tocsc(copy=True).astype(np.float32)
+        matrix_t = cast(SparseMatrix, matrix).T.tocsc(copy=True).astype(np.float32)
     else:
         matrix_t = sp.csc_matrix(np.asarray(matrix, dtype=np.float32).T)
 

@@ -111,7 +111,7 @@ def dlm_smooth(norm_mat, n_cores=1):
     n_genes, n_cells = norm_mat.shape
     max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
     n_blocks = -(-n_cells // _BLOCK_CELLS)
-    n_jobs = max(1, min(int(n_cores), max_cores, n_blocks, numba.config.NUMBA_NUM_THREADS))
+    n_jobs = max(1, min(int(n_cores), max_cores, n_blocks, numba.config.NUMBA_NUM_THREADS))  # type: ignore[attr-defined]
     _LAST_PAR_INFO.update(
         {
             "parallel": n_jobs > 1,

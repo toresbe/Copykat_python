@@ -146,24 +146,18 @@ def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
 
     # Step 1: Compute cluster consensus profiles (median per cluster)
     unique_clusters = sorted(set(clu))
-    CON = []
-    for cl_id in unique_clusters:
-        mask = clu == cl_id
-        consensus = np.median(fttmat[:, mask], axis=1)
-        CON.append(consensus)
-    CON = np.column_stack(CON)
+    CON = np.column_stack([np.median(fttmat[:, clu == cl_id], axis=1) for cl_id in unique_clusters])
 
     # Back-transform: exp()
     norm_mat_sm = np.exp(CON)
 
     # Step 2: Find breakpoints for each cluster consensus
-    BR = set()
+    breakpoints: set[int] = set()
     for c in range(norm_mat_sm.shape[1]):
         bre = _find_breakpoints_for_cluster(norm_mat_sm[:, c], bins, cut_cor, rng_seed=42 + c, mc_samples=mc_samples)
-        bre_full = sorted({0, *bre, n_genes - 1})
-        BR.update(bre_full)
+        breakpoints.update({0, *bre, n_genes - 1})
 
-    BR = sorted(BR)
+    BR = sorted(breakpoints)
 
     # Step 3: For each cell, compute segment posterior means.
     # With alpha initialized to the segment mean and beta fixed to 1,

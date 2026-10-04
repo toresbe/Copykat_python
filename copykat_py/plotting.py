@@ -154,6 +154,7 @@ def _clustered_block_layout(mat, n_clusters=128, random_state=1234):
         with _thread_limited_numeric_ops(1):
             centroid_linkage = fastcluster.linkage_vector(centroid_mat, method="ward", metric="euclidean")
         cluster_order_local = dendrogram(centroid_linkage, no_plot=True)["leaves"]
+        assert cluster_order_local is not None  # always set unless dendrogram plots truncated
         cluster_order = [present_clusters[i] for i in cluster_order_local]
     else:
         centroid_linkage = None
@@ -362,7 +363,7 @@ def plot_heatmap(
     max_kmeans_cells = 200000
     Z = None
     Z_summary = None
-    cell_order = None
+    cell_order: list[int] | np.ndarray | None = None
     skip_dendrogram = False
     cluster_sizes = None
 
@@ -372,20 +373,20 @@ def plot_heatmap(
         try:
             Z = _safe_linkage(mat, distance, "ward", n_cores)
             # Use safe dendrogram with recursion management
-            dn_temp = {}
+            leaves: list[int] | None = None
             try:
                 old_limit = sys.getrecursionlimit()
                 estimated_depth = max(1000, int(np.log2(n_cells + 1) * 10 + 500))
                 sys.setrecursionlimit(min(estimated_depth, 1000000))
-                dn_temp = dendrogram(Z, no_plot=True)
+                leaves = dendrogram(Z, no_plot=True)["leaves"]
                 sys.setrecursionlimit(old_limit)
             except RecursionError:
                 sys.setrecursionlimit(old_limit)
                 print("  WARNING: dendrogram recursion limit reached; using K-means ordering.")
-                dn_temp = {}
+                leaves = None
 
-            if dn_temp:
-                cell_order = dn_temp["leaves"]
+            if leaves is not None:
+                cell_order = leaves
             else:
                 # Fallback to fast block ordering
                 cell_order = _clustered_block_order(mat, n_clusters=min(96, max(24, n_cells // 40)))
@@ -597,9 +598,9 @@ def _assign_cat_colors(values):
 
     n = len(cats)
     if n <= 10:
-        palette = [mcolors.to_hex(c) for c in plt.cm.tab10.colors]
+        palette = [mcolors.to_hex(plt.cm.tab10(i)) for i in range(10)]
     elif n <= 20:
-        palette = [mcolors.to_hex(c) for c in plt.cm.tab20.colors]
+        palette = [mcolors.to_hex(plt.cm.tab20(i)) for i in range(20)]
     else:
         palette = [mcolors.to_hex(plt.cm.hsv(i / n)) for i in range(n)]
     cmap = {cat: palette[i % len(palette)] for i, cat in enumerate(cats)}
@@ -752,9 +753,9 @@ def plot_heatmap_annotated(
         group_boundaries.append(len(ordered_indices))
         print(f"    '{grp}': {len(grp_idx)} cells ordered")
 
-    ordered_indices = np.array(ordered_indices, dtype=int)
-    mat_ordered = mat[:, ordered_indices]
-    meta_ordered = meta_aligned.iloc[ordered_indices].reset_index(drop=True)
+    order = np.array(ordered_indices, dtype=int)
+    mat_ordered = mat[:, order]
+    meta_ordered = meta_aligned.iloc[order].reset_index(drop=True)
 
     # ── 3. Build per-column categorical RGB image arrays ──────────────────
     ann_cmaps = {}  # col → {category: hex}

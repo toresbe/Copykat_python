@@ -437,13 +437,13 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     if n_cells > 3000:
         rng = np.random.RandomState(1234)
         target = max(3000, min(int(0.20 * n_cells), 20000))
-        idx = []
+        idx_parts = []
         for cl in np.unique(labels_2):
             cl_idx = np.where(labels_2 == cl)[0]
             n_take = max(200, int(target * len(cl_idx) / n_cells))
             n_take = min(n_take, len(cl_idx))
-            idx.append(rng.choice(cl_idx, size=n_take, replace=False))
-        idx = np.concatenate(idx)
+            idx_parts.append(rng.choice(cl_idx, size=n_take, replace=False))
+        idx = np.concatenate(idx_parts)
         wn = silhouette_score(data_t[idx], labels_2[idx], metric="euclidean")
     else:
         wn = silhouette_score(data_t, labels_2, metric="euclidean")
@@ -651,9 +651,7 @@ def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, g
     expr_relat = np.hstack(expr_relat_parts)
 
     # Reorder to match original cell order
-    cluster_order = []
-    for cl_id in unique_clusters:
-        cluster_order.extend(np.where(labels == cl_id)[0])
+    cluster_order = np.concatenate([np.where(labels == cl_id)[0] for cl_id in unique_clusters])
 
     # Create inverse permutation
     inv_perm = np.argsort(cluster_order)

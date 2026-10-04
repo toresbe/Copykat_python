@@ -26,7 +26,7 @@ dependencies = [
 [project.optional-dependencies]
 large-datasets = ["fastcluster>=1.3.0"]
 all = ["fastcluster>=1.3.0"]
-dev = ["ruff>=0.6"]
+dev = ["ruff>=0.6", "mypy>=1.10", "pandas-stubs", "scipy-stubs"]
 
 [project.scripts]
 copykat-py = "copykat_py.cli:main"
@@ -64,3 +64,15 @@ allowed-confusables = ["×"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["copykat_py"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["copykat_py"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# No type information published for these.
+module = ["fastcluster", "numba", "numba.*", "sklearn", "sklearn.*", "joblib", "threadpoolctl", "anndata", "pyarrow", "pyarrow.*"]
+ignore_missing_imports = true

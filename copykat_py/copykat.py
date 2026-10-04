@@ -18,7 +18,8 @@ import os
 import pickle
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -28,6 +29,7 @@ from scipy import sparse
 from scipy.cluster.hierarchy import fcluster
 from scipy.io import mmread
 
+from copykat_py._types import SparseMatrix
 from copykat_py.annotation import annotate_gene_rows
 from copykat_py.baseline import (
     AUTO_PCA_CELL_COUNT_CUTOFF,
@@ -127,7 +129,7 @@ def _write_cna_csv(path, lead_df, values, value_columns, round_floats=True, quot
             pa_csv.write_csv(_chunk_table(start, stop, block), buf, write_options=options)
             return buf.getvalue()
 
-        pending = deque()
+        pending: deque[Future[bytes]] = deque()
         with open(path, "wb") as f, ThreadPoolExecutor(n_threads) as executor:
             for start in range(0, n_rows, chunk_rows):
                 pending.append(executor.submit(_format, start))
@@ -356,7 +358,7 @@ def _prepare_input_matrix(rawmat, min_gene_per_cell, low_dr):
         if mat is None:
             raise ValueError("Dict input must contain 'matrix' key")
         if sparse.issparse(mat):
-            mat = mat.tocsc(copy=False)
+            mat = cast(SparseMatrix, mat).tocsc(copy=False)
             mat, genes = _aggregate_duplicate_genes_sparse(mat, genes)
             mat = mat.tocsc(copy=False)
             original_cell_names = barcodes.tolist()
@@ -420,7 +422,7 @@ def _keep_cells_by_chr_coverage(values, chroms, ngene_chr):
             (np.ones(len(chrom_codes), dtype=np.int64), (chrom_codes, np.arange(len(chrom_codes)))),
             shape=(len(unique_chroms), len(chrom_codes)),
         )
-        counts = (indicator @ (values != 0).astype(np.int64)).toarray()
+        counts = (indicator @ cast(SparseMatrix, values).astype(bool).astype(np.int64)).toarray()
     else:
         nonzero = values != 0
         counts = np.vstack([nonzero[chrom_codes == chrom_idx].sum(axis=0) for chrom_idx in range(len(unique_chroms))])
@@ -615,7 +617,7 @@ def copykat(
     # bits can flip near-tie merges in the step-4 clustering on low-confidence
     # samples, so keep the original layout to reproduce results exactly.
     if sparse.issparse(expr_values):
-        rawmat3 = expr_values.astype(np.float64).toarray(order="F")
+        rawmat3 = cast(SparseMatrix, expr_values).astype(np.float64).toarray(order="F")
     else:
         rawmat3 = np.asfortranarray(expr_values, dtype=np.float64)
     del expr_values
@@ -1048,22 +1050,23 @@ def copykat(
         # Step 9: Save results
         # =========================================================================
         pred_dict = None
+        res = None
         if cell_line != "yes":
             pred_dict = {cell_cols_seg[i]: com_preN[i] for i in range(len(cell_cols_seg))}
             for cell in original_cell_names:
                 if cell not in pred_dict:
                     pred_dict[cell] = "not.defined"
-
-        print("step 9: saving results ...")
-        step_start = time.perf_counter()
-
-        if cell_line != "yes":
             res = pd.DataFrame(
                 {
                     "cell.names": list(pred_dict.keys()),
                     "copykat.pred": list(pred_dict.values()),
                 }
             )
+
+        print("step 9: saving results ...")
+        step_start = time.perf_counter()
+
+        if res is not None:
             res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
 
         # Save CNA results
@@ -1133,8 +1136,8 @@ def copykat(
             print("  generating seg files for IGV viewer")
             _write_seg_file(bin_coords, mat_adj, cell_cols_seg, sample_name)
         runtime_info["total_seconds"] = round(time.perf_counter() - start_time, 4)
-        with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as f:
-            json.dump(runtime_info, f, indent=2)
+        with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as report:
+            json.dump(runtime_info, report, indent=2)
         print(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
         print(f"Runtime report saved to: {sample_name}runtime.json")
 
@@ -1322,8 +1325,8 @@ def copykat(
             elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
             print(f"  step 10b runtime: {_format_seconds(elapsed)}")
         runtime_info["total_seconds"] = round(time.perf_counter() - start_time, 4)
-        with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as f:
-            json.dump(runtime_info, f, indent=2)
+        with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as report:
+            json.dump(runtime_info, report, indent=2)
         print(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
         print(f"Runtime report saved to: {sample_name}runtime.json")
 
