@@ -5,14 +5,16 @@ Maps gene-level copy number values into 220KB variable genomic bins.
 """
 
 import os
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from copykat_py._types import BinConversion, GeneByCell, ParallelInfo
 from copykat_py.data_loader import load_dna_bins, load_full_anno
 
-_LAST_PAR_INFO = {
+_LAST_PAR_INFO: ParallelInfo = {
     "step": "convert_to_bins",
     "parallel": False,
     "requested_cores": 1,
@@ -22,11 +24,17 @@ _LAST_PAR_INFO = {
 }
 
 
-def get_last_convert_bins_info():
-    return dict(_LAST_PAR_INFO)
+def get_last_convert_bins_info() -> ParallelInfo:
+    return _LAST_PAR_INFO.copy()
 
 
-def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=None):
+def convert_to_bins(
+    RNA_mat: pd.DataFrame,
+    genome: str = "hg20",
+    n_cores: int = 1,
+    values: GeneByCell | None = None,
+    cell_names: Sequence[str] | None = None,
+) -> BinConversion | None:
     """Convert gene-by-cell CNA results to 220KB genomic bins.
 
     Parameters
@@ -62,7 +70,7 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
     # Remove chromosome 24 (Y)
     DNA = DNA_mat[DNA_mat["chrom"] != 24].copy().reset_index(drop=True)
 
-    end = DNA["chrompos"].values
+    end = DNA["chrompos"].to_numpy()
     start = np.concatenate([[0], end[:-1]])
 
     # Determine gene symbol column
@@ -76,6 +84,8 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
     # Cell data columns (after the 7 annotation columns)
     anno_cols = ["abspos", "chromosome_name", "start_position", "end_position", "ensembl_gene_id", symbol_col, "band"]
     if values is not None:
+        if cell_names is None:
+            raise ValueError("cell_names is required when values is given")
         cell_cols = list(cell_names)
         RNA_values = np.asarray(values, dtype=np.float32)  # shape: (n_genes, n_cells)
     else:
@@ -93,7 +103,7 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
     # Pre-compute which RNA rows belong to each DNA bin while preserving
     # the original R logic of using the full annotation table for bin membership.
     bin_gene_indices: list[list[int]] = [[] for _ in range(len(DNA))]
-    chrom_values = DNA["chrom"].values
+    chrom_values = DNA["chrom"].to_numpy()
 
     for chrom_id in np.unique(chrom_values):
         dna_idx = np.where(chrom_values == chrom_id)[0]
@@ -131,7 +141,7 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
     RNA_adj = np.zeros((len(DNA), n_cells), order="F")
     valid_mask = np.zeros(len(DNA), dtype=bool)
 
-    def _process_bin(i):
+    def _process_bin(i: int) -> None:
         row_idx = bin_gene_indices[i]
         if row_idx:
             RNA_adj[i, :] = np.median(RNA_values[row_idx, :], axis=0)
@@ -151,7 +161,7 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
         }
     )
 
-    def _process_chunk(start, end):
+    def _process_chunk(start: int, end: int) -> None:
         for i in range(start, end):
             _process_bin(i)
 

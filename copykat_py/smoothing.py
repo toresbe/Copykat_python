@@ -13,7 +13,9 @@ import numba
 import numpy as np
 from numba import njit, prange
 
-_LAST_PAR_INFO = {
+from copykat_py._types import FloatArray, GeneByCell, ParallelInfo
+
+_LAST_PAR_INFO: ParallelInfo = {
     "step": "dlm_smooth",
     "parallel": False,
     "requested_cores": 1,
@@ -24,11 +26,11 @@ _LAST_PAR_INFO = {
 }
 
 
-def get_last_dlm_smooth_info():
-    return dict(_LAST_PAR_INFO)
+def get_last_dlm_smooth_info() -> ParallelInfo:
+    return _LAST_PAR_INFO.copy()
 
 
-def _dlm_gains(n, dV=0.16, dW=0.001):
+def _dlm_gains(n: int, dV: float = 0.16, dW: float = 0.001) -> tuple[FloatArray, FloatArray]:
     """Kalman filter and RTS smoother gains for the local level model.
 
     For a time-invariant model with a fixed prior, the gains depend only on
@@ -61,7 +63,7 @@ _BLOCK_CELLS = 64
 
 
 @njit(parallel=True)
-def _dlm_smooth_blocks(y, K, B, out):
+def _dlm_smooth_blocks(y: GeneByCell, K: FloatArray, B: FloatArray, out: GeneByCell) -> None:
     """Apply the shared filter/smoother gains to every column of ``y``.
 
     Columns are processed in blocks of ``_BLOCK_CELLS`` so the inner loop walks
@@ -93,7 +95,7 @@ def _dlm_smooth_blocks(y, K, B, out):
                 out[t, c0 + j] = m[t + 1, j] - mean
 
 
-def dlm_smooth(norm_mat, n_cores=1):
+def dlm_smooth(norm_mat: GeneByCell, n_cores: int = 1) -> GeneByCell:
     """Apply DLM smoothing to all cells in parallel.
 
     Parameters

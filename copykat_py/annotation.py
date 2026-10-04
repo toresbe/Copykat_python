@@ -1,12 +1,17 @@
 """Gene annotation: map genes to genomic coordinates, mirroring annotateGenes.hg20.R / annotateGenes.mm10.R."""
 
+from collections.abc import Hashable, Sequence
+
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from copykat_py.data_loader import load_full_anno
 
 
-def annotate_gene_rows(genes, id_type="S", genome="hg20"):
+def annotate_gene_rows(
+    genes: Sequence[Hashable] | pd.Index, id_type: str = "S", genome: str = "hg20"
+) -> tuple[pd.DataFrame, npt.NDArray[np.intp]]:
     """Annotate gene identifiers with genomic coordinates, without touching expression values.
 
     Parameters
@@ -67,7 +72,7 @@ def annotate_gene_rows(genes, id_type="S", genome="hg20"):
     return anno, rows
 
 
-def annotate_genes(mat, id_type="S", genome="hg20"):
+def annotate_genes(mat: pd.DataFrame, id_type: str = "S", genome: str = "hg20") -> pd.DataFrame:
     """Annotate gene expression matrix with genomic coordinates.
 
     Parameters

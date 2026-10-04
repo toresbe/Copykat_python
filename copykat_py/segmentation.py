@@ -18,7 +18,9 @@ import numpy as np
 from numba import jit
 from scipy.stats import ks_2samp
 
-_LAST_PAR_INFO = {
+from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, ParallelInfo, SegmentationResult
+
+_LAST_PAR_INFO: ParallelInfo = {
     "step": "cna_mcmc",
     "parallel": False,
     "requested_cores": 1,
@@ -30,12 +32,14 @@ _LAST_PAR_INFO = {
 }
 
 
-def get_last_cna_mcmc_info():
-    return dict(_LAST_PAR_INFO)
+def get_last_cna_mcmc_info() -> ParallelInfo:
+    return _LAST_PAR_INFO.copy()
 
 
 @jit(nopython=True)
-def _mc_poisson_gamma_numba(data, alpha, beta=1.0, mc=1000, seed=42):
+def _mc_poisson_gamma_numba(
+    data: FloatArray, alpha: float, beta: float = 1.0, mc: int = 1000, seed: int = 42
+) -> FloatArray:
     """Sample from the posterior of a Poisson-Gamma model using Numba.
 
     Prior: lambda ~ Gamma(alpha, beta)
@@ -70,7 +74,9 @@ def _mc_poisson_gamma_numba(data, alpha, beta=1.0, mc=1000, seed=42):
     return samples
 
 
-def _find_breakpoints_for_cluster(consensus, bins, cut_cor, rng_seed=42, mc_samples=1000):
+def _find_breakpoints_for_cluster(
+    consensus: FloatArray, bins: int, cut_cor: float, rng_seed: int = 42, mc_samples: int = 1000
+) -> list[int]:
     """Find breakpoints in a cluster consensus profile.
 
     Parameters
@@ -100,11 +106,11 @@ def _find_breakpoints_for_cluster(consensus, bins, cut_cor, rng_seed=42, mc_samp
     bre = []
     for i in range(len(breks) - 2):
         seg1 = consensus[breks[i] : breks[i + 1] + 1]
-        a1 = max(np.mean(seg1), 0.001)
+        a1 = max(float(np.mean(seg1)), 0.001)
         posterior1 = _mc_poisson_gamma_numba(seg1, a1, 1.0, mc=mc_samples, seed=rng.randint(0, 2**31))
 
         seg2 = consensus[breks[i + 1] + 1 : breks[i + 2] + 1]
-        a2 = max(np.mean(seg2), 0.001)
+        a2 = max(float(np.mean(seg2)), 0.001)
         posterior2 = _mc_poisson_gamma_numba(seg2, a2, 1.0, mc=mc_samples, seed=rng.randint(0, 2**31))
 
         ks_stat, _ = ks_2samp(posterior1, posterior2)
@@ -114,7 +120,14 @@ def _find_breakpoints_for_cluster(consensus, bins, cut_cor, rng_seed=42, mc_samp
     return bre
 
 
-def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
+def cna_mcmc(
+    clu: ClusterLabels,
+    fttmat: GeneByCell,
+    bins: int = 25,
+    cut_cor: float = 0.1,
+    n_cores: int = 1,
+    mc_samples: int | None = None,
+) -> SegmentationResult:
     """MCMC segmentation of copy number data.
 
     Parameters

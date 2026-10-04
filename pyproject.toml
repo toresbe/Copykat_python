@@ -73,6 +73,19 @@ warn_redundant_casts = true
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
+# Fully annotated modules: keep them that way.
+module = [
+    "copykat_py._types",
+    "copykat_py.data_loader",
+    "copykat_py.annotation",
+    "copykat_py.smoothing",
+    "copykat_py.segmentation",
+    "copykat_py.convert_bins",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[[tool.mypy.overrides]]
 # No type information published for these.
 module = ["fastcluster", "numba", "numba.*", "sklearn", "sklearn.*", "joblib", "threadpoolctl", "anndata", "pyarrow", "pyarrow.*"]
 ignore_missing_imports = true

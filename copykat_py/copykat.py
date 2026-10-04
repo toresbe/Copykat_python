@@ -930,6 +930,7 @@ def copykat(
             f"(parallel={convert_info['parallel']}, cores={convert_info['effective_cores']})"
         )
 
+        assert Aj is not None  # convert_to_bins only returns None for non-hg20 genomes
         # uber_mat_adj is adjusted in place below, so drop the DataFrame view of it
         uber_mat_adj = Aj["RNA_adj_values"]
         bin_coords = Aj["RNA_adj"][["chrom", "chrompos", "abspos"]].copy()
@@ -1188,7 +1189,7 @@ def copykat(
             cl_ID = []
             for cl_val in sorted(set(hc_umap)):
                 mask = hc_umap == cl_val
-                cl_ID.append(np.mean(np.abs(uber_mat_adj[:, mask])))
+                cl_ID.append(float(np.mean(np.abs(uber_mat_adj[:, mask]))))
 
         if preN is not None and len(preN) > 0:
             com_pred = _assign_binary_labels(hc_umap, cl_ID, "diploid", "aneuploid")
