@@ -18,6 +18,7 @@ from scipy import sparse
 
 FloatArray: TypeAlias = npt.NDArray[np.floating[Any]]
 IntArray: TypeAlias = npt.NDArray[np.integer[Any]]
+BoolArray: TypeAlias = npt.NDArray[np.bool_]
 
 GeneByCell: TypeAlias = FloatArray
 """(n_genes, n_cells) expression or copy-number values."""

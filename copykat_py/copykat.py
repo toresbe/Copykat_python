@@ -18,10 +18,12 @@ import os
 import pickle
 import time
 from collections import deque
+from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import pyarrow as pa
 import pyarrow.csv as pa_csv
@@ -29,7 +31,19 @@ from scipy import sparse
 from scipy.cluster.hierarchy import fcluster
 from scipy.io import mmread
 
-from copykat_py._types import SparseMatrix
+from copykat_py._types import (
+    BoolArray,
+    ClusteringResult,
+    ClusterLabels,
+    CopyKATResult,
+    FloatArray,
+    GeneProfile,
+    InputStats,
+    ParallelInfo,
+    RawMatrix,
+    RuntimeInfo,
+    SparseMatrix,
+)
 from copykat_py.annotation import annotate_gene_rows
 from copykat_py.baseline import (
     AUTO_PCA_CELL_COUNT_CUTOFF,
@@ -64,7 +78,15 @@ _PARALLEL_WRITE_BYTES = 128 << 20
 _PARALLEL_WRITE_MIN_ROWS = 128
 
 
-def _write_cna_csv(path, lead_df, values, value_columns, round_floats=True, quote_strings=True, n_cores=1):
+def _write_cna_csv(
+    path: str,
+    lead_df: pd.DataFrame,
+    values: FloatArray,
+    value_columns: Sequence[str],
+    round_floats: bool = True,
+    quote_strings: bool = True,
+    n_cores: int = 1,
+) -> None:
     """Write ``lead_df`` columns followed by ``values`` columns as TSV, in row chunks.
 
     Equivalent to writing ``pd.concat([lead_df, pd.DataFrame(values, columns=value_columns)], axis=1)``
@@ -90,7 +112,7 @@ def _write_cna_csv(path, lead_df, values, value_columns, round_floats=True, quot
     row_bytes = max(1, len(value_columns) * values.itemsize)
     chunk_rows = max(1, _WRITE_CHUNK_BYTES // row_bytes)
 
-    def _value_chunks():
+    def _value_chunks() -> Iterator[tuple[int, int, FloatArray]]:
         for start in range(0, n_rows, chunk_rows):
             stop = min(start + chunk_rows, n_rows)
             block = values[start:stop]
@@ -108,7 +130,7 @@ def _write_cna_csv(path, lead_df, values, value_columns, round_floats=True, quot
     value_type = pa.from_numpy_dtype(values.dtype)
     schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
 
-    def _chunk_table(start, stop, block):
+    def _chunk_table(start: int, stop: int, block: FloatArray) -> Any:
         block = np.asfortranarray(block)  # contiguous columns
         arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
         arrays += [pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1])]
@@ -119,7 +141,7 @@ def _write_cna_csv(path, lead_df, values, value_columns, round_floats=True, quot
     if n_threads > 1 and parallel_rows >= _PARALLEL_WRITE_MIN_ROWS and n_rows > parallel_rows:
         chunk_rows = parallel_rows
 
-        def _format(start):
+        def _format(start: int) -> bytes:
             stop = min(start + chunk_rows, n_rows)
             block = values[start:stop]
             if round_floats and np.issubdtype(block.dtype, np.floating):
@@ -146,7 +168,9 @@ def _write_cna_csv(path, lead_df, values, value_columns, round_floats=True, quot
     pa.default_memory_pool().release_unused()
 
 
-def _frame_with_leading_columns(lead_df, values, value_columns):
+def _frame_with_leading_columns(
+    lead_df: pd.DataFrame, values: FloatArray, value_columns: Sequence[str]
+) -> pd.DataFrame:
     """DataFrame of ``lead_df`` columns followed by ``values``, without copying ``values``."""
     frame = pd.DataFrame(values, columns=list(value_columns), copy=False)
     lead_df = lead_df.reset_index(drop=True)
@@ -155,7 +179,7 @@ def _frame_with_leading_columns(lead_df, values, value_columns):
     return frame
 
 
-def _adjust_baseline_inplace(mat, diploid_mask, chunk_elems=1 << 24):
+def _adjust_baseline_inplace(mat: FloatArray, diploid_mask: BoolArray, chunk_elems: int = 1 << 24) -> FloatArray:
     """Subtract the diploid baseline and flatten noise around it, overwriting ``mat``.
 
     Same arithmetic as the original out-of-place version: center on the
@@ -184,7 +208,7 @@ def _adjust_baseline_inplace(mat, diploid_mask, chunk_elems=1 << 24):
     return mat
 
 
-def _meta_with_pred(meta_csv, pred_dict, sample_name):
+def _meta_with_pred(meta_csv: str, pred_dict: dict[str, str] | None, sample_name: str) -> str:
     """Read *meta_csv*, append copykat-py predictions as the last column.
 
     Returns the path to a new CSV written alongside the original outputs.
@@ -204,7 +228,17 @@ def _meta_with_pred(meta_csv, pred_dict, sample_name):
     return out_path
 
 
-def _run_plot_heatmap(mat_adj, chrom_info, predictions, sample_name, distance, n_cores, WNS1, WNS, output_path):
+def _run_plot_heatmap(
+    mat_adj: FloatArray,
+    chrom_info: npt.ArrayLike,
+    predictions: dict[str, str] | None,
+    sample_name: str,
+    distance: str,
+    n_cores: int,
+    WNS1: str,
+    WNS: str,
+    output_path: str,
+) -> None:
     from copykat_py.plotting import plot_heatmap
 
     plot_heatmap(
@@ -220,7 +254,7 @@ def _run_plot_heatmap(mat_adj, chrom_info, predictions, sample_name, distance, n
     )
 
 
-def _load_matrix(rawmat):
+def _load_matrix(rawmat: RawMatrix) -> pd.DataFrame:
     """Load raw matrix from various input formats.
 
     Supports: pd.DataFrame, scipy sparse, numpy array, dict (matrix/genes/barcodes), or file path (mtx/csv/tsv).
@@ -238,7 +272,11 @@ def _load_matrix(rawmat):
         if hasattr(mat, "toarray"):
             mat = mat.toarray()
 
-        df = pd.DataFrame(mat, index=genes, columns=barcodes)
+        df = pd.DataFrame(
+            mat,
+            index=None if genes is None else pd.Index(genes),
+            columns=None if barcodes is None else pd.Index(barcodes),
+        )
         return df
     elif isinstance(rawmat, pd.DataFrame):
         return rawmat
@@ -261,7 +299,7 @@ def _load_matrix(rawmat):
         raise ValueError(f"Unsupported rawmat type: {type(rawmat)}")
 
 
-def _format_seconds(seconds):
+def _format_seconds(seconds: float) -> str:
     if seconds < 60:
         return f"{seconds:.2f}s"
     minutes, rem = divmod(seconds, 60)
@@ -271,7 +309,13 @@ def _format_seconds(seconds):
     return f"{int(hours)}h {int(minutes)}m {rem:.1f}s"
 
 
-def _record_step(runtime_info, step, start_time, parallel_info=None, extra=None):
+def _record_step(
+    runtime_info: RuntimeInfo,
+    step: str,
+    start_time: float,
+    parallel_info: ParallelInfo | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> float:
     elapsed = time.perf_counter() - start_time
     entry = {"step": step, "seconds": round(float(elapsed), 4)}
     if parallel_info:
@@ -287,7 +331,7 @@ def _record_step(runtime_info, step, start_time, parallel_info=None, extra=None)
     return elapsed
 
 
-def _preN_to_names(preN, cell_names):
+def _preN_to_names(preN: str | bytes | Sequence[Any] | npt.NDArray[Any] | None, cell_names: Sequence[str]) -> set[str]:
     if preN is None:
         return set()
 
@@ -309,7 +353,9 @@ def _preN_to_names(preN, cell_names):
     return set(names)
 
 
-def _assign_binary_labels(cluster_labels, scores, high_label, low_label):
+def _assign_binary_labels(
+    cluster_labels: ClusterLabels, scores: Sequence[float] | FloatArray, high_label: str, low_label: str
+) -> npt.NDArray[np.object_]:
     labels = np.empty(len(cluster_labels), dtype=object)
     labels[:] = ""
     cluster_vals = np.asarray(sorted(set(cluster_labels)))
@@ -324,7 +370,9 @@ def _assign_binary_labels(cluster_labels, scores, high_label, low_label):
     return labels
 
 
-def _aggregate_duplicate_genes_sparse(mat, genes):
+def _aggregate_duplicate_genes_sparse(
+    mat: sparse.csc_matrix, genes: npt.NDArray[Any]
+) -> tuple[sparse.csc_matrix, npt.NDArray[Any]]:
     genes = np.asarray(genes, dtype=object)
     unique_genes, inverse = np.unique(genes.astype(str), return_inverse=True)
     if len(unique_genes) == len(genes):
@@ -334,10 +382,10 @@ def _aggregate_duplicate_genes_sparse(mat, genes):
         (np.ones(len(genes), dtype=np.float64), (inverse, np.arange(len(genes)))),
         shape=(len(unique_genes), len(genes)),
     )
-    return row_map @ mat, unique_genes.astype(object)
+    return (row_map @ mat).tocsc(), unique_genes.astype(object)
 
 
-def _aggregate_duplicate_genes_frame(df):
+def _aggregate_duplicate_genes_frame(df: pd.DataFrame) -> pd.DataFrame:
     if not df.index.has_duplicates:
         return df
 
@@ -345,7 +393,42 @@ def _aggregate_duplicate_genes_frame(df):
     return df.groupby(level=0, sort=True).sum()
 
 
-def _prepare_input_matrix(rawmat, min_gene_per_cell, low_dr):
+def _prepare_sparse_input(
+    mat: SparseMatrix,
+    genes: npt.NDArray[Any],
+    barcodes: npt.NDArray[Any],
+    min_gene_per_cell: int,
+    low_dr: float,
+) -> tuple[sparse.csr_matrix, npt.NDArray[Any], list[str], list[str], InputStats]:
+    """Sparse branch of ``_prepare_input_matrix``: filter without densifying."""
+    csc, genes = _aggregate_duplicate_genes_sparse(mat.tocsc(copy=False), genes)
+    original_cell_names = barcodes.tolist()
+    genes_per_cell = np.asarray(csc.getnnz(axis=0)).ravel()
+    if (genes_per_cell > min_gene_per_cell).sum() == 0:
+        raise ValueError("No cells have more than min_gene_per_cell genes")
+    keep_cells = genes_per_cell >= min_gene_per_cell
+    filtered_cells = int((~keep_cells).sum())
+    csc = csc[:, keep_cells]
+    barcodes = barcodes[keep_cells]
+    detection_rate = np.asarray(csc.getnnz(axis=1)).ravel() / max(csc.shape[1], 1)
+    keep_genes = detection_rate > low_dr
+    filtered_gene_rows = int((~keep_genes).sum())
+    return (
+        csc[keep_genes, :].tocsr(),
+        genes[keep_genes],
+        barcodes.tolist(),
+        original_cell_names,
+        {
+            "input_type": "sparse_dict",
+            "filtered_cells": filtered_cells,
+            "filtered_gene_rows": filtered_gene_rows,
+        },
+    )
+
+
+def _prepare_input_matrix(
+    rawmat: RawMatrix, min_gene_per_cell: int, low_dr: float
+) -> tuple[sparse.csr_matrix | npt.NDArray[Any], pd.Index | npt.NDArray[Any], list[str], list[str], InputStats]:
     """Filter cells and genes; returns (matrix, genes, barcodes, original_cell_names, stats).
 
     The matrix is genes x cells, scipy CSR for sparse dict input (so it is
@@ -353,37 +436,15 @@ def _prepare_input_matrix(rawmat, min_gene_per_cell, low_dr):
     """
     if isinstance(rawmat, dict):
         mat = rawmat.get("matrix")
-        genes = np.asarray(rawmat.get("genes"))
-        barcodes = np.asarray(rawmat.get("barcodes"))
         if mat is None:
             raise ValueError("Dict input must contain 'matrix' key")
         if sparse.issparse(mat):
-            mat = cast(SparseMatrix, mat).tocsc(copy=False)
-            mat, genes = _aggregate_duplicate_genes_sparse(mat, genes)
-            mat = mat.tocsc(copy=False)
-            original_cell_names = barcodes.tolist()
-            genes_per_cell = np.asarray(mat.getnnz(axis=0)).ravel()
-            if (genes_per_cell > min_gene_per_cell).sum() == 0:
-                raise ValueError("No cells have more than min_gene_per_cell genes")
-            keep_cells = genes_per_cell >= min_gene_per_cell
-            filtered_cells = int((~keep_cells).sum())
-            mat = mat[:, keep_cells]
-            barcodes = barcodes[keep_cells]
-            detection_rate = np.asarray(mat.getnnz(axis=1)).ravel() / max(mat.shape[1], 1)
-            keep_genes = detection_rate > low_dr
-            filtered_gene_rows = int((~keep_genes).sum())
-            mat = mat[keep_genes, :].tocsr()
-            genes = genes[keep_genes]
-            return (
+            return _prepare_sparse_input(
                 mat,
-                genes,
-                barcodes.tolist(),
-                original_cell_names,
-                {
-                    "input_type": "sparse_dict",
-                    "filtered_cells": filtered_cells,
-                    "filtered_gene_rows": filtered_gene_rows,
-                },
+                np.asarray(rawmat.get("genes")),
+                np.asarray(rawmat.get("barcodes")),
+                min_gene_per_cell,
+                low_dr,
             )
 
     loaded = _load_matrix(rawmat)
@@ -414,7 +475,9 @@ def _prepare_input_matrix(rawmat, min_gene_per_cell, low_dr):
     )
 
 
-def _keep_cells_by_chr_coverage(values, chroms, ngene_chr):
+def _keep_cells_by_chr_coverage(
+    values: SparseMatrix | npt.NDArray[Any], chroms: npt.NDArray[Any], ngene_chr: int
+) -> BoolArray:
     chrom_codes, unique_chroms = pd.factorize(chroms, sort=False)
     if sparse.issparse(values):
         # Per-chromosome nonzero counts as (chromosome indicator) @ (nonzero pattern)
@@ -422,7 +485,7 @@ def _keep_cells_by_chr_coverage(values, chroms, ngene_chr):
             (np.ones(len(chrom_codes), dtype=np.int64), (chrom_codes, np.arange(len(chrom_codes)))),
             shape=(len(unique_chroms), len(chrom_codes)),
         )
-        counts = (indicator @ cast(SparseMatrix, values).astype(bool).astype(np.int64)).toarray()
+        counts = (indicator @ values.astype(bool).astype(np.int64)).toarray()
     else:
         nonzero = values != 0
         counts = np.vstack([nonzero[chrom_codes == chrom_idx].sum(axis=0) for chrom_idx in range(len(unique_chroms))])
@@ -431,26 +494,26 @@ def _keep_cells_by_chr_coverage(values, chroms, ngene_chr):
 
 
 def copykat(
-    rawmat,
-    id_type="S",
-    cell_line="no",
-    ngene_chr=5,
-    min_gene_per_cell=200,
-    LOW_DR=0.05,
-    UP_DR=0.1,
-    win_size=25,
-    norm_cell_names="",
-    KS_cut=0.1,
-    sam_name="",
-    distance="euclidean",
-    output_seg=False,
-    plot_genes=True,
-    genome="hg20",
-    n_cores=1,
-    pca_components=None,
-    meta_csv=None,
-    row_split_col=None,
-):
+    rawmat: RawMatrix,
+    id_type: str = "S",
+    cell_line: str = "no",
+    ngene_chr: int = 5,
+    min_gene_per_cell: int = 200,
+    LOW_DR: float = 0.05,
+    UP_DR: float = 0.1,
+    win_size: int = 25,
+    norm_cell_names: str | list[str] = "",
+    KS_cut: float = 0.1,
+    sam_name: str = "",
+    distance: str = "euclidean",
+    output_seg: bool = False,
+    plot_genes: bool = True,
+    genome: str = "hg20",
+    n_cores: int = 1,
+    pca_components: int | None = None,
+    meta_csv: str | None = None,
+    row_split_col: str | None = None,
+) -> CopyKATResult:
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
 
     Parameters
@@ -516,7 +579,7 @@ def copykat(
     # Generator would change any random stream that depends on it.
     np.random.seed(1234)  # noqa: NPY002
     sample_name = f"{sam_name}_copykat_"
-    runtime_info = {
+    runtime_info: RuntimeInfo = {
         "sample_name": sam_name,
         "requested_cores": int(n_cores),
         "available_cores": int(os.cpu_count() or 1),
@@ -604,7 +667,7 @@ def copykat(
     step_start = time.perf_counter()
     expr_values = rawmat[anno_rows]
     del rawmat
-    keep_cells = _keep_cells_by_chr_coverage(expr_values, anno_mat["chromosome_name"].values, ngene_chr)
+    keep_cells = _keep_cells_by_chr_coverage(expr_values, anno_mat["chromosome_name"].to_numpy(), ngene_chr)
     if keep_cells.sum() == 0:
         raise ValueError("All cells are filtered out")
     cell_cols = list(barcodes)
@@ -628,7 +691,7 @@ def copykat(
     DR2 = (rawmat3 > 0).sum(axis=1) / rawmat3.shape[1]
     seg_mask = DR2 >= UP_DR
     keep_cells2 = _keep_cells_by_chr_coverage(
-        (rawmat3 != 0)[seg_mask], anno_mat["chromosome_name"].values[seg_mask], ngene_chr
+        (rawmat3 != 0)[seg_mask], anno_mat["chromosome_name"].to_numpy()[seg_mask], ngene_chr
     )
 
     # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1)), in place
@@ -792,7 +855,7 @@ def copykat(
                 # loss/neutral/gain, which is what "confidently neutral"
                 # actually means here, so it is the more consistent yardstick
                 # to reuse for this cross-candidate comparison.
-                def _basel_sigma(basel_vec):
+                def _basel_sigma(basel_vec: GeneProfile) -> float:
                     sigma_init = max(0.05, 0.5 * float(np.std(basel_vec)))
                     return _fit_gmm_3component(basel_vec, sigma_init=sigma_init, max_iter=5000)[2]
 
@@ -936,7 +999,7 @@ def copykat(
         # uber_mat_adj is adjusted in place below, so drop the DataFrame view of it
         uber_mat_adj = Aj["RNA_adj_values"]
         bin_coords = Aj["RNA_adj"][["chrom", "chrompos", "abspos"]].copy()
-        chrom_info = Aj["DNA_adj"]["chrom"].values
+        chrom_info = Aj["DNA_adj"]["chrom"].to_numpy()
         del Aj
 
         print("step 7: adjust baseline ...")
@@ -1077,7 +1140,7 @@ def copykat(
         _write_cna_csv(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg, n_cores=n_cores)
 
         # Save clustering
-        clustering_data = {
+        clustering_data: ClusteringResult = {
             "labels": labels_final if cell_line != "yes" else labels,
             "Z": Z_final if cell_line != "yes" else Z,
         }
@@ -1144,25 +1207,24 @@ def copykat(
         print(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
         print(f"Runtime report saved to: {sample_name}runtime.json")
 
-        if cell_line == "yes":
+        if res is None:  # cell-line mode makes no predictions
             return {
                 "CNAmat": cna_out,
                 "hclustering": clustering_data,
                 "runtime": runtime_info,
             }
-        else:
-            return {
-                "prediction": res,
-                "CNAmat": cna_out,
-                "hclustering": clustering_data,
-                "runtime": runtime_info,
-            }
+        return {
+            "prediction": res,
+            "CNAmat": cna_out,
+            "hclustering": clustering_data,
+            "runtime": runtime_info,
+        }
 
     else:
         # mm10: no bin conversion, use gene-level results directly
         uber_mat_adj = results_com  # adjusted in place below; results_com is not used again
         del results_com
-        chrom_info = anno_mat2["chromosome_name"].values
+        chrom_info = anno_mat2["chromosome_name"].to_numpy()
 
         print("step 7: adjust baseline ...")
         step_start = time.perf_counter()
@@ -1341,10 +1403,10 @@ def copykat(
         }
 
 
-def _write_seg_file(RNA_adj_df, mat_adj, cell_cols, sample_name):
+def _write_seg_file(RNA_adj_df: pd.DataFrame, mat_adj: FloatArray, cell_cols: Sequence[str], sample_name: str) -> None:
     """Write .seg file for IGV visualization."""
     rows = []
-    chroms = RNA_adj_df["chrom"].values
+    chroms = RNA_adj_df["chrom"].to_numpy()
     chrompos = RNA_adj_df["chrompos"].values
     unique_chroms = np.unique(chroms)
 
