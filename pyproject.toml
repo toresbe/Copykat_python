@@ -26,6 +26,9 @@ dependencies = [
 [project.optional-dependencies]
 large-datasets = ["fastcluster>=1.3.0"]
 all = ["fastcluster>=1.3.0"]
+# GPU backend (--backend gpu): also install the CuPy build matching your CUDA
+# toolkit, e.g. cupy-cuda12x or cupy-cuda13x.
+gpu = ["torch>=2.4", "triton>=3.0"]
 
 [project.scripts]
 copykat-py = "copykat_py.cli:main"

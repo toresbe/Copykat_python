@@ -23,6 +23,7 @@ def main():
     ap.add_argument("--n-cores", type=int, default=os.cpu_count())
     ap.add_argument("--plot", action="store_true")
     ap.add_argument("--keep-outputs", action="store_true")
+    ap.add_argument("--no-cna", action="store_true", help="skip saving the float16 CNA matrix (large runs)")
     ap.add_argument("--null-outputs", action="store_true",
                     help="send the two large CNA text files to /dev/null (still formatted and written)")
     ap.add_argument("--kw", action="append", default=[], help="extra copykat() kwargs, key=value (value parsed as JSON if possible)")
@@ -59,7 +60,8 @@ def main():
     cna = res["CNAmat"]
     # float16 keeps the comparison data small; the text outputs are deleted
     # (they can be many GB) unless --keep-outputs is given.
-    np.save("cna.npy", cna.iloc[:, 3:].to_numpy(dtype=np.float16))
+    if not args.no_cna:
+        np.save("cna.npy", cna.iloc[:, 3:].to_numpy(dtype=np.float16))
     np.save("cna_cells.npy", np.asarray(cna.columns[3:], dtype=object), allow_pickle=True)
     res["prediction"].to_csv("prediction.tsv", sep="\t", index=False)
     if not args.keep_outputs:

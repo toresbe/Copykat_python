@@ -210,6 +210,29 @@ plot_heatmap_annotated(
 
 ---
 
+## GPU backend (experimental)
+
+With a CUDA GPU, `--backend gpu` (CLI) or `backend_name="gpu"` (`copykat()`) runs
+the numeric steps on the device. It also replaces the CPU path's speed
+approximations with exact computations:
+
+| Step | CPU path | `gpu` backend |
+| --- | --- | --- |
+| Step-4 Ward clustering (> 2,000 cells) | PCA to 128–256 components | full feature matrix, exact Ward tree |
+| Silhouette check | stratified subsample (≥ 3,000 cells) | all cells |
+| Segment means | differences of an FP32 running total | FP64 |
+| Heatmap ordering (> 3,000 cells) | k-means blocks | full Ward dendrogram (the step-8 tree) |
+
+`--backend gpu-compat` keeps the CPU path's approximations and only moves the
+work to the GPU. `--ks-method exact` (any backend) replaces the Monte Carlo KS
+test between sampled Gamma posteriors with the exact KS distance between them.
+
+Install with `pip install -e ".[gpu]"` plus the CuPy wheel for your CUDA
+version (e.g. `cupy-cuda12x`). Benchmarks and validation are in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md).
+
+---
+
 ## Benchmarking and Validation
 
 ### Validation for 11 datasets from [Cancer Cell Atlas (3CA)](https://www.weizmann.ac.il/sites/3CA/)
