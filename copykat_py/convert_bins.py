@@ -9,6 +9,7 @@ import pandas as pd
 import os
 from joblib import Parallel, delayed
 from copykat_py.data_loader import load_full_anno, load_dna_bins
+from copykat_py import backend
 
 _LAST_PAR_INFO = {
     "step": "convert_to_bins",
@@ -127,6 +128,25 @@ def convert_to_bins(RNA_mat, genome="hg20", n_cores=1, values=None, cell_names=N
     # Column-major so each cell's profile is contiguous, matching the layout
     # the downstream baseline adjustment has always operated on.
     n_cells = len(cell_cols)
+    if backend.use_gpu():
+        from copykat_py.gpu import ops as gpu_ops
+        valid_mask = np.array([bool(rows) for rows in bin_gene_indices])
+        valid_indices = np.where(valid_mask)[0]
+        src = np.arange(len(DNA))
+        if 0 < len(valid_indices) < len(DNA):
+            # nearest valid bin, lower index on ties (np.argmin semantics)
+            pos = np.searchsorted(valid_indices, src)
+            lo = valid_indices[np.clip(pos - 1, 0, len(valid_indices) - 1)]
+            hi = valid_indices[np.clip(pos, 0, len(valid_indices) - 1)]
+            src = np.where(np.abs(src - lo) <= np.abs(hi - src), lo, hi)
+            src[valid_indices] = valid_indices
+        RNA_adj = gpu_ops.bin_medians(RNA_values, bin_gene_indices, len(DNA), src)
+        _LAST_PAR_INFO.update({"parallel": True, "requested_cores": int(n_cores), "effective_cores": 1,
+                               "tasks": int(len(DNA)), "chunk_size": 0})
+        RNA_adj_df = pd.DataFrame(RNA_adj, columns=cell_cols, copy=False)
+        for pos_i, col in enumerate(["chrom", "chrompos", "abspos"]):
+            RNA_adj_df.insert(pos_i, col, DNA[col].to_numpy())
+        return {"DNA_adj": DNA, "RNA_adj": RNA_adj_df, "RNA_adj_values": RNA_adj}
     RNA_adj = np.zeros((len(DNA), n_cells), order="F")
     valid_mask = np.zeros(len(DNA), dtype=bool)
 
