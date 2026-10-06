@@ -31,6 +31,7 @@ except ImportError:
     HAS_PYARROW = False
 
 from copykat_py.annotation import annotate_genes
+from copykat_py import r_compat as _rc  # R COMPATIBILITY reference mode (see r_compat.py)
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 from copykat_py.baseline import (
     AUTO_PCA_CELL_COUNT_CUTOFF,
@@ -300,7 +301,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             LOW_DR=0.05, UP_DR=0.1, win_size=25, norm_cell_names="",
             KS_cut=0.1, sam_name="", distance="euclidean", output_seg=False,
             plot_genes=True, genome="hg20", n_cores=1, pca_components=None,
-            meta_csv=None, row_split_col=None):
+            meta_csv=None, row_split_col=None, r_compat=False):
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
     
     Parameters
@@ -354,6 +355,16 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         Column in ``meta_csv`` used to split and label heatmap rows.
         Defaults to the second column when ``None``.
 
+    r_compat : bool
+        R COMPATIBILITY reference mode.  When True, the baseline (step 4) and
+        the prediction steps (7-8) follow CopyKAT-R 1.2.5 instead of the
+        default Python behaviour, and PCA reduction is disabled, so results can
+        be compared with R (see ``copykat_py/r_compat.py`` for the full list of
+        differences; each is marked "R COMPATIBILITY" in the source).  This is
+        a validation aid, slower on large inputs, and NOT a recommended
+        default: on some samples R's own call is the wrong one.  Only
+        ``genome="hg20"`` with ``cell_line="no"`` is supported.
+
     Returns
     -------
     dict with keys:
@@ -363,6 +374,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     """
     start_time = time.perf_counter()
     np.random.seed(1234)
+    if r_compat:
+        _rc.check_supported(genome, cell_line)
     sample_name = f"{sam_name}_copykat_"
     runtime_info = {
         "sample_name": sam_name,
@@ -510,7 +523,10 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         
         # Cluster all cells
         data_t = norm_mat_smooth.T
-        step4_reduce = data_t.shape[0] > FULL_CLUSTER_MAX_CELLS
+        # R COMPATIBILITY: R never PCA-reduces before clustering; default
+        # Python does for > FULL_CLUSTER_MAX_CELLS (2000) cells.  See
+        # r_compat.baseline_norm_cl_r for the evidence (Jerby-Arnon 2021).
+        step4_reduce = data_t.shape[0] > FULL_CLUSTER_MAX_CELLS and not r_compat
         km = 6
         CL, Z = _hierarchical_cluster(
             data_t,
@@ -522,7 +538,9 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             pca_components=selected_pca_components,
         )
         
-        while not all(np.bincount(CL)[np.bincount(CL) > 0] > 5):
+        # R COMPATIBILITY: R requires every cluster to have > 10 cells
+        # (`all(table(CL) > 10)`); default Python uses > 5.
+        while not all(np.bincount(CL)[np.bincount(CL) > 0] > (10 if r_compat else 5)):
             km -= 1
             if Z is not None:
                 CL = fcluster(Z, t=km, criterion="maxclust")
@@ -541,6 +559,33 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         
         WNS = "run with known normal"
         preN = np.asarray(cell_name_list, dtype=object)[known_normal_mask].tolist()
+        if r_compat:
+            # R COMPATIBILITY: R sets preN <- norm.cell.names, i.e. the list as
+            # *supplied*, including names not present in the data.  Its length is
+            # the denominator of the cluster score in steps 7-8.
+            preN = list(norm_cell_names)
+        norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
+    elif r_compat:
+        # R COMPATIBILITY: auto-detect normal cells exactly as R's
+        # baseline.norm.cl + baseline.GMM do.  Five separate deviations of the
+        # default path are removed here; see baseline_norm_cl_r /
+        # baseline_gmm_r in r_compat.py (min_cells 10 vs 5, no PCA, mixtools
+        # EM, n-1 sd, no silhouette subsampling).
+        basa = _rc.baseline_norm_cl_r(norm_mat_smooth, cell_name_list, min_cells=10)
+        basel, WNS, preN, CL = basa["basel"], basa["WNS"], basa["preN"], basa["cl"]
+        if WNS == "unclassified.prediction":
+            # R COMPATIBILITY: R *always* adopts the GMM baseline when it finds
+            # more than 2 diploid-looking cells.  Default Python additionally
+            # compares GMM-baseline sigma against the cluster baseline sigma and
+            # may reject the GMM result (commits f6a0916 / c2390e8), and keeps
+            # WNS="unclassified.prediction" afterwards.  On su003 that rejection
+            # is the *entire* difference between R and Python: R's 5 GMM anchor
+            # cells put the tumour in the diploid group (inverted call); Python
+            # keeps the 258-cell cluster anchor and calls it correctly.
+            basa_gmm = _rc.baseline_gmm_r(norm_mat_smooth, cell_name_list, basa)
+            basel, WNS, preN = basa_gmm["basel"], basa_gmm["WNS"], basa_gmm["preN"]
+            # R COMPATIBILITY: CL deliberately stays the cluster labels from the
+            # *first* baseline (R: `CL <- basa$cl` before the GMM call).
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     else:
         # Auto-detect normal cells
@@ -656,7 +701,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     if len(CL_filtered) != norm_mat_relat.shape[1]:
         # Recompute if shape mismatch
         data_t = norm_mat_relat.T
-        step4_reduce = data_t.shape[0] > FULL_CLUSTER_MAX_CELLS
+        step4_reduce = data_t.shape[0] > FULL_CLUSTER_MAX_CELLS and not r_compat  # R COMPATIBILITY: no PCA
         CL_filtered, _ = _hierarchical_cluster(
             data_t,
             min(6, norm_mat_relat.shape[1]),
@@ -727,6 +772,24 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         
         if cell_line == "yes":
             mat_adj = uber_mat_adj.copy()
+        elif r_compat:
+            # R COMPATIBILITY: steps 7 AND 8 are both computed here by
+            # r_compat.predict_like_r (step 8 below just unpacks the result).
+            # Differences from the default path are enumerated in that
+            # function's docstring: ward.D linkage, k in 4..2 cut, score divided
+            # by |preN|, n-1 sd, `distance` honoured, correlation/Wasserstein
+            # labelling, no PCA.
+            _n_pre_n = len(preN) if preN is not None else 0
+            _r_pred = _rc.predict_like_r(
+                uber_mat_adj,
+                results_com,
+                cell_cols_seg,
+                _preN_to_names(preN, cell_name_list),
+                _n_pre_n,
+                WNS,
+                distance=distance,
+            )
+            mat_adj = _r_pred["mat_adj"]
         else:
             # First hierarchical clustering for initial prediction
             labels, Z = _hierarchical_cluster(
@@ -786,7 +849,13 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         print("step 8: final prediction ...")
         step_start = time.perf_counter()
         step8_reduce = mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
-        if cell_line != "yes":
+        if r_compat:
+            # R COMPATIBILITY: result already computed in step 7 above.
+            labels_final, Z_final = _r_pred["labels_final"], _r_pred["Z_final"]
+            com_preN = _r_pred["com_preN"]
+            print(f"  R COMPATIBILITY: consensus correlation = {_r_pred['consensus_correlation']:.3f} "
+                  "(>= 0.6 => R labels every cell diploid)")
+        elif cell_line != "yes":
             labels_final, Z_final = _hierarchical_cluster(
                 mat_adj.T,
                 2,
