@@ -103,6 +103,32 @@ def _reduce_for_clustering(data, max_components=64):
     return reducer.fit_transform(data), n_components
 
 
+def _collapse_repeated_features(data, block_rows=4096):
+    """Merge runs of identical adjacent feature columns into one column each.
+
+    Each kept column is scaled by sqrt(run length), so Euclidean distances
+    between rows are mathematically unchanged:
+    sum_b (x_b - y_b)^2 == sum_runs len * (x_run - y_run)^2.
+    Segmented CNA profiles repeat each value across all bins of a segment, so
+    this typically shrinks ~12k bins to roughly the number of segments.
+
+    Returns the collapsed matrix, or None when no columns repeat.
+    """
+    n_samples, n_features = data.shape
+    if n_features < 2:
+        return None
+    changes = np.zeros(n_features - 1, dtype=bool)
+    for lo in range(0, n_samples, block_rows):
+        block = data[lo:lo + block_rows]
+        changes |= np.any(block[:, 1:] != block[:, :-1], axis=0)
+    starts = np.concatenate([[0], np.flatnonzero(changes) + 1])
+    if len(starts) == n_features:
+        return None
+    run_lengths = np.diff(np.concatenate([starts, [n_features]]))
+    # float64 like pdist's internal arithmetic, so float32 inputs lose nothing extra
+    return data[:, starts].astype(np.float64) * np.sqrt(run_lengths)
+
+
 def _ward_linkage(data):
     """Exact Ward linkage of the rows of ``data`` (Euclidean), fastest engine that fits.
 
@@ -133,7 +159,10 @@ def _hierarchical_cluster(
     For Ward + Euclidean clustering, use exact fastcluster Ward linkage for
     both small and large inputs (see ``_ward_linkage``: a precomputed distance
     matrix within ``WARD_PDIST_MAX_GB``, ``linkage_vector`` above).
-    The ``max_cells`` argument is kept for compatibility but is not used.
+    Runs of identical adjacent feature columns (bins inside one CNA segment)
+    are collapsed first, which leaves distances unchanged; when the collapsed
+    width fits within the PCA component cap, that PCA would be lossless and is
+    skipped. The ``max_cells`` argument is kept for compatibility but is not used.
     
     Parameters
     ----------
@@ -162,7 +191,7 @@ def _hierarchical_cluster(
     linkage_matrix : np.ndarray or None
         Linkage matrix if available.
     """
-    n_samples = data.shape[0]
+    n_samples, n_features = data.shape
     _LAST_CLUSTER_INFO.update({
         "requested_cores": int(n_cores),
         "effective_cores": 1,
@@ -173,8 +202,13 @@ def _hierarchical_cluster(
     
     if not reduce:
         if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
-            Z, engine = _ward_linkage(data)
-            _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
+            collapsed = _collapse_repeated_features(data)
+            if collapsed is not None:
+                Z, engine = _ward_linkage(collapsed)
+                _LAST_CLUSTER_INFO["engine"] = f"full_matrix+dedup{collapsed.shape[1]}+{engine}"
+            else:
+                Z, engine = _ward_linkage(data)
+                _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
         else:
             dist = pdist(data, metric=metric)
             if HAS_FASTCLUSTER:
@@ -188,6 +222,17 @@ def _hierarchical_cluster(
 
     # Keep Ward + Euclidean on the vectorized full/PCA matrix path.
     if metric == "euclidean" and method.startswith("ward"):
+        collapsed = _collapse_repeated_features(data)
+        if collapsed is not None:
+            # Mirror _reduce_for_clustering's decision: PCA applies only for
+            # large, wide inputs and keeps at most this many components.
+            pca_components_used = min(pca_components, n_samples - 1, n_features)
+            pca_applies = n_samples > FULL_CLUSTER_MAX_CELLS and n_features > 256 and pca_components_used >= 8
+            if not pca_applies or collapsed.shape[1] <= pca_components_used:
+                Z, engine = _ward_linkage(collapsed)
+                _LAST_CLUSTER_INFO["engine"] = f"dedup{collapsed.shape[1]}+{engine}"
+                labels = fcluster(Z, t=n_clusters, criterion="maxclust")
+                return labels, Z
         cluster_data, n_components = _reduce_for_clustering(data, max_components=pca_components)
         Z, engine = _ward_linkage(cluster_data)
         _LAST_CLUSTER_INFO["engine"] = engine
