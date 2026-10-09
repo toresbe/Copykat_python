@@ -147,7 +147,7 @@ def _safe_linkage(mat, distance="euclidean", method="ward", n_cores=1, max_cells
     if HAS_FASTCLUSTER and distance == "euclidean" and method.startswith("ward"):
         data = mat.T
         collapsed = _collapse_repeated_features(data)
-        return _ward_linkage(data if collapsed is None else collapsed)[0]
+        return _ward_linkage(data if collapsed is None else collapsed, n_cores=n_cores)[0]
 
     dist = _compute_distance(mat, distance, n_cores)
     if HAS_FASTCLUSTER:
