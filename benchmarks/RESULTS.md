@@ -11,7 +11,8 @@ full pipeline (including heatmaps and text output) **7.9× faster** than
 50k cells, and the full 170k-cell set runs end to end in **96 s**. Classification accuracy is
 unchanged on average. The exact algorithms remove several numerical
 approximations, but they do not by themselves fix the method's
-misclassified samples (see [Accuracy](#accuracy)).
+misclassified samples; the opt-in marker anchor does (mean 0.859 → 0.945 on
+the same samples, see [Accuracy](#accuracy)).
 
 Hardware: RTX 5080 (16 GB, consumer Blackwell: FP64 runs at 1/64 of FP32),
 32-thread CPU, 125 GB RAM. CPU runs use `--n-cores 32`. Every timing was
@@ -176,20 +177,24 @@ what PCA *would* change.
 Balanced accuracy of the aneuploid call against the 3CA `Malignant` labels
 (* = run flagged low confidence):
 
-| sample | base | gpu-compat | gpu | gpu+exactKS |
-|---|---:|---:|---:|---:|
-| Bi2021_Kidney_P90 | 0.997 | **0.004** | 0.996 | 0.996 |
-| Chen2020_Head-and-Neck_P11 | 0.803 | 0.924* | 0.837 | **0.086** |
-| Choudhury2022_Brain_MSC6-BTI | 0.847 | 0.847 | 0.847 | 0.848 |
-| Dong2020_Prostate_patient5 | 0.991 | 0.971 | 0.974 | 0.990 |
-| Gao2021_Breast_DCIS1 | 1.000 | 1.000 | 1.000 | 0.999 |
-| Geistlinger2020_Ovarian_T59 | 0.071* | 0.034* | 0.030 | 0.031 |
-| Jerby-Arnon2021_Sarcoma_SyS14 | **0.004** | 0.996 | 0.996 | 0.996 |
-| Ji2020_Skin_P4 | 0.862* | 0.860* | 0.861* | 0.802* |
-| Laughney2020_Lung_RU681 | 0.936 | 0.936 | 0.936 | 0.936 |
-| Lee2020_Colorectal_SMC09 | 0.973 | 0.972 | 0.973 | 0.973 |
-| Lin2020_Pancreas_P08 | 0.994* | 0.993* | 0.993* | 0.993* |
-| **mean** | **0.771** | **0.776** | **0.859** | **0.786** |
+| sample | base | gpu-compat | gpu | gpu+exactKS | gpu+anchor |
+|---|---:|---:|---:|---:|---:|
+| Bi2021_Kidney_P90 | 0.997 | **0.004** | 0.996 | 0.996 | 0.993 |
+| Chen2020_Head-and-Neck_P11 | 0.803 | 0.924* | 0.837 | **0.086** | 0.901 |
+| Choudhury2022_Brain_MSC6-BTI | 0.847 | 0.847 | 0.847 | 0.848 | 0.917 |
+| Dong2020_Prostate_patient5 | 0.991 | 0.971 | 0.974 | 0.990 | 0.924 |
+| Gao2021_Breast_DCIS1 | 1.000 | 1.000 | 1.000 | 0.999 | 0.995 |
+| Geistlinger2020_Ovarian_T59 | 0.071* | 0.034* | 0.030 | 0.031 | 0.949 |
+| Jerby-Arnon2021_Sarcoma_SyS14 | **0.004** | 0.996 | 0.996 | 0.996 | 0.987* |
+| Ji2020_Skin_P4 | 0.862* | 0.860* | 0.861* | 0.802* | 0.859 |
+| Laughney2020_Lung_RU681 | 0.936 | 0.936 | 0.936 | 0.936 | 0.932 |
+| Lee2020_Colorectal_SMC09 | 0.973 | 0.972 | 0.973 | 0.973 | 0.968 |
+| Lin2020_Pancreas_P08 | 0.994* | 0.993* | 0.993* | 0.993* | 0.970 |
+| **mean** | **0.771** | **0.776** | **0.859** | **0.786** | **0.945** |
+
+`gpu+anchor` = `gpu` with `--anchor markers --final-call arm_correlation` (see
+[below](#fixing-the-anchor)). The `gpu` column was re-run alongside it and
+reproduced the earlier `gpu` numbers exactly.
 
 The `gpu` mean is higher only because sarcoma flips from fully inverted to
 correct. Without it, the means are equal (`base` 0.848, `gpu` 0.845). These
@@ -212,10 +217,40 @@ how `gpu-compat` inverts Kidney and `gpu+exactKS` inverts Chen. It also
 explains why `base` and `gpu-compat`, which differ only in the randomized
 PCA implementation, agree on just 81% of Xenium-50k calls. Exact
 computation removes the arbitrariness of PCA and RNG seeds (`gpu` is
-deterministic and seed-free apart from the MC test). Making the
-classification robust needs a change to the anchor rule itself, for example
-requiring a σ margin or a stability check across resamples. I did not
-attempt that: tuning it on 11 samples would overfit.
+deterministic and seed-free apart from the MC test), but making the
+classification robust needs a change to the anchor rule itself.
+
+### Fixing the anchor
+
+That change is now on the branch, opt-in
+([docs/research/anchor_study.md](../docs/research/anchor_study.md)):
+
+- `--anchor markers` takes as the normal reference the step-4 cluster holding
+  the largest pan-immune (else pan-endothelial) marker-defined population,
+  instead of the smallest-σ cluster.
+- `--final-call arm_correlation` calls a cell aneuploid if its arm-level
+  profile correlates with the consensus of the most deviant cells more
+  strongly than 99% of the reference cells do.
+
+On these 11 samples the mean rises from 0.859 to **0.945** (`gpu+anchor`),
+mainly by un-inverting Geistlinger (0.030 → 0.949), with small losses on
+samples that were already good (Dong prostate −0.050, Lin −0.023). These 11
+samples were the development set of that study, so the in-sample gain
+overstates it. The independent evidence is the pre-registered test on 43 new
+3CA studies: +0.047 [+0.024, +0.078] mean balanced accuracy, inverted samples
+29 → 5, confirmed on a sealed holdout (+0.045).
+
+A further opt-in check uses allele imbalance from the reads
+(`--allele-counts/--allele-phase`,
+[docs/allele_orientation.md](../docs/allele_orientation.md)); it can only flip
+the labels of CopyKAT's split. Three of these samples have public reads: it
+flips Geistlinger's `gpu` calls (0.030 → 0.970) and leaves the other five call
+sets unchanged. On 25 samples with public reads, the anchor options plus the
+allele check gave 0.907 mean balanced accuracy (anchor options alone 0.871),
+with no inverted sample left and no harmful flip
+([docs/research/allele_orientation.md](../docs/research/allele_orientation.md)).
+Scoring note: this table scores cells with an empty 3CA `cell_type` as normal;
+the research documents exclude them, so their numbers differ slightly.
 
 Synovial sarcoma is typically near-diploid (driven by the SS18-SSX fusion),
 so "malignant" is not the same as "aneuploid" there. Its accuracy says
@@ -238,6 +273,8 @@ little either way.
 ```bash
 pip install -e ".[gpu]" cupy-cuda13x  # match your CUDA
 PYTHON=python benchmarks/sweep.sh . runs/gpu --plot --kw backend_name=gpu
+PYTHON=python benchmarks/sweep.sh . runs/gpu_anchor --kw backend_name=gpu \
+    --kw anchor=markers --kw final_call=arm_correlation
 python benchmarks/report.py runs base=base gpu=gpu
 python benchmarks/precision.py precision.jsonl
 python benchmarks/ward_bench.py step4.npy
