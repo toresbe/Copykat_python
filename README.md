@@ -233,6 +233,29 @@ version (e.g. `cupy-cuda12x`). Benchmarks and validation are in
 
 ---
 
+## Tumour/normal call options (experimental)
+
+CopyKAT picks the flattest-profile cluster as its normal reference, which is the majority population;
+in tumour-dominated samples this swaps the tumour and normal labels. Three opt-in options address it
+(defaults are unchanged):
+
+| Option | What it does | Needs |
+|---|---|---|
+| `--anchor markers` | normal reference = largest immune (else endothelial) marker-defined population | count matrix; solid tumours |
+| `--final-call arm_correlation` | per-cell correlation with the arm-level CNA consensus instead of the two-way Ward split | count matrix |
+| `--allele-counts DIR --allele-phase CSV` | checks the final calls with phased allele imbalance and flips them if the "diploid" group carries it | reads or BAM; see [docs/allele_orientation.md](docs/allele_orientation.md) |
+
+On 43 new 3CA studies the first two raised mean balanced accuracy by +0.047 [+0.024, +0.078] and cut
+inverted samples from 29 to 5 ([docs/research/anchor_study.md](docs/research/anchor_study.md)). On 25
+samples with public reads, adding the allele check took the mean from 0.871 to 0.907 with no inverted
+sample left and no harmful flip ([docs/research/allele_orientation.md](docs/research/allele_orientation.md)).
+
+```bash
+copykat-py -i matrix.mtx --genes genes.txt --barcodes barcodes.txt --sample-name S1 --backend gpu \
+    --anchor markers --final-call arm_correlation \
+    --allele-counts allele_counts --allele-phase phase.csv     # optional, see docs/allele_orientation.md
+```
+
 ## Benchmarking and Validation
 
 ### Validation for 11 datasets from [Cancer Cell Atlas (3CA)](https://www.weizmann.ac.il/sites/3CA/)

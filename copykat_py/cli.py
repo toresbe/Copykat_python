@@ -165,6 +165,18 @@ def _add_common_copykat_args(parser):
              "(default: clusters)",
     )
     parser.add_argument(
+        "--allele-counts",
+        default=None,
+        help="[optional] Allele counts for the same cells (cellsnp-lite-format directory, e.g. from "
+             "`copykat-py-allele count`); with --allele-phase, the final calls are checked with allele "
+             "evidence and flipped if CopyKAT's 'diploid' group is the allelically imbalanced one",
+    )
+    parser.add_argument(
+        "--allele-phase",
+        default=None,
+        help="[optional] Phased heterozygous SNPs (CSV from `copykat-py-allele phase`), for --allele-counts",
+    )
+    parser.add_argument(
         "--output-dir",
         "-o",
         default=".",
@@ -398,6 +410,25 @@ def _write_selected_obs_meta_csv(adata, selecting_meta, output_dir, sample_name)
     return str(meta_path), columns
 
 
+def _apply_allele_orientation(result, args):
+    """Check the final calls with allele evidence (copykat_py.allele.orient); if flipped, the prediction
+    file is rewritten and the original kept as *_prediction.before_allele.txt."""
+    import json
+    from copykat_py.allele.orient import orient_prediction
+
+    prefix = f"{args.sample_name}_copykat_"
+    oriented, report = orient_prediction(result["prediction"], args.allele_counts, args.allele_phase)
+    with open(f"{prefix}allele_orientation.json", "w") as f:
+        json.dump(report, f, indent=1)
+    print("allele orientation: F(aneuploid) = {:.3f}, F(diploid) = {:.3f}, flipped = {}".format(
+        report.get("F_aneuploid", float("nan")), report.get("F_diploid", float("nan")), report["flipped"]))
+    if report["flipped"]:
+        result["prediction"].to_csv(f"{prefix}prediction.before_allele.txt", sep="\t", index=False)
+        oriented.to_csv(f"{prefix}prediction.txt", sep="\t", index=False)
+        result["prediction"] = oriented
+    result["allele_orientation"] = report
+
+
 def _run_copykat_analysis(
     args,
     rawmat,
@@ -413,6 +444,8 @@ def _run_copykat_analysis(
     post_plot_meta = os.path.abspath(post_plot_meta) if post_plot_meta is not None else None
 
     norm_cell_names = _load_normal_cells(norm_cells_path)
+    if bool(getattr(args, "allele_counts", None)) != bool(getattr(args, "allele_phase", None)):
+        raise SystemExit("--allele-counts and --allele-phase must be given together")
     output_dir = _prepare_output_dir(args.output_dir)
 
     from copykat_py.copykat import copykat
@@ -466,6 +499,8 @@ def _run_copykat_analysis(
         )
 
         print("CopyKAT-Py analysis complete.")
+        if getattr(args, "allele_counts", None) and "prediction" in result:
+            _apply_allele_orientation(result, args)
         if "prediction" in result:
             pred = result["prediction"]["copykat.pred"].value_counts()
             for key, value in pred.items():
