@@ -378,7 +378,8 @@ def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1
     return means, weights, sigma
 
 
-def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, pca_components=None, genome="hg20"):
+def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, pca_components=None, genome="hg20",
+                     anchor_selector=None):
     """Find a cluster of diploid cells using integrative clustering + GMM variance test.
     
     Mirrors baseline.norm.cl.R: 
@@ -525,6 +526,11 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     # Cluster with minimum sigma is the 'confident normal' cluster
     min_sigma_idx = np.argmin(SDM)
     normal_cluster_id = unique_clusters[min_sigma_idx]
+    anchor_path = "sigma"
+    if anchor_selector is not None:
+        # opt-in (copykat(anchor="markers")): pick the reference cluster from marker-defined
+        # normal populations instead; sigma remains the last-resort fallback
+        normal_cluster_id, anchor_path = anchor_selector(labels, normal_cluster_id)
     
     normal_mask = labels == normal_cluster_id
     if backend.use_gpu():
@@ -544,6 +550,7 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
         "WNS": WNS,
         "preN": preN,
         "cl": labels,
+        "anchor_path": anchor_path,
     }
 
 

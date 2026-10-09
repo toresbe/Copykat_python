@@ -58,6 +58,7 @@ from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
 from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
 from copykat_py import backend
+from copykat_py import anchor as _anchor
 
 
 _WRITE_CHUNK_BYTES = 512 << 20
@@ -526,7 +527,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             LOW_DR=0.05, UP_DR=0.1, win_size=25, norm_cell_names="",
             KS_cut=0.1, sam_name="", distance="euclidean", output_seg=False,
             plot_genes=True, genome="hg20", n_cores=1, pca_components=None,
-            meta_csv=None, row_split_col=None, backend_name="cpu", ks_method="mc"):
+            meta_csv=None, row_split_col=None, backend_name="cpu", ks_method="mc",
+            anchor="sigma", final_call="clusters"):
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
     
     Parameters
@@ -550,6 +552,14 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         Window size for MCMC segmentation.
     norm_cell_names : str or list
         Known normal cell barcodes ("" for auto-detection).
+    anchor : str
+        How step 4 picks the normal reference when norm_cell_names is not given:
+        "sigma" (default, CopyKAT's smallest-GMM-sigma cluster) or "markers" (the largest
+        immune, else endothelial, marker-defined population; see copykat_py.anchor).
+        Not for haematological malignancies.
+    final_call : str
+        "clusters" (default, CopyKAT's two-way Ward split in steps 7-8) or "arm_correlation"
+        (per-cell correlation with the arm-level CNA consensus; see copykat_py.anchor).
     KS_cut : float
         KS test cutoff for breakpoint detection (0 to 1).
     sam_name : str
@@ -614,6 +624,15 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     # =========================================================================
     print("step 1: read and filter data ...")
     step_start = time.perf_counter()
+    if anchor not in ("sigma", "markers"):
+        raise ValueError("anchor must be 'sigma' or 'markers'")
+    if final_call not in ("clusters", "arm_correlation"):
+        raise ValueError("final_call must be 'clusters' or 'arm_correlation'")
+    marker_counts = None
+    if anchor == "markers":
+        # counted on the raw input, before genes are filtered by detection rate
+        marker_counts = (_anchor.count_markers(rawmat, _anchor.IMMUNE_MARKERS),
+                         _anchor.count_markers(rawmat, _anchor.ENDOTHELIAL_MARKERS))
     rawmat, gene_names, barcodes, original_cell_names, prep_stats = _prepare_input_matrix(rawmat, min_gene_per_cell, LOW_DR)
     input_cell_count = int(len(original_cell_names))
     selected_pca_components = resolve_adaptive_pca_components(
@@ -836,6 +855,13 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     else:
         # Auto-detect normal cells
+        anchor_selector = None
+        if anchor == "markers":
+            imm_counts = marker_counts[0].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
+            endo_counts = marker_counts[1].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
+
+            def anchor_selector(labels, sigma_cluster):
+                return _anchor.choose_anchor_cluster(labels, imm_counts, endo_counts, sigma_cluster)
         basa = baseline_norm_cl(
             norm_mat_smooth,
             min_cells=5,
@@ -843,13 +869,21 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             cell_names=cell_name_list,
             pca_components=selected_pca_components,
             genome=genome,
+            anchor_selector=anchor_selector,
         )
         basel = basa["basel"]
         WNS = basa["WNS"]
         preN = basa["preN"]
         CL = basa["cl"]
-        
-        if WNS == "unclassified.prediction":
+        runtime_info["anchor"] = anchor
+        runtime_info["anchor_path"] = basa.get("anchor_path", "sigma")
+        if anchor == "markers":
+            # The marker-chosen reference replaces CopyKAT's low-confidence GMM fallback.
+            # Only a reference found without marker support (sigma/enrichment) is flagged.
+            WNS = "" if runtime_info["anchor_path"] in ("immune", "endothelial") else "unclassified.prediction"
+            print(f"  normal reference from markers: path={runtime_info['anchor_path']}, {len(preN)} cells")
+
+        if WNS == "unclassified.prediction" and anchor != "markers":
             cluster_preN = list(preN) if preN is not None else []
             keep_cluster_anchor = (
                 WNS1 == "low data quality"
@@ -1025,6 +1059,13 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         if cell_line == "yes":
             mat_adj = uber_mat_adj
         else:
+            arm_calls = None
+            if final_call == "arm_correlation" and preN is not None and len(preN) > 0:
+                preN_set = _preN_to_names(preN, cell_name_list)
+                anchor_mask = np.array([c in preN_set for c in cell_cols_seg])
+                if anchor_mask.sum() >= 5:
+                    arm_calls = _anchor.arm_correlation_calls(
+                        uber_mat_adj, bin_coords["chrom"].to_numpy(), bin_coords["chrompos"].to_numpy(), anchor_mask)
             # First hierarchical clustering for initial prediction
             labels, Z = _hierarchical_cluster(
                 uber_mat_adj.T,
@@ -1054,6 +1095,8 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
                     cl_mag.append(np.mean(np.abs(uber_mat_adj[:, mask])))
                 com_pred = _assign_binary_labels(hc_umap, -np.asarray(cl_mag, dtype=float), "diploid", "aneuploid")
             
+            if arm_calls is not None:
+                com_pred = np.where(arm_calls, "aneuploid", "diploid")
             # Baseline adjustment: subtract diploid mean, then denoise
             diploid_mask = com_pred == "diploid"
             if diploid_mask.sum() > 0:
@@ -1101,6 +1144,10 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
                     cl_mag.append(np.mean(np.abs(mat_adj[:, mask])))
                 com_preN = _assign_binary_labels(hc_final, -np.asarray(cl_mag, dtype=float), "diploid", "aneuploid")
             
+            if arm_calls is not None:
+                # final labels from the arm-level correlation; the Ward split above still
+                # orders the heatmap
+                com_preN = np.where(arm_calls, "aneuploid", "diploid")
             if WNS == "unclassified.prediction":
                 com_preN = np.where(com_preN == "diploid", "c1:diploid:low.conf", com_preN)
                 com_preN = np.where(com_preN == "aneuploid", "c2:aneuploid:low.conf", com_preN)

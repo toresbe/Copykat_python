@@ -149,6 +149,22 @@ def _add_common_copykat_args(parser):
              "R CopyKAT) or exact (exact KS distance between the posterior Gammas) (default: mc)",
     )
     parser.add_argument(
+        "--anchor",
+        default="sigma",
+        choices=["sigma", "markers"],
+        help="[optional] Normal reference when --norm-cells is not given: sigma (smallest-GMM-sigma "
+             "cluster, as in R CopyKAT) or markers (largest immune, else endothelial, marker-defined "
+             "population; solid tumours only) (default: sigma)",
+    )
+    parser.add_argument(
+        "--final-call",
+        default="clusters",
+        choices=["clusters", "arm_correlation"],
+        help="[optional] Final diploid/aneuploid call: clusters (two-way Ward split, as in R CopyKAT) "
+             "or arm_correlation (per-cell correlation with the arm-level CNA consensus) "
+             "(default: clusters)",
+    )
+    parser.add_argument(
         "--output-dir",
         "-o",
         default=".",
@@ -445,6 +461,8 @@ def _run_copykat_analysis(
             row_split_col=row_split_col,
             backend_name=getattr(args, "backend", "cpu"),
             ks_method=getattr(args, "ks_method", "mc"),
+            anchor=getattr(args, "anchor", "sigma"),
+            final_call=getattr(args, "final_call", "clusters"),
         )
 
         print("CopyKAT-Py analysis complete.")
@@ -540,6 +558,8 @@ def copykat_anndata(
     pca_components=None,
     backend="cpu",
     ks_method="mc",
+    anchor="sigma",
+    final_call="clusters",
 ):
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
     _, rawmat, matrix_label = _anndata_to_rawmat(
@@ -588,6 +608,8 @@ def copykat_anndata(
         pca_components=pca_components,
         backend=backend,
         ks_method=ks_method,
+        anchor=anchor,
+        final_call=final_call,
         output_dir=str(output_dir),
     )
     return _run_copykat_analysis(
