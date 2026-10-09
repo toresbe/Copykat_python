@@ -27,6 +27,7 @@ taken with the machine otherwise idle (load average < 6 before each sample).
 | `gpu-compat` | CUDA, but keeps the CPU path's approximations (PCA before step-4 clustering, subsampled silhouette, k-means heatmap ordering) |
 | `gpu` | CUDA with exact algorithms in place of those approximations (table below) |
 | `gpu+exactKS` | `gpu` plus `--ks-method exact` |
+| `gpu+anchor` | `gpu` plus `--anchor markers --final-call arm_correlation`: marker-defined normal reference and arm-level correlation calls (accuracy only; see [Fixing the anchor](#fixing-the-anchor)) |
 
 What `gpu` computes differently from `base`:
 
