@@ -76,7 +76,8 @@ from copykat_py.baseline import (
 from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
 from copykat_py.final_call import (
-    _preN_to_names,
+    FinalCallResult,
+    _normal_cells_to_names,
     cluster_and_call,
     cluster_cells,
 )
@@ -644,7 +645,7 @@ def copykat(
         "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
         if isinstance(norm_cell_names, list)
         else 0,
-        "baseline_anchor_count": len(_preN_to_names(preN, cell_name_list).intersection(cell_name_list)),
+        "baseline_anchor_count": len(_normal_cells_to_names(preN, cell_name_list).intersection(cell_name_list)),
     }
     elapsed = _record_step(
         runtime_info, "baseline_estimation", step_start, parallel_info=baseline_cluster_info, extra={"warning": WNS}
@@ -794,7 +795,7 @@ def copykat(
         else:
             arm_calls = None
             if final_call is FinalCallStrategy.ARM_CORRELATION and preN is not None and len(preN) > 0:
-                preN_names = _preN_to_names(preN, cell_name_list)
+                preN_names = _normal_cells_to_names(preN, cell_name_list)
                 anchor_mask = np.array([cell in preN_names for cell in cell_cols_seg], dtype=bool)
                 if anchor_mask.sum() >= 5:
                     arm_calls = _anchor.arm_correlation_calls(
@@ -806,7 +807,7 @@ def copykat(
                     runtime_info["final_call_path"] = FinalCallStrategy.ARM_CORRELATION
                 else:
                     runtime_info["final_call_path"] = "clusters_insufficient_anchor"
-            labels, Z, com_pred = cluster_and_call(
+            initial_call = cluster_and_call(
                 uber_mat_adj,
                 cell_cols_seg,
                 cell_name_list,
@@ -815,6 +816,8 @@ def copykat(
                 pca_components=selected_pca_components,
                 prediction_override=arm_calls,
             )
+            labels, Z = initial_call["labels"], initial_call["Z"]
+            com_pred = initial_call["predictions"]
 
             # Baseline adjustment: subtract diploid mean, then denoise
             diploid_mask = com_pred == PredictionLabel.DIPLOID
@@ -839,7 +842,7 @@ def copykat(
         logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
         if cell_line is not CellLineMode.YES:
-            labels_final, Z_final, com_preN = cluster_and_call(
+            final_call_result: FinalCallResult = cluster_and_call(
                 mat_adj,
                 cell_cols_seg,
                 cell_name_list,
@@ -849,12 +852,15 @@ def copykat(
                 prediction_override=arm_calls,
                 low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
             )
+            labels_final, Z_final = final_call_result["labels"], final_call_result["Z"]
+            com_preN = final_call_result["predictions"]
         else:
-            labels, Z = cluster_cells(
+            clustering = cluster_cells(
                 mat_adj,
                 n_cores=n_cores,
                 pca_components=selected_pca_components,
             )
+            labels, Z = clustering["labels"], clustering["Z"]
             labels_final, Z_final = labels, Z
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
@@ -982,7 +988,7 @@ def copykat(
 
         logger.info("step 7: adjust baseline ...")
         step_start = time.perf_counter()
-        labels, Z, com_pred = cluster_and_call(
+        initial_call = cluster_and_call(
             uber_mat_adj,
             cell_cols_seg,
             cell_name_list,
@@ -990,6 +996,8 @@ def copykat(
             n_cores=n_cores,
             pca_components=selected_pca_components,
         )
+        labels, Z = initial_call["labels"], initial_call["Z"]
+        com_pred = initial_call["predictions"]
 
         # Baseline adjustment
         diploid_mask = com_pred == PredictionLabel.DIPLOID
@@ -1011,7 +1019,7 @@ def copykat(
         # Final prediction
         logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
-        labels_final, Z_final, com_preN = cluster_and_call(
+        final_call_result = cluster_and_call(
             mat_adj,
             cell_cols_seg,
             cell_name_list,
@@ -1020,6 +1028,8 @@ def copykat(
             pca_components=selected_pca_components,
             low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
         )
+        labels_final, Z_final = final_call_result["labels"], final_call_result["Z"]
+        com_preN = final_call_result["predictions"]
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
