@@ -301,3 +301,52 @@ Currently, CopyKat-Python is under internal testing.
 - Numerical implementation details
 - Smoothing and segmentation algorithms
 - Clustering behavior (parDist + hcluster vs. PCA + fastcluster)
+### Reports from completed runs
+
+Each successful analysis also saves `*_copykat_runtime.json`. New runs record
+parameters (including requested and effective `UP_DR`), software versions,
+reference-cell counts, filtering counts, analysis notes, and step timings in this
+file. Existing prediction and CNA outputs keep their formats.
+
+Generate a report afterward, without repeating inference or loading the CNA matrix:
+
+```bash
+copykat-py-report \
+    --run-dir results/sample1 \
+    --formats txt,markdown,html,json
+```
+
+`--formats` accepts one or more comma-separated formats; the default is `html`.
+Reports are written as `<sample>_copykat_report.txt`, `.md`, `.html`, or `.json` in
+the run directory. Use `--output-dir` to write them elsewhere and `--sample-name`
+to select a run when the directory contains multiple runtime files. Repeating the
+command replaces only the selected report files.
+
+All formats summarize the run, filtering, reference cells, prediction counts,
+recorded warnings/notes, timings, and available output files. HTML embeds existing
+standard and annotated heatmaps, so those figures remain visible when the HTML
+file is shared. Markdown links to the heatmap files. Analytical output links still
+require the original files; share those separately when needed. No additional
+plots or reports are generated during inference.
+
+PNG previews exceeding 12,000 pixels in either dimension or 40 million total
+pixels are linked with a warning instead of embedded. This prevents malformed
+plot layouts (such as excessively long categorical legends) from overwhelming
+the report. The source plot is preserved; this check does not validate CNA calls.
+
+Older runtime files are supported, with missing metadata explicitly marked as
+unavailable. Reports also work without heatmaps or prediction tables (for example,
+cell-line mode). Warnings summarize what the runtime metadata recorded, rather
+than every third-party message in `copykat_run.log`. Reference details are counts,
+not a list of cell barcodes. The `genes_after_annotation` count is after the
+pipeline's gene exclusions, not a gene-identifier mapping success rate.
+
+The same functionality is available in Python:
+
+```python
+from copykat_py.reporting import load_report, write_reports
+
+report = load_report("results/sample1")
+write_reports(report, ["markdown", "html"], "results/sample1")
+```
+

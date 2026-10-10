@@ -1444,3 +1444,20 @@ def _write_seg_file(RNA_adj_df: pd.DataFrame, mat_adj: FloatArray, cell_cols: Se
 
     seg_df = pd.DataFrame(rows)
     seg_df.to_csv(f"{sample_name}CNA_results.seg", sep="\t", index=False)
+from importlib.metadata import PackageNotFoundError, version
+        "parameters": {
+            "id_type": id_type, "cell_line": cell_line, "genome": genome,
+            "ngene_chr": ngene_chr, "min_gene_per_cell": min_gene_per_cell,
+            "LOW_DR": LOW_DR, "UP_DR": UP_DR, "win_size": win_size, "KS_cut": KS_cut,
+            "distance": distance, "n_cores": n_cores, "pca_components_requested": pca_components,
+            "output_seg": output_seg, "plot_genes": plot_genes, "random_seed": 1234,
+            "meta_csv": meta_csv, "row_split_col": row_split_col,
+        },
+        "versions": {},
+        "warnings": [],
+    for package in ("copykat-py", "numpy", "scipy", "pandas", "scikit-learn", "fastcluster"):
+        try:
+            runtime_info["versions"][package] = version(package)
+        except PackageNotFoundError:
+            runtime_info["versions"][package] = "unavailable (source checkout or package not installed)"
+    runtime_info["parameters"]["gene_order"] = "chromosome,start_position" if genome == "mm10" else "abspos"

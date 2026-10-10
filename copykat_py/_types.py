@@ -128,6 +128,10 @@ class RuntimeInfo(TypedDict):
     pca_selection_input_cells: NotRequired[int]
     pca_selection_rule: NotRequired[str]
     total_seconds: NotRequired[float]
+    parameters: NotRequired[dict[str, Any]]
+    versions: NotRequired[dict[str, str]]
+    reference: NotRequired[dict[str, Any]]
+    warnings: NotRequired[list[str]]
 
 
 class CopyKATResult(TypedDict):
