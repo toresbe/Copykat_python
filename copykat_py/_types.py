@@ -8,8 +8,11 @@ document them rather than enforce them):
 - Clustering works on the transpose, ``CellByFeature`` (cells x features).
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
-from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
+from enum import StrEnum
+from typing import Any, NotRequired, TypeAlias, TypedDict
 
 import numpy as np
 import numpy.typing as npt
@@ -43,6 +46,124 @@ LinkageMatrix: TypeAlias = npt.NDArray[np.float64]
 SparseMatrix: TypeAlias = sparse.coo_matrix | sparse.csr_matrix | sparse.csc_matrix
 
 
+class DistanceMetric(StrEnum):
+    """Supported distance metrics for ordering cells in CNA heatmaps."""
+
+    EUCLIDEAN = "euclidean"
+    PEARSON = "pearson"
+    SPEARMAN = "spearman"
+
+
+class Genome(StrEnum):
+    """Supported reference genome assemblies."""
+
+    HG20 = "hg20"
+    MM10 = "mm10"
+
+
+class ExecutionBackend(StrEnum):
+    """Supported execution backends."""
+
+    CPU = "cpu"
+    GPU = "gpu"
+    GPU_COMPAT = "gpu-compat"
+
+
+class AnchorStrategy(StrEnum):
+    """How CopyKAT chooses the normal-cell reference."""
+
+    SIGMA = "sigma"
+    MARKERS = "markers"
+
+
+class FinalCallStrategy(StrEnum):
+    """Strategy used to label final copy-number calls."""
+
+    CLUSTERS = "clusters"
+    ARM_CORRELATION = "arm_correlation"
+
+
+class KSMethod(StrEnum):
+    """Breakpoint statistic used during segmentation."""
+
+    MONTE_CARLO = "mc"
+    EXACT = "exact"
+
+
+class GeneIdType(StrEnum):
+    """Gene identifier representation accepted by annotation."""
+
+    SYMBOL = "S"
+    ENSEMBL = "E"
+
+    @classmethod
+    def normalize(cls, value: GeneIdType | str) -> GeneIdType:
+        """Normalize the ID-type argument: E-prefixed values select Ensembl; others select symbols."""
+        if isinstance(value, cls):
+            return value
+        return cls.ENSEMBL if str(value).upper().startswith(cls.ENSEMBL.value) else cls.SYMBOL
+
+
+class CellLineMode(StrEnum):
+    """Whether input contains a pure cell line sample."""
+
+    YES = "yes"
+    NO = "no"
+
+
+class ReportFormat(StrEnum):
+    """Supported output formats for run reports."""
+
+    TEXT = "txt"
+    MARKDOWN = "markdown"
+    HTML = "html"
+    JSON = "json"
+
+
+class ReferenceMode(StrEnum):
+    """Source used to establish the normal reference population."""
+
+    SYNTHETIC = "synthetic"
+    KNOWN_NORMAL = "known_normal"
+    AUTOMATIC = "automatic"
+
+
+class AnchorPath(StrEnum):
+    """Evidence used to choose the normal-cell reference."""
+
+    SIGMA = "sigma"
+    IMMUNE = "immune"
+    ENDOTHELIAL = "endothelial"
+    ENRICHMENT = "enrichment"
+
+
+class PredictionLabel(StrEnum):
+    """Copy-number classification labels emitted by CopyKAT."""
+
+    DIPLOID = "diploid"
+    ANEUPLOID = "aneuploid"
+    DIPLOID_LOW_CONFIDENCE = "c1:diploid:low.conf"
+    ANEUPLOID_LOW_CONFIDENCE = "c2:aneuploid:low.conf"
+    NOT_DEFINED = "not.defined"
+    UNKNOWN = "unknown"
+
+
+class BaselineWarning(StrEnum):
+    """Baseline classification status reported by the pipeline."""
+
+    NONE = ""
+    UNCLASSIFIED = "unclassified.prediction"
+    CELL_LINE = "run with cell line mode"
+    KNOWN_NORMAL = "run with known normal"
+
+
+class DataQualityStatus(StrEnum):
+    """Data-quality status used to choose baseline fallback behavior."""
+
+    OK = "data quality is ok"
+    LOW = "low data quality"
+
+
 class RawInput(TypedDict):
     """Count matrix with its gene and cell names (genes x cells)."""
 
@@ -54,9 +175,6 @@ class RawInput(TypedDict):
 RawMatrix: TypeAlias = pd.DataFrame | npt.NDArray[Any] | SparseMatrix | RawInput | str
 """Inputs accepted by ``copykat()``: genes x cells, or a path to a .mtx/.csv/.tsv file."""
 
-BaselineWarning: TypeAlias = Literal["", "unclassified.prediction", "run with cell line mode", "run with known normal"]
-"""Classification note carried through the pipeline (``WNS`` in the R code)."""
-
 
 class BaselineResult(TypedDict):
     """Reference normal cells and the baseline profile derived from them."""
@@ -66,7 +184,7 @@ class BaselineResult(TypedDict):
     preN: list[str] | IntArray
     """Reference normal cells: names when cell names are known, otherwise column indices."""
     cl: ClusterLabels | None
-    anchor_path: NotRequired[str]
+    anchor_path: NotRequired[AnchorPath]
 
 
 class SyntheticBaselineResult(TypedDict):

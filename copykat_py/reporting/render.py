@@ -7,11 +7,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from copykat_py._types import ReportFormat
 from copykat_py.reporting.html import render_html
 from copykat_py.reporting.images import preview_issue
 from copykat_py.reporting.model import RunReport
 
-FORMATS = {"txt": ".txt", "markdown": ".md", "html": ".html", "json": ".json"}
+FORMATS: dict[ReportFormat, str] = {
+    ReportFormat.TEXT: ".txt",
+    ReportFormat.MARKDOWN: ".md",
+    ReportFormat.HTML: ".html",
+    ReportFormat.JSON: ".json",
+}
 
 
 def report_sections(report: RunReport) -> list[tuple[str, list[tuple[str, Any]]]]:
@@ -98,12 +104,14 @@ def _href(path: Path, output_dir: Path) -> str:
     return quote(path.name, safe="") if path.parent == output_dir else path.as_uri()
 
 
-def render_report(report: RunReport, fmt: str, output_dir: Path) -> str:
+def render_report(report: RunReport, fmt: ReportFormat | str, output_dir: Path) -> str:
     """Render without executing code or loading large matrix files."""
-    if fmt not in FORMATS:
-        raise ValueError(f"Unknown report format: {fmt}")
+    try:
+        fmt = ReportFormat(fmt)
+    except ValueError as error:
+        raise ValueError(f"Unknown report format: {fmt}") from error
     sections = report_sections(report)
-    if fmt == "json":
+    if fmt is ReportFormat.JSON:
         return (
             json.dumps(
                 {
@@ -121,13 +129,13 @@ def render_report(report: RunReport, fmt: str, output_dir: Path) -> str:
             )
             + "\n"
         )
-    if fmt == "txt":
+    if fmt is ReportFormat.TEXT:
         lines = ["CopyKAT-Python run report"]
         for title, rows in sections:
             lines.extend(["", title, *(f"  {key}: {_value(value)}" for key, value in rows)])
         lines.extend(["", "Output files", *(f"  {path}" for path in report.files)])
         return "\n".join(lines) + "\n"
-    if fmt == "markdown":
+    if fmt is ReportFormat.MARKDOWN:
         blocks = ["# CopyKAT-Python run report"]
         for title, rows in sections:
             blocks.append(f"## {title}\n\n" + "\n".join(f"- {_md(key)}: {_md(value)}" for key, value in rows))
@@ -151,10 +159,13 @@ def render_report(report: RunReport, fmt: str, output_dir: Path) -> str:
     return render_html(report, sections, output_dir)
 
 
-def write_reports(report: RunReport, formats: Iterable[str], output_dir: str | Path) -> list[Path]:
+def write_reports(report: RunReport, formats: Iterable[ReportFormat | str], output_dir: str | Path) -> list[Path]:
     """Write selected formats; only report files are created or replaced."""
-    selected = list(dict.fromkeys(formats))
-    if not selected or any(fmt not in FORMATS for fmt in selected):
+    try:
+        selected = list(dict.fromkeys(ReportFormat(fmt) for fmt in formats))
+    except ValueError as error:
+        raise ValueError(f"Select one or more formats: {', '.join(FORMATS)}") from error
+    if not selected:
         raise ValueError(f"Select one or more formats: {', '.join(FORMATS)}")
     directory = Path(output_dir).resolve()
     # Render everything before writing, so a missing image does not leave partial reports.

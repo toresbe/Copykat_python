@@ -27,7 +27,16 @@ from sklearn.decomposition import TruncatedSVD
 from threadpoolctl import threadpool_limits
 
 from copykat_py._logging import with_default_progress_output
-from copykat_py._types import FloatArray, IntArray, LinkageMatrix
+from copykat_py._types import (
+    BaselineWarning,
+    DataQualityStatus,
+    DistanceMetric,
+    FloatArray,
+    Genome,
+    IntArray,
+    LinkageMatrix,
+    PredictionLabel,
+)
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
 from copykat_py.genomic_coordinates import chromosome_label
 from copykat_py.metadata_colors import ContinuousAnnotation, continuous_annotation, is_continuous
@@ -73,10 +82,13 @@ def _simple_cell_order(mat: FloatArray, predictions: Mapping[str, str] | None = 
     """Cheap fallback ordering used when clustering is unavailable or unsafe."""
     if predictions is not None:
         pred_list = list(predictions.values())
-        pred_rank = np.array(
-            [0 if "aneuploid" in str(p) else 1 if "diploid" in str(p) else 2 for p in pred_list],
-            dtype=np.int16,
-        )
+        rank_by_label = {
+            PredictionLabel.ANEUPLOID: 0,
+            PredictionLabel.ANEUPLOID_LOW_CONFIDENCE: 0,
+            PredictionLabel.DIPLOID: 1,
+            PredictionLabel.DIPLOID_LOW_CONFIDENCE: 1,
+        }
+        pred_rank = np.array([rank_by_label.get(str(pred), 2) for pred in pred_list], dtype=np.int16)
         cna_magnitude = np.sum(np.abs(mat), axis=0)
         return np.lexsort((-cna_magnitude, pred_rank))
 
@@ -84,14 +96,18 @@ def _simple_cell_order(mat: FloatArray, predictions: Mapping[str, str] | None = 
     return np.argsort(cna_magnitude)[::-1]
 
 
-def _compute_distance(mat: FloatArray, distance: str = "euclidean", n_cores: int = 1) -> FloatArray:
+def _compute_distance(
+    mat: FloatArray,
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
+    n_cores: int = 1,
+) -> FloatArray:
     """Compute distance matrix for cells.
 
     Parameters
     ----------
     mat : np.ndarray, shape (n_bins, n_cells)
         CNA matrix.
-    distance : str
+    distance : DistanceMetric
         "euclidean", "pearson", or "spearman".
 
     Returns
@@ -99,13 +115,14 @@ def _compute_distance(mat: FloatArray, distance: str = "euclidean", n_cores: int
     dist : np.ndarray
         Condensed distance matrix.
     """
-    if distance == "euclidean":
+    distance = DistanceMetric(distance)
+    if distance == DistanceMetric.EUCLIDEAN:
         return pdist(mat.T, metric="euclidean")
-    elif distance == "pearson":
+    elif distance == DistanceMetric.PEARSON:
         corr = np.corrcoef(mat.T)
         corr = np.clip(corr, -1, 1)
         return pdist(1 - corr)
-    elif distance == "spearman":
+    elif distance == DistanceMetric.SPEARMAN:
         from scipy.stats import spearmanr
 
         corr, _ = spearmanr(mat, axis=0)
@@ -116,7 +133,11 @@ def _compute_distance(mat: FloatArray, distance: str = "euclidean", n_cores: int
 
 
 def _safe_linkage(
-    mat: FloatArray, distance: str = "euclidean", method: str = "ward", n_cores: int = 1, max_cells: int = 65536
+    mat: FloatArray,
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
+    method: str = "ward",
+    n_cores: int = 1,
+    max_cells: int = 65536,
 ) -> LinkageMatrix:
     """Compute linkage with fastcluster-first execution.
 
@@ -124,7 +145,7 @@ def _safe_linkage(
     regardless of cell count so plotting matches the main clustering path.
     The ``max_cells`` argument is retained for compatibility.
     """
-    if distance == "euclidean" and method.startswith("ward"):
+    if distance == DistanceMetric.EUCLIDEAN and method.startswith("ward"):
         data = mat.T
         collapsed = _collapse_repeated_features(data)
         return _ward_linkage(data if collapsed is None else collapsed, n_cores=n_cores)[0]
@@ -293,7 +314,7 @@ def _safe_dendrogram_with_recursion_management(Z: LinkageMatrix, ax: Axes, n_cel
         sys.setrecursionlimit(old_limit)
 
 
-def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any], below: bool = False, genome: str = "hg20") -> None:
+def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any], below: bool = False, genome: Genome = Genome.HG20) -> None:
     """Place chromosome name labels beside the chromosome-bar axes.
 
     Uses a mixed-coordinate transform (x in data coordinates, y in axes
@@ -333,12 +354,12 @@ def plot_heatmap(
     chrom_info: npt.NDArray[Any],
     predictions: Mapping[str, str] | None = None,
     sample_name: str = "",
-    distance: str = "euclidean",
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     n_cores: int = 1,
-    WNS1: str = "",
-    WNS: str = "",
+    WNS1: DataQualityStatus = DataQualityStatus.OK,
+    WNS: BaselineWarning = BaselineWarning.NONE,
     output_path: str | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
 ) -> None:
     """Plot CNA heatmap with hierarchical clustering dendrogram.
 
@@ -358,7 +379,7 @@ def plot_heatmap(
         Cell name -> "aneuploid"/"diploid" predictions.
     sample_name : str
         Sample name for title.
-    distance : str
+    distance : DistanceMetric
         Distance metric.
     n_cores : int
         Number of cores.
@@ -369,6 +390,8 @@ def plot_heatmap(
     output_path : str or None
         Path to save figure.
     """
+    genome = Genome(genome)
+    distance = DistanceMetric(distance)
     if output_path is None:
         output_path = f"{sample_name}_copykat_heatmap.png"
 
@@ -524,18 +547,25 @@ def plot_heatmap(
     if predictions is not None:
         ax_pred = fig.add_subplot(gs[1, col_pred], sharey=ax_heat)
         pred_list = list(predictions.values())
-        pred_ordered = [pred_list[i] if i < len(pred_list) else "not.defined" for i in cell_order]
+        pred_ordered = [pred_list[i] if i < len(pred_list) else PredictionLabel.NOT_DEFINED for i in cell_order]
         pred_palette = _assign_cat_colors(pred_ordered)
         pred_colors = np.array([mcolors.to_rgb(pred_palette[str(p)]) for p in pred_ordered]).reshape(n_cells, 1, 3)
-        ax_pred.imshow(
-            pred_colors, aspect="auto", interpolation="nearest"
-        )
+        ax_pred.imshow(pred_colors, aspect="auto", interpolation="nearest")
         ax_pred.set_xticks([])
         ax_pred.set_yticks([])
         ax_pred_top = fig.add_subplot(gs[0, col_pred])
         ax_pred_top.axis("off")
-        ax_pred_top.text(0.5, 0.02, "CopyKAT Python", ha="left", va="bottom", fontsize=10,
-                         rotation=45, rotation_mode="anchor", transform=ax_pred_top.transAxes)
+        ax_pred_top.text(
+            0.5,
+            0.02,
+            "CopyKAT Python",
+            ha="left",
+            va="bottom",
+            fontsize=10,
+            rotation=45,
+            rotation_mode="anchor",
+            transform=ax_pred_top.transAxes,
+        )
         for spine in ax_pred.spines.values():
             spine.set_linewidth(0.6)
 
@@ -558,8 +588,17 @@ def plot_heatmap(
     cbar = fig.colorbar(im, cax=ax_cbar, orientation="vertical")
     ax_cbar_top = fig.add_subplot(gs[0, col_cbar])
     ax_cbar_top.axis("off")
-    ax_cbar_top.text(0.5, 0.02, "Relative CNA", ha="left", va="bottom", fontsize=10,
-                    rotation=45, rotation_mode="anchor", transform=ax_cbar_top.transAxes)
+    ax_cbar_top.text(
+        0.5,
+        0.02,
+        "Relative CNA",
+        ha="left",
+        va="bottom",
+        fontsize=10,
+        rotation=45,
+        rotation_mode="anchor",
+        transform=ax_cbar_top.transAxes,
+    )
     cbar.ax.tick_params(labelsize=10)
     for ax in [ax_heat, ax_chr, ax_cbar]:
         for spine in ax.spines.values():
@@ -584,12 +623,12 @@ def _natural_sort_key(s: object) -> list[int | str]:
 
 # Fixed colors for copykat prediction values (aneuploid=orange, diploid=blue)
 _COPYKAT_PRED_COLORS = {
-    "aneuploid": "#E8601C",  # orange
-    "c2:aneuploid:low.conf": "#F4A86A",  # light orange
-    "diploid": "#3A87C8",  # blue
-    "c1:diploid:low.conf": "#9EC8E8",  # light blue
-    "not.defined": "#B0B0B0",  # grey
-    "unknown": "#D4D4D4",  # light grey
+    PredictionLabel.ANEUPLOID: "#E8601C",  # orange
+    PredictionLabel.ANEUPLOID_LOW_CONFIDENCE: "#F4A86A",  # light orange
+    PredictionLabel.DIPLOID: "#3A87C8",  # blue
+    PredictionLabel.DIPLOID_LOW_CONFIDENCE: "#9EC8E8",  # light blue
+    PredictionLabel.NOT_DEFINED: "#B0B0B0",  # grey
+    PredictionLabel.UNKNOWN: "#D4D4D4",  # light grey
 }
 
 
@@ -604,7 +643,8 @@ def _assign_cat_colors(values: Iterable[object]) -> dict[str, str]:
     cats = sorted({str(v) for v in values}, key=_natural_sort_key)
 
     # Detect copykat prediction columns by value content
-    if any("aneuploid" in c or "diploid" in c for c in cats):
+    prediction_labels = set(PredictionLabel) - {PredictionLabel.UNKNOWN, PredictionLabel.NOT_DEFINED}
+    if set(cats) & prediction_labels:
         return {cat: _COPYKAT_PRED_COLORS.get(cat, "#B0B0B0") for cat in cats}
 
     n = len(cats)
@@ -615,8 +655,8 @@ def _assign_cat_colors(values: Iterable[object]) -> dict[str, str]:
     else:
         palette = [mcolors.to_hex(plt.cm.hsv(i / n)) for i in range(n)]
     cmap = {cat: palette[i % len(palette)] for i, cat in enumerate(cats)}
-    if "unknown" in cmap:
-        cmap["unknown"] = "#cccccc"
+    if PredictionLabel.UNKNOWN in cmap:
+        cmap[PredictionLabel.UNKNOWN] = "#cccccc"
     return cmap
 
 
@@ -652,7 +692,11 @@ def _read_meta_csv(path: str) -> pd.DataFrame:
     return df
 
 
-def _order_group(mat_grp: FloatArray, distance: str = "euclidean", n_cores: int = 1) -> IntArray:
+def _order_group(
+    mat_grp: FloatArray,
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
+    n_cores: int = 1,
+) -> IntArray:
     """Return a cell-ordering index array for one CNA sub-matrix.
 
     Uses full Ward linkage for groups ≤ 3 000 cells; K-means block ordering
@@ -689,11 +733,11 @@ def plot_heatmap_annotated(
     meta_csv: str,
     row_split_col: str | None = None,
     sample_name: str = "",
-    distance: str = "euclidean",
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     n_cores: int = 1,
     output_path: str | None = None,
     continuous_meta: Sequence[str] | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
 ) -> None:
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
@@ -722,7 +766,7 @@ def plot_heatmap_annotated(
         and clusters all cells together.
     sample_name : str
         Label shown in the figure title and used for the default filename.
-    distance : str
+    distance : DistanceMetric
         Distance metric for within-group clustering
         (``"euclidean"``, ``"pearson"``, or ``"spearman"``).
     n_cores : int
@@ -735,6 +779,8 @@ def plot_heatmap_annotated(
         distinct values. By default numeric measurements are detected; small
         integer-coded categories and the row-split column remain categorical.
     """
+    genome = Genome(genome)
+    distance = DistanceMetric(distance)
     if output_path is None:
         output_path = f"{sample_name}_copykat_annotated_heatmap.png"
 
@@ -761,7 +807,7 @@ def plot_heatmap_annotated(
         ann_cols = [row_split_col] + [c for c in ann_cols if c != row_split_col]
 
     cell_names_str = [str(c) for c in cell_names]
-    meta_aligned = meta_df.reindex(cell_names_str).fillna("unknown")
+    meta_aligned = meta_df.reindex(cell_names_str).fillna(PredictionLabel.UNKNOWN)
 
     # ── 2. Per-group ordering: sort groups, then cluster cells within ─────
     split_vals = meta_aligned[row_split_col].astype(str).to_numpy() if row_split_col else np.full(n_cells, "")
@@ -897,8 +943,17 @@ def plot_heatmap_annotated(
     cbar = fig.colorbar(im, cax=ax_cbar, orientation="vertical")
     ax_cbar_top = fig.add_subplot(gs[0, col_cbar])
     ax_cbar_top.axis("off")
-    ax_cbar_top.text(0.5, 0.02, "Relative CNA", ha="left", va="bottom", fontsize=10,
-                    rotation=45, rotation_mode="anchor", transform=ax_cbar_top.transAxes)
+    ax_cbar_top.text(
+        0.5,
+        0.02,
+        "Relative CNA",
+        ha="left",
+        va="bottom",
+        fontsize=10,
+        rotation=45,
+        rotation_mode="anchor",
+        transform=ax_cbar_top.transAxes,
+    )
     cbar.ax.tick_params(labelsize=10)
 
     # ── 10. Categorical legend ────────────────────────────────────────────

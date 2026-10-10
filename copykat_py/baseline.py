@@ -17,7 +17,9 @@ from scipy.spatial.distance import cdist, pdist
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
+from copykat_py import backend
 from copykat_py._types import (
+    AnchorPath,
     BaselineResult,
     BaselineWarning,
     CellByFeature,
@@ -25,12 +27,13 @@ from copykat_py._types import (
     FloatArray,
     GeneByCell,
     GeneProfile,
+    Genome,
     IntArray,
     LinkageMatrix,
     ParallelInfo,
+    PredictionLabel,
     SyntheticBaselineResult,
 )
-from copykat_py import backend
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +79,11 @@ def get_last_cluster_info() -> ParallelInfo:
     return _LAST_CLUSTER_INFO.copy()
 
 
-def resolve_adaptive_pca_components(n_cells: int, pca_components: int | None = None, genome: str = "hg20") -> int:
+def resolve_adaptive_pca_components(
+    n_cells: int,
+    pca_components: int | None = None,
+    genome: Genome = Genome.HG20,
+) -> int:
     """Choose the PCA component cap for large-cell clustering.
 
     When ``pca_components`` is provided, that explicit value is used.
@@ -89,9 +96,9 @@ def resolve_adaptive_pca_components(n_cells: int, pca_components: int | None = N
         return int(pca_components)
 
     n_cells = int(n_cells)
-    genome = str(genome).strip().lower()
+    genome = Genome(str(genome).strip().lower())
 
-    if genome == "mm10":
+    if genome is Genome.MM10:
         if n_cells < MOUSE_AUTO_PCA_SMALL_CELL_COUNT_CUTOFF:
             return MOUSE_AUTO_PCA_SMALL_SAMPLE
         if n_cells < MOUSE_AUTO_PCA_MEDIUM_CELL_COUNT_CUTOFF:
@@ -397,8 +404,8 @@ def baseline_norm_cl(
     n_cores: int = 1,
     cell_names: Sequence[str] | None = None,
     pca_components: int | None = None,
-    genome: str = "hg20",
-    anchor_selector: Callable[[ClusterLabels, int], tuple[int, str]] | None = None,
+    genome: Genome = Genome.HG20,
+    anchor_selector: Callable[[ClusterLabels, int], tuple[int, AnchorPath]] | None = None,
 ) -> BaselineResult:
     """Find a cluster of diploid cells using integrative clustering + GMM variance test.
 
@@ -515,15 +522,15 @@ def baseline_norm_cl(
     PDt = f_dist.sf(f_stat, n_genes, n_genes)
 
     if wn <= 0.15 or not np.all(_cluster_sizes(labels) > min_cells) or PDt > 0.05:
-        WNS: BaselineWarning = "unclassified.prediction"
+        WNS: BaselineWarning = BaselineWarning.UNCLASSIFIED
         logger.warning("  low confidence in classification")
     else:
-        WNS = ""
+        WNS = BaselineWarning.NONE
 
     # Cluster with minimum sigma is the 'confident normal' cluster
     min_sigma_idx = np.argmin(SDM)
     normal_cluster_id = unique_clusters[min_sigma_idx]
-    anchor_path = "sigma"
+    anchor_path = AnchorPath.SIGMA
     if anchor_selector is not None:
         normal_cluster_id, anchor_path = anchor_selector(labels, int(normal_cluster_id))
 
@@ -554,7 +561,7 @@ def baseline_gmm(
     RE_before: BaselineResult | None = None,
     n_cores: int = 1,
     pca_components: int | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
     cluster: bool = True,
 ) -> BaselineResult:
     """Identify diploid cells one-by-one using GMM (fallback when clustering is uncertain).
@@ -598,20 +605,17 @@ def baseline_gmm(
 
         # Check if any component mean is near zero (neutral)
         neutral_mask = np.abs(means) <= mu_cut
-        s = np.sum(neutral_mask)
-
-        if s >= 1:
-            frq = np.sum(weights[neutral_mask])
-            if frq > Nfraq_cut:
-                pred = "diploid"
-            else:
-                pred = "aneuploid"
-        else:
-            pred = "aneuploid"
+        has_neutral_component = np.any(neutral_mask)
+        neutral_fraction = np.sum(weights[neutral_mask])
+        pred = (
+            PredictionLabel.DIPLOID
+            if has_neutral_component and neutral_fraction > Nfraq_cut
+            else PredictionLabel.ANEUPLOID
+        )
 
         N_normal_labels.append(pred)
 
-        if pred == "diploid":
+        if pred is PredictionLabel.DIPLOID:
             N_normal.append(cell_names[m])
 
         if len(N_normal) >= max_normal:
@@ -636,7 +640,7 @@ def baseline_gmm(
         )
 
     if len(N_normal) > 2:
-        WNS: BaselineWarning = ""
+        WNS: BaselineWarning = BaselineWarning.NONE
         preN = N_normal
         normal_mask = np.isin(np.asarray(cell_names, dtype=object), np.asarray(preN, dtype=object))
         basel = np.mean(CNA_mat[:, normal_mask], axis=1)
@@ -646,7 +650,7 @@ def baseline_gmm(
             return RE_before
         else:
             # Fallback: use the full dataset median as baseline
-            WNS = "unclassified.prediction"
+            WNS = BaselineWarning.UNCLASSIFIED
             return {"basel": np.median(CNA_mat, axis=1), "WNS": WNS, "preN": N_normal, "cl": labels}
 
 
@@ -655,7 +659,7 @@ def baseline_synthetic(
     min_cells: int = 10,
     n_cores: int = 1,
     pca_components: int | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
 ) -> SyntheticBaselineResult:
     """Estimate baseline using synthetic normal profiles (for cell line data).
 

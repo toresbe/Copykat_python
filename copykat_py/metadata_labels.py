@@ -2,15 +2,17 @@
 
 from collections.abc import Iterable
 
+from copykat_py._types import BaselineWarning, DataQualityStatus, PredictionLabel
+
 _PREDICTION_LABELS = {
-    "diploid": "Diploid",
-    "aneuploid": "Aneuploid",
-    "c1:diploid:low.conf": "Diploid (low confidence)",
-    "c2:aneuploid:low.conf": "Aneuploid (low confidence)",
+    PredictionLabel.DIPLOID: "Diploid",
+    PredictionLabel.ANEUPLOID: "Aneuploid",
+    PredictionLabel.DIPLOID_LOW_CONFIDENCE: "Diploid (low confidence)",
+    PredictionLabel.ANEUPLOID_LOW_CONFIDENCE: "Aneuploid (low confidence)",
     # copykat.py adds this for original cells without a final prediction.
-    "not.defined": "Not classified",
+    PredictionLabel.NOT_DEFINED: "Not classified",
     # plotting.py creates this when aligning absent/empty cell metadata.
-    "unknown": "Missing annotation",
+    PredictionLabel.UNKNOWN: "Missing annotation",
 }
 
 
@@ -28,11 +30,11 @@ def annotation_title(column: str) -> str:
 def warning_caption(*warnings: str) -> str:
     """Readable plot subtitles for runtime warning/status strings."""
     labels = {
-        "data quality is ok": "Data quality: OK",
-        "low data quality": "Low data quality",
-        "unclassified.prediction": "Low-confidence classification",
-        "run with known normal": "Supplied normal-cell reference",
-        "run with cell line mode": "Cell-line mode",
+        DataQualityStatus.OK: "Data quality: OK",
+        DataQualityStatus.LOW: "Low data quality",
+        BaselineWarning.UNCLASSIFIED: "Low-confidence classification",
+        BaselineWarning.KNOWN_NORMAL: "Supplied normal-cell reference",
+        BaselineWarning.CELL_LINE: "Cell-line mode",
     }
     return " · ".join(labels.get(value, value) for value in warnings if value)
 
@@ -42,7 +44,7 @@ def is_prediction_column(column: str, values: Iterable[object]) -> bool:
     if column.lower() in {"copykat.pred", "copykat_pred", "copykat_pred_py", "copykat_pred_r"}:
         return True
     categories = {str(value) for value in values}
-    calls = set(_PREDICTION_LABELS) - {"not.defined", "unknown"}
+    calls = set(_PREDICTION_LABELS) - {PredictionLabel.NOT_DEFINED, PredictionLabel.UNKNOWN}
     return categories <= set(_PREDICTION_LABELS) and bool(categories & calls)
 
 

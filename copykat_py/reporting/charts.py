@@ -5,30 +5,34 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
+from copykat_py._types import BaselineWarning, PredictionLabel
 from copykat_py.metadata_labels import legend_label
 
 COLORS = {
-    "diploid": "#3A87C8",
-    "aneuploid": "#E8601C",
-    "c1:diploid:low.conf": "#9EC8E8",
-    "c2:aneuploid:low.conf": "#F4A86A",
-    "not.defined": "#B0B0B0",
-    "unknown": "#D4D4D4",
+    PredictionLabel.DIPLOID: "#3A87C8",
+    PredictionLabel.ANEUPLOID: "#E8601C",
+    PredictionLabel.DIPLOID_LOW_CONFIDENCE: "#9EC8E8",
+    PredictionLabel.ANEUPLOID_LOW_CONFIDENCE: "#F4A86A",
+    PredictionLabel.NOT_DEFINED: "#B0B0B0",
+    PredictionLabel.UNKNOWN: "#D4D4D4",
 }
 
 
 def confidence_status(predictions: Mapping[str, int] | None, runtime: Mapping[str, Any]) -> str:
     """Summarize saved classification flags, never invent confidence for missing calls."""
     if any(
-        step.get("warning") == "unclassified.prediction"
+        step.get("warning") == BaselineWarning.UNCLASSIFIED
         for step in runtime.get("steps", [])
         if step.get("step") == "final_prediction"
     ):
         return "Low"
     calls = predictions or {}
-    if any(calls.get(state, 0) > 0 for state in ("c1:diploid:low.conf", "c2:aneuploid:low.conf")):
+    if any(
+        calls.get(state, 0) > 0
+        for state in (PredictionLabel.DIPLOID_LOW_CONFIDENCE, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE)
+    ):
         return "Low"
-    if any(calls.get(state, 0) > 0 for state in ("diploid", "aneuploid")):
+    if any(calls.get(state, 0) > 0 for state in (PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID)):
         return "High"
     return "Unavailable"
 
