@@ -15,7 +15,7 @@ Faithfully reimplements the R copykat() function workflow:
 import logging
 import time
 from dataclasses import asdict
-from typing import cast
+from typing import Unpack, cast
 
 import numpy as np
 import pandas as pd
@@ -24,23 +24,17 @@ from scipy import sparse
 from copykat_py import anchor as _anchor
 from copykat_py import backend
 from copykat_py._logging import with_default_progress_output
-from copykat_py._pipeline.baseline import BaselineOptions, select_baseline
-from copykat_py._pipeline.output import OutputOptions, write_results
-from copykat_py._pipeline.prediction import PredictionOptions, adjust_and_call
-from copykat_py._pipeline.preprocessing import FilteringOptions, annotate_genes, transform_counts_inplace
+from copykat_py._pipeline.baseline import select_baseline
+from copykat_py._pipeline.output import write_results
+from copykat_py._pipeline.prediction import adjust_and_call
+from copykat_py._pipeline.preprocessing import annotate_genes, transform_counts_inplace
 from copykat_py._pipeline.runtime import _format_seconds, _record_step, new_runtime_info, select_pca_components
-from copykat_py._pipeline.segmentation import _segment_with_retries, _SegmentationOptions
+from copykat_py._pipeline.segmentation import _segment_with_retries
 from copykat_py._types import (
     AnchorStrategy,
-    CellLineMode,
     CopyKATResult,
     DataQualityStatus,
-    DistanceMetric,
-    ExecutionBackend,
-    FinalCallStrategy,
-    GeneIdType,
     Genome,
-    KSMethod,
     RawMatrix,
     SparseMatrix,
 )
@@ -56,6 +50,7 @@ from copykat_py.input import (
 from copykat_py.output import (
     _write_cna_csv,
 )
+from copykat_py.run_context import CopyKATArguments, RunContext
 from copykat_py.segmentation import get_last_cna_mcmc_info
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 
@@ -63,134 +58,36 @@ logger = logging.getLogger(__name__)
 
 
 @with_default_progress_output
-def copykat(
-    rawmat: RawMatrix,
-    id_type: GeneIdType = GeneIdType.SYMBOL,
-    cell_line: CellLineMode = CellLineMode.NO,
-    ngene_chr: int = 5,
-    min_gene_per_cell: int = 200,
-    LOW_DR: float = 0.05,
-    UP_DR: float = 0.1,
-    win_size: int = 25,
-    norm_cell_names: str | list[str] = "",
-    KS_cut: float = 0.1,
-    sam_name: str = "",
-    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
-    output_seg: bool = False,
-    plot_genes: bool = True,
-    genome: Genome = Genome.HG20,
-    n_cores: int = 1,
-    pca_components: int | None = None,
-    meta_csv: str | None = None,
-    row_split_col: str | None = None,
-    backend_name: ExecutionBackend = ExecutionBackend.CPU,
-    ks_method: KSMethod = KSMethod.MONTE_CARLO,
-    anchor: AnchorStrategy = AnchorStrategy.SIGMA,
-    final_call: FinalCallStrategy = FinalCallStrategy.CLUSTERS,
-) -> CopyKATResult:
-    """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
+def copykat(rawmat: RawMatrix, **options: Unpack[CopyKATArguments]) -> CopyKATResult:
+    """Infer copy-number profiles from a genes-by-cells UMI count matrix.
 
     Parameters
     ----------
-    rawmat : pd.DataFrame, np.ndarray, scipy.sparse, or str
-        UMI count matrix (genes in rows, cells in columns).
-        If str, path to .mtx, .csv, or .tsv file.
-    id_type : GeneIdType
-        Gene ID type: ``GeneIdType.SYMBOL`` or ``GeneIdType.ENSEMBL``.
-    cell_line : CellLineMode
-        ``CellLineMode.YES`` for pure cell line data, ``CellLineMode.NO`` for tumor/normal mixture.
-    ngene_chr : int
-        Minimum number of genes per chromosome for cell filtering.
-    min_gene_per_cell : int
-        Minimum genes detected per cell.
-    LOW_DR : float
-        Minimum gene detection rate for smoothing.
-    UP_DR : float
-        Minimum gene detection rate for segmentation.
-    win_size : int
-        Window size for MCMC segmentation.
-    norm_cell_names : str or list
-        Known normal cell barcodes ("" for auto-detection).
-    KS_cut : float
-        KS test cutoff for breakpoint detection (0 to 1).
-    sam_name : str
-        Sample name prefix for output files.
-    distance : DistanceMetric
-        Cell-ordering distance metric.
-    output_seg : bool
-        Whether to output .seg file for IGV.
-    plot_genes : bool
-        Whether to plot gene-level heatmap.
-    genome : Genome
-        Genome.HG20 or Genome.MM10.
-    n_cores : int
-        Number of CPU cores for parallel computation.
-    pca_components : int or None
-        Adaptive PCA component cap for large clustering steps. When omitted,
-        CopyKAT-Py uses the built-in rule:
-        - `hg20`: 256 PCs for fewer than 50,000 input cells, otherwise 128
-        - `mm10`: 512 PCs for fewer than 20,000 input cells, 256 PCs for
-          fewer than 40,000 input cells, otherwise 128
-    meta_csv : str or None
-        Path to a per-cell annotation CSV for the annotated heatmap.
-        First column = cell name; remaining columns become coloured annotation
-        sidebars.  When provided (and ``plot_genes=True``), an annotated
-        heatmap is saved as ``{sam_name}annotated_heatmap.png`` in addition to
-        the standard heatmap.  Header row is auto-detected.
-    row_split_col : str or None
-        Column in ``meta_csv`` used to split and label heatmap rows.
-        Defaults to the second column when ``None``.
+    rawmat : pd.DataFrame, np.ndarray, scipy.sparse, dict, or str
+        UMI counts with genes in rows and cells in columns. A string is a path
+        to a .mtx, .csv, or .tsv file; a dict supplies matrix, genes, and barcodes.
+    **options : Unpack[CopyKATArguments]
+        Optional named settings used to construct :class:`RunContext`.
+        Its Attributes section documents every keyword, default, and special
+        value. Options after ``rawmat`` must be passed by keyword.
 
     Returns
     -------
-    dict with keys:
-        'prediction': pd.DataFrame with columns [cell.names, copykat.pred]
-        'CNAmat': pd.DataFrame with CNA results
-        'hclustering': linkage matrix or cluster labels
+    CopyKATResult
+        CNA values, clustering, and runtime metadata; also includes predictions
+        when the genome and cell-line mode produce calls.
+
+    See Also
+    --------
+    RunContext : Documented defaults, normalized settings, and stage options.
+    CopyKATArguments : Typed dictionary of the accepted optional keywords.
     """
-    distance = DistanceMetric(distance)
-    backend_name = ExecutionBackend(backend_name)
-    id_type = GeneIdType.normalize(id_type)
-    cell_line = CellLineMode(cell_line)
-    ks_method = KSMethod(ks_method)
-    anchor = AnchorStrategy(anchor)
-    final_call = FinalCallStrategy(final_call)
-    backend.set_backend(backend_name)
-    genome = Genome(genome)
-    if final_call is FinalCallStrategy.ARM_CORRELATION and genome is Genome.MM10:
-        raise ValueError("arm_correlation currently uses hg38 centromere coordinates and is only supported for hg20")
+    run_context = RunContext(**options)
+    backend.set_backend(run_context.backend_name)
     start_time = time.perf_counter()
-    # Global seed kept for reproducibility with earlier versions; moving to a
-    # Generator would change any random stream that depends on it.
-    np.random.seed(1234)  # noqa: NPY002
-    sample_name = f"{sam_name}_copykat_"
-    runtime_info = new_runtime_info(
-        sam_name,
-        n_cores,
-        {
-            "id_type": id_type,
-            "cell_line": cell_line,
-            "genome": genome,
-            "ngene_chr": ngene_chr,
-            "min_gene_per_cell": min_gene_per_cell,
-            "LOW_DR": LOW_DR,
-            "UP_DR": UP_DR,
-            "win_size": win_size,
-            "KS_cut": KS_cut,
-            "distance": distance,
-            "n_cores": n_cores,
-            "pca_components_requested": pca_components,
-            "output_seg": output_seg,
-            "plot_genes": plot_genes,
-            "random_seed": 1234,
-            "meta_csv": meta_csv,
-            "row_split_col": row_split_col,
-            "backend": backend.get_backend(),
-            "ks_method": ks_method,
-            "anchor": anchor,
-            "final_call": final_call,
-        },
-    )
+    # Keep the original random stream for reproducibility.
+    np.random.seed(run_context.random_seed)  # noqa: NPY002
+    runtime_info = new_runtime_info(run_context.sam_name, run_context.n_cores, run_context.runtime_parameters())
 
     logger.info("running copykat-py v1.0.0")
 
@@ -200,31 +97,29 @@ def copykat(
     logger.info("step 1: read and filter data ...")
     step_start = time.perf_counter()
     marker_counts = None
-    if anchor is AnchorStrategy.MARKERS:
+    if run_context.anchor is AnchorStrategy.MARKERS:
         marker_counts = (
             _anchor.count_markers(rawmat, _anchor.IMMUNE_MARKERS),
             _anchor.count_markers(rawmat, _anchor.ENDOTHELIAL_MARKERS),
         )
-    filtering = FilteringOptions(
-        min_gene_per_cell=min_gene_per_cell,
-        ngene_chr=ngene_chr,
-        lower_detection_rate=LOW_DR,
-        upper_detection_rate=UP_DR,
-    )
+    filtering = run_context.filtering_options
     prepared_input = _prepare_input_matrix(rawmat, filtering.min_gene_per_cell, filtering.lower_detection_rate)
     del rawmat  # release the caller's unfiltered input once preparation is complete
     input_cell_count = len(prepared_input.original_cell_names)
     selected_pca_components = select_pca_components(
-        input_cell_count, requested=pca_components, genome=genome, runtime_info=runtime_info
+        input_cell_count, requested=run_context.pca_components, genome=run_context.genome, runtime_info=runtime_info
     )
     logger.info(f"  {prepared_input.matrix.shape[0]} genes, {prepared_input.matrix.shape[1]} cells in raw data")
-    logger.info(
-        f"  adaptive PCA components: {selected_pca_components} "
-        f"({'manual override' if pca_components is not None else f'auto from input cell count {input_cell_count}'})"
+    pca_selection = (
+        "manual override"
+        if run_context.pca_components is not None
+        else f"auto from input cell count {input_cell_count}"
     )
+    logger.info(f"  adaptive PCA components: {selected_pca_components} ({pca_selection})")
     if prepared_input.stats.filtered_cells > 0:
         logger.info(
-            f"  filtered out {prepared_input.stats.filtered_cells} cells with <= {min_gene_per_cell} genes; "
+            f"  filtered out {prepared_input.stats.filtered_cells} cells "
+            f"with <= {run_context.min_gene_per_cell} genes; "
             f"remaining {prepared_input.matrix.shape[1]} cells"
         )
     logger.info(f"  {prepared_input.matrix.shape[0]} genes past LOW_DR filtering")
@@ -244,7 +139,7 @@ def copykat(
     # Step 2: Annotate gene coordinates
     # =========================================================================
     anno_mat, anno_rows, anno_cols = annotate_genes(
-        prepared_input.genes, id_type=id_type, genome=genome, runtime_info=runtime_info
+        prepared_input.genes, id_type=run_context.id_type, genome=run_context.genome, runtime_info=runtime_info
     )
 
     # Secondary cell filtering: ensure each cell has genes across chromosomes.
@@ -287,7 +182,7 @@ def copykat(
     # =========================================================================
     logger.info("step 3: smoothing data with DLM ...")
     step_start = time.perf_counter()
-    norm_mat_smooth = dlm_smooth(norm_mat, n_cores=n_cores)
+    norm_mat_smooth = dlm_smooth(norm_mat, n_cores=run_context.n_cores)
     del norm_mat
     dlm_info = get_last_dlm_smooth_info()
     elapsed = _record_step(runtime_info, "dlm_smoothing", step_start, parallel_info=dlm_info)
@@ -303,16 +198,10 @@ def copykat(
     baseline_selection = select_baseline(
         norm_mat_smooth,
         cell_name_list,
-        norm_cell_names,
+        run_context.norm_cell_names,
         marker_counts,
         WNS1,
-        options=BaselineOptions(
-            cell_line=cell_line,
-            anchor=anchor,
-            genome=genome,
-            n_cores=n_cores,
-            pca_components=selected_pca_components,
-        ),
+        options=run_context.baseline_options(selected_pca_components),
         runtime_info=runtime_info,
     )
     norm_mat_relat = baseline_selection.relative_expression
@@ -354,7 +243,7 @@ def copykat(
             min(6, norm_mat_relat.shape[1]),
             method="ward",
             metric="euclidean",
-            n_cores=n_cores,
+            n_cores=run_context.n_cores,
             reduce=step4_reduce,
             pca_components=selected_pca_components,
         )
@@ -367,12 +256,7 @@ def copykat(
     results = _segment_with_retries(
         CL_filtered,
         norm_mat_relat,
-        options=_SegmentationOptions(
-            window_size=win_size,
-            ks_cutoff=KS_cut,
-            ks_method=ks_method,
-            n_cores=n_cores,
-        ),
+        options=run_context.segmentation_options,
     )
     seg_info = get_last_cna_mcmc_info()
     elapsed = _record_step(
@@ -398,13 +282,13 @@ def copykat(
 
     step_start = time.perf_counter()
     _write_cna_csv(
-        f"{sample_name}CNA_raw_results_gene_by_cell.txt",
+        f"{run_context.sample_name}CNA_raw_results_gene_by_cell.txt",
         gene_anno,
         results_com,
         cell_cols_seg,
         round_floats=False,
         quote_strings=False,
-        n_cores=n_cores,
+        n_cores=run_context.n_cores,
     )
     _record_step(
         runtime_info,
@@ -416,10 +300,16 @@ def copykat(
     # =========================================================================
     # Step 6: Convert to genomic bins (hg20 only)
     # =========================================================================
-    if genome is Genome.HG20:
+    if run_context.genome is Genome.HG20:
         logger.info("step 6: convert to genomic bins ...")
         step_start = time.perf_counter()
-        Aj = convert_to_bins(gene_anno, genome=genome, n_cores=n_cores, values=results_com, cell_names=cell_cols_seg)
+        Aj = convert_to_bins(
+            gene_anno,
+            genome=run_context.genome,
+            n_cores=run_context.n_cores,
+            values=results_com,
+            cell_names=cell_cols_seg,
+        )
         del results_com
         convert_info = get_last_convert_bins_info()
         elapsed = _record_step(runtime_info, "convert_to_bins", step_start, parallel_info=convert_info)
@@ -448,13 +338,7 @@ def copykat(
         cell_cols_seg,
         cell_name_list,
         baseline_state,
-        options=PredictionOptions(
-            genome=genome,
-            cell_line=cell_line,
-            final_call=final_call,
-            n_cores=n_cores,
-            pca_components=selected_pca_components,
-        ),
+        options=run_context.prediction_options(selected_pca_components),
         runtime_info=runtime_info,
     )
     mat_adj = final_prediction.values
@@ -470,16 +354,7 @@ def copykat(
         clustering_result,
         WNS1,
         baseline_state.warning,
-        options=OutputOptions(
-            sample_name=sample_name,
-            genome=genome,
-            distance=distance,
-            n_cores=n_cores,
-            plot_genes=plot_genes,
-            output_seg=output_seg,
-            meta_csv=meta_csv,
-            row_split_col=row_split_col,
-        ),
+        options=run_context.output_options,
         runtime_info=runtime_info,
         start_time=start_time,
     )
