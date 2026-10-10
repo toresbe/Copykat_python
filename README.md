@@ -101,16 +101,16 @@ Pass `--meta` (and optionally `--row-split`) to produce an annotated heatmap alo
 
 ```python
 import pandas as pd
-from copykat_py import copykat
+from copykat_py import DistanceMetric, GeneIdType, Genome, copykat
 
 counts = pd.read_csv("sample_counts.csv", index_col=0)
 
 result = copykat(
     rawmat=counts,
-    id_type="S",
+    id_type=GeneIdType.SYMBOL,
     sam_name="sample1",
-    genome="hg20",
-    distance="euclidean",
+    genome=Genome.HG20,
+    distance=DistanceMetric.EUCLIDEAN,
     n_cores=24,
 )
 
@@ -123,7 +123,7 @@ print(result["prediction"].head())
 
 ```python
 import anndata as ad
-from copykat_py import copykat_anndata
+from copykat_py import DistanceMetric, Genome, copykat_anndata
 
 adata = ad.read_h5ad("sample.h5ad")
 
@@ -132,8 +132,8 @@ result = copykat_anndata(
     selecting_meta=["CellType", "copykat_pred", "seurat_clusters"],
     row_split="CellType",
     sample_name="sample1",
-    genome="hg20",
-    distance="euclidean",
+    genome=Genome.HG20,
+    distance=DistanceMetric.EUCLIDEAN,
     n_cores=24,
     output_dir="results/sample1_anndata",
 )
@@ -142,6 +142,35 @@ print(result["prediction"]["copykat.pred"].value_counts())
 ```
 
 Useful options: `layer` (use `adata.layers[...]`), `use_raw` (use `adata.raw`), `selecting_meta` (export obs columns for annotated heatmaps), `row_split` (column defining row groups).
+
+### Typed option enums
+
+The exported enums below describe fixed choices used by the Python APIs and their
+result metadata. For input options, pass enum members or their string values; the
+CLI and saved outputs continue to use those strings. Enum members make the available
+choices discoverable in editors and avoid typos in Python calls.
+
+| Enum | Choices | Used for |
+| --- | --- | --- |
+| `DistanceMetric` | `EUCLIDEAN`, `PEARSON`, `SPEARMAN` | Cell ordering in heatmaps |
+| `Genome` | `HG20`, `MM10` | Reference genome assembly |
+| `ExecutionBackend` | `CPU`, `GPU`, `GPU_COMPAT` | `copykat()` execution backend |
+| `GeneIdType` | `SYMBOL`, `ENSEMBL` | Gene identifier type (`S` or `E`) |
+| `CellLineMode` | `YES`, `NO` | Pure cell-line mode |
+| `KSMethod` | `MONTE_CARLO`, `EXACT` | Segmentation breakpoint statistic |
+| `AnchorStrategy` | `SIGMA`, `MARKERS` | Normal-reference selection strategy |
+| `AnchorPath` | `SIGMA`, `IMMUNE`, `ENDOTHELIAL`, `ENRICHMENT` | Evidence used to select the reference cluster |
+| `FinalCallStrategy` | `CLUSTERS`, `ARM_CORRELATION` | Final copy-number call strategy |
+| `ReferenceMode` | `SYNTHETIC`, `KNOWN_NORMAL`, `AUTOMATIC` | Source of the normal reference population |
+| `ReportFormat` | `TEXT`, `MARKDOWN`, `HTML`, `JSON` | Run-report output format |
+| `PredictionLabel` | `DIPLOID`, `ANEUPLOID`, `DIPLOID_LOW_CONFIDENCE`, `ANEUPLOID_LOW_CONFIDENCE`, `NOT_DEFINED`, `UNKNOWN` | Prediction and missing-call states |
+| `BaselineWarning` | `NONE`, `UNCLASSIFIED`, `CELL_LINE`, `KNOWN_NORMAL` | Baseline classification and run notes |
+| `DataQualityStatus` | `OK`, `LOW` | Data-quality status used by baseline selection |
+
+Pass enum members directly, for example `cell_line=CellLineMode.YES`,
+`backend_name=ExecutionBackend.GPU`, or `final_call=FinalCallStrategy.ARM_CORRELATION`.
+`ReportFormat` is accepted by `write_reports`; the analysis and report JSON files
+continue to store the string values shown by each enum member.
 
 ### Output files
 
