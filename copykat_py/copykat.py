@@ -77,7 +77,6 @@ from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
 from copykat_py.final_call import (
     FinalCallResult,
-    _normal_cells_to_names,
     cluster_and_call,
     cluster_cells,
 )
@@ -88,6 +87,7 @@ from copykat_py.input import (
     _keep_cells_by_chr_coverage,
     _prepare_input_matrix,
 )
+from copykat_py.normal_cells import normal_cells_to_names
 from copykat_py.output import (
     _frame_with_leading_columns,
     _write_cna_csv,
@@ -645,7 +645,7 @@ def copykat(
         "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
         if isinstance(norm_cell_names, list)
         else 0,
-        "baseline_anchor_count": len(_normal_cells_to_names(preN, cell_name_list).intersection(cell_name_list)),
+        "baseline_anchor_count": len(normal_cells_to_names(preN, cell_name_list).intersection(cell_name_list)),
     }
     elapsed = _record_step(
         runtime_info, "baseline_estimation", step_start, parallel_info=baseline_cluster_info, extra={"warning": WNS}
@@ -795,7 +795,7 @@ def copykat(
         else:
             arm_calls = None
             if final_call is FinalCallStrategy.ARM_CORRELATION and preN is not None and len(preN) > 0:
-                preN_names = _normal_cells_to_names(preN, cell_name_list)
+                preN_names = normal_cells_to_names(preN, cell_name_list)
                 anchor_mask = np.array([cell in preN_names for cell in cell_cols_seg], dtype=bool)
                 if anchor_mask.sum() >= 5:
                     arm_calls = _anchor.arm_correlation_calls(

@@ -10,6 +10,7 @@ import numpy.typing as npt
 from copykat_py import backend
 from copykat_py._types import BoolArray, ClusterLabels, FloatArray, LinkageMatrix, PredictionLabel
 from copykat_py.baseline import FULL_CLUSTER_MAX_CELLS, _hierarchical_cluster
+from copykat_py.normal_cells import normal_cells_to_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,32 +24,6 @@ class FinalCallResult:
     labels: ClusterLabels
     linkage: LinkageMatrix
     predictions: npt.NDArray[np.object_]
-
-
-def _normal_cells_to_names(
-    normal_cells: str | bytes | Sequence[Any] | npt.NDArray[Any] | None,
-    reference_cell_names: Sequence[str],
-) -> set[str]:
-    """Resolve named normal cells and integer indices against the reference-cell list."""
-    if normal_cells is None:
-        return set()
-
-    if isinstance(normal_cells, str | bytes):
-        return {str(normal_cells)}
-
-    values = list(normal_cells)
-    if not values:
-        return set()
-
-    names = []
-    for value in values:
-        if isinstance(value, int | np.integer):
-            idx = int(value)
-            if 0 <= idx < len(reference_cell_names):
-                names.append(reference_cell_names[idx])
-        else:
-            names.append(str(value))
-    return set(names)
 
 
 def _assign_binary_labels(
@@ -144,7 +119,7 @@ def cluster_and_call(
     labels, linkage = cluster_cells(values, n_cores=n_cores, pca_components=pca_components)
 
     if normal_cells is not None and len(normal_cells) > 0:
-        normal_names = _normal_cells_to_names(normal_cells, reference_cell_names)
+        normal_names = normal_cells_to_names(normal_cells, reference_cell_names)
         scores = []
         for cluster_value in sorted(set(labels)):
             cluster_names = [cell_names[index] for index in range(len(cell_names)) if labels[index] == cluster_value]
