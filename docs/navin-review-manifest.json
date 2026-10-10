@@ -312,7 +312,7 @@
       "docs/navin-accuracy-results.md"
     ],
     "incomplete_measurements": [
-      "fresh six-PR 120k run was still running at the latest report refresh (42.6 minutes elapsed); 170,057 six-PR run queued",
+      "fresh six-PR 120k run was still running in the latest committed report snapshot (43.6 minutes elapsed); 170,057 six-PR run queued",
       "full current assembly 120k/170k not benchmarked",
       "per-PR isolated effects incomplete",
       "GPU device revalidation unavailable"
