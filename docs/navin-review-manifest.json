@@ -248,9 +248,11 @@
       "38fa1325655786616a851c883ca23913ff3ad576",
       "220b5468fe4e5d50ad0a38075c0f6c44b3e06e5a"
     ],
-    "working_tree": "source and audit package committed; final manifest update is pending",
+    "working_tree": "assembled source and audit package committed locally; fork-only pushes pending",
     "audit_package_commit": "8683dcdcb74ad2d0bfd6cf7b5b82c6690b0a8132",
-    "manifest_refinement_commit": "fca499cf964f9e426cef950ed0a7a62a8e438832"
+    "manifest_refinement_commit": "fca499cf964f9e426cef950ed0a7a62a8e438832",
+    "validation_documentation_commit": "8b474dbbf8139fff0d29d00e4e9ce41ba3f4b81d",
+    "benchmark_scope_refresh_commit": "d1b569041c4ffa75d2d0874c51939ba12ca64e9d"
   },
   "fresh_integration_comparison": {
     "dataset": "T989 mouse tumor raw scRNA counts",
