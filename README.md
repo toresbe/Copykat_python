@@ -1,4 +1,6 @@
-# CopyKAT-Python
+# CopyKAT-Python (experimental fork of [Navin Lab's CopyKAT](https://github.com/navinlabcode/copykat_python))
+
+This repo belongs to an unrelated coder who just thought it would be an interesting problem to optimize the code in his spare time. Importantly, *the output data differs from Navin Lab's and nothing has been examined by anyone with a clue about biology*, so please don't use this for anything.
 
 CopyKAT-Python is a Python reimplementation of the [CopyKAT](https://github.com/navinlabcode/copykat) workflow for inferring large-scale copy number alterations (CNAs) from single-cell RNA-seq data. It reproduces the core CopyKAT strategy while improving scalability, usability, and integration with modern `AnnData`/`Scanpy` pipelines.
 
