@@ -52,3 +52,38 @@ The independent eT sample also completed on the corrected implementation
 (364 low-confidence diploid, 330 low-confidence aneuploid, 2 not defined), but
 no matched WGS reference was available for that sample, so it is not included
 in the concordance metrics above.
+
+## Fresh assembled-main comparison
+
+On 2026-10-10, the assembled CPU-default branch was compared with the pinned
+six-PR `with-proposed-changes` snapshot using the same T989 raw matrix and
+parameters above. Both runs used the same Python environment, eight requested
+cores, Monte Carlo KS default, plots disabled, and CNA output directed to
+`/dev/null` so physical storage throughput was excluded. The proposal snapshot
+retains the older stable `abspos` mouse ordering; assembled main uses chromosome
+and gene-start ordering.
+
+| Measure | Six-PR proposal | Assembled CPU main |
+| --- | ---: | ---: |
+| Elapsed seconds | 199.60 | 32.77 |
+| Predicted aneuploid | 5,141 | 4,308 |
+| Predicted diploid | 3,524 | 4,357 |
+| Not defined | 698 | 698 |
+| CNA output shape | 5,929 × 8,672 | 5,929 × 8,672 |
+| Prediction agreement | — | 8,126 / 9,363 cells (86.8%); ARI 0.575 |
+| Shared final-tree rooted clades | — | 288 / 8,664 |
+| Replaced final-tree clades | — | 8,376 |
+| Maximum height delta among shared clades | — | 46.59 |
+
+Prediction overlap is the category cross-tab; all 698 not-defined cells agree.
+The complete prediction and CNA numeric SHA-256 hashes differ, as do the
+linkage hashes. This pair confirms that the assembled result is a substantial
+inference change relative to the six-PR proposal, not merely a display or
+serialization update. The WGS comparison above is the biological validation
+for the ordering change; the speed result is one run per pinned snapshot and
+must not be generalized as an isolated PR speedup.
+
+Compact prediction/linkage summaries and linkage matrices are archived at
+`/mnt/nas/cancer_research/mm10_genomic_order_validation/proposal_vs_assembly_20261010/`.
+The assembled run's CNA outputs remain on the NAS under
+`assembled_main/`; the interrupted six-PR output file was discarded.
