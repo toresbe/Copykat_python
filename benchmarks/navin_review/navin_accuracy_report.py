@@ -18,7 +18,7 @@ from navin_accuracy_data import ROOT, save
 from navin_accuracy_worker import metrics
 from scipy.cluster.hierarchy import dendrogram
 
-DOCS = Path(__file__).resolve().parent
+DOCS = Path(__file__).resolve().parents[2] / "docs"
 lock = open(ROOT / "results/accuracy_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(lock, fcntl.LOCK_EX)
 assets = DOCS / "navin-accuracy-assets"

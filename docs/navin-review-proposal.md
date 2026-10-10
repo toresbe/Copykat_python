@@ -251,9 +251,9 @@ archives were left in place; a compact `.tar.gz` evidence bundle is stored
 on `/mnt/nas/cancer_research` after measurements complete. No raw archives
 are duplicated on the SSD for these calculations.
 
-The reproducible driver is `docs/navin_review_benchmark.py`; the serial
-sweeps are `docs/navin_review_sweep.sh` and
-`docs/navin_review_followup.sh`. It checks the imported source path,
+The reproducible driver is `benchmarks/navin_review/navin_review_benchmark.py`; the serial
+sweeps are `benchmarks/navin_review/navin_review_sweep.sh` and
+`benchmarks/navin_review/navin_review_followup.sh`. It checks the imported source path,
 preserves original-dtype hashes, monitors process-tree RSS, records
 progress and stops at time/memory/SSD guards. It removes only its own
 scratch output directories after hashing. Xenium subsets are nested,

@@ -1,6 +1,6 @@
 """Reconstruct benchmark source snapshots without modifying Git refs.
 
-Usage: python docs/navin_review_prepare.py /SSD/review-directory
+Usage: python benchmarks/navin_review/navin_review_prepare.py /SSD/review-directory
 Requires existing local source commit objects. Use the same root as the
 benchmark driver (COPYKAT_REVIEW_ROOT) and configure its Python runtimes.
 """
@@ -12,7 +12,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-repo = Path(__file__).resolve().parents[1]
+repo = Path(__file__).resolve().parents[2]
 root = Path(sys.argv[1])
 for directory in ["snapshots", "results", "scratch"]:
     (root / directory).mkdir(parents=True, exist_ok=True)

@@ -88,11 +88,11 @@ an already existing unit):
 systemd-run --user --unit=copykat-navin-expanded-scheduler --collect \
   --property=Restart=on-failure --property=RestartSec=30 --property=KillMode=process \
   --working-directory=/home/toresbe/Copykat_python \
-  /home/toresbe/miniforge3/bin/python -u /home/toresbe/Copykat_python/docs/navin_review_parallel.py
+  /home/toresbe/miniforge3/bin/python -u /home/toresbe/Copykat_python/benchmarks/navin_review/navin_review_parallel.py
 systemd-run --user --unit=copykat-navin-expanded-report --collect \
   --property=Restart=on-failure --property=RestartSec=30 --property=Nice=19 \
   --working-directory=/home/toresbe/Copykat_python \
-  /home/toresbe/miniforge3/bin/python -u /home/toresbe/Copykat_python/docs/navin_review_watch.py
+  /home/toresbe/miniforge3/bin/python -u /home/toresbe/Copykat_python/benchmarks/navin_review/navin_review_watch.py
 ```
 
 The live report is `docs/navin-review-cpu-benchmarks.md`, refreshed every

@@ -17,7 +17,7 @@ from navin_review_labels import LABELS, SCOPE
 ROOT = Path("/home/toresbe/cancer_research/navin_review_2026-10-09")
 report_lock = open(ROOT / "results/serial8_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(report_lock, fcntl.LOCK_EX)
-DOCS = Path(__file__).resolve().parent
+DOCS = Path(__file__).resolve().parents[2] / "docs"
 manifest_path = ROOT / "serial_sweep_manifest.json"
 if not manifest_path.exists():
     raise SystemExit(0)

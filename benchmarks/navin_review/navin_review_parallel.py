@@ -245,6 +245,8 @@ with tarfile.open(temporary, "w:gz") as tar:
     ]:
         tar.add(ROOT / relative, arcname=relative)
     for path in DRIVER.parent.glob("navin*"):
+        tar.add(path, arcname="benchmarks/navin_review/" + path.name)
+    for path in (DRIVER.parents[2] / "docs").glob("navin*"):
         tar.add(path, arcname="docs/" + path.name)
 temporary.replace(archive)
 h = hashlib.sha256()

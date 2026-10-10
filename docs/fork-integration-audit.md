@@ -57,7 +57,7 @@ input hashes, settings, and limitations are in
 
 Reproduction and evidence files are committed in this package:
 
-- Benchmark drivers and utilities: `navin_review_benchmark.py`,
+- Benchmark drivers and utilities (in `benchmarks/navin_review/`): `navin_review_benchmark.py`,
   `navin_review_serial.py`, `navin_review_writer_edges.py`,
   `navin_review_parallel.py`, `navin_review_gpu_memory.py`, and the other
   `navin_review_*.py` scripts listed in the manifest.

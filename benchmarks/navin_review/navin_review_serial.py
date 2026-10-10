@@ -12,8 +12,9 @@ from pathlib import Path
 
 from navin_review_benchmark import ROOT, save
 
-DOCS = Path(__file__).resolve().parent
-DRIVER = DOCS / "navin_review_benchmark.py"
+HERE = Path(__file__).resolve().parent
+DOCS = Path(__file__).resolve().parents[2] / "docs"
+DRIVER = HERE / "navin_review_benchmark.py"
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000]
 VARIANTS = ["main", "optimistic", "cpu_stack", "gpu"]
 jobs = [
@@ -167,7 +168,7 @@ for job in jobs:
     )
 event("complete")
 subprocess.run(
-    ["/home/toresbe/envs/copykat_py_main/bin/python", str(DOCS / "navin_review_serial_report.py")], check=True
+    ["/home/toresbe/envs/copykat_py_main/bin/python", str(HERE / "navin_review_serial_report.py")], check=True
 )
 archive = Path("/mnt/nas/cancer_research/navin_review_2026-10-09/navin-review-serial8-evidence.tar.gz")
 if archive.exists():
@@ -183,6 +184,8 @@ with tarfile.open(temporary, "w:gz") as tar:
         "serial_sweep_manifest.json",
     ]:
         tar.add(ROOT / relative, arcname=relative)
+    for path in HERE.glob("navin*"):
+        tar.add(path, arcname="benchmarks/navin_review/" + path.name)
     for path in DOCS.glob("navin*"):
         tar.add(path, arcname="docs/" + path.name)
 temporary.replace(archive)

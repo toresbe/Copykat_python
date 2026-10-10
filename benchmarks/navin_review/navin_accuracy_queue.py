@@ -15,8 +15,9 @@ from pathlib import Path
 from navin_accuracy_data import ROOT, discover, save
 
 PERF = Path("/home/toresbe/cancer_research/navin_review_2026-10-09")
-DOCS = Path(__file__).resolve().parent
-WORKER = DOCS / "navin_accuracy_worker.py"
+HERE = Path(__file__).resolve().parent
+DOCS = Path(__file__).resolve().parents[2] / "docs"
+WORKER = HERE / "navin_accuracy_worker.py"
 PYTHON = "/home/toresbe/envs/copykat_py_gpu/bin/python"  # same dependencies for both implementations
 schedule = ROOT / "results/accuracy_schedule.json"
 CPU_LANES = [list(range(i, i + 4)) for i in range(0, 28, 4)]
@@ -99,7 +100,7 @@ for task in tasks:
 groups = {}
 for case in cases:
     groups.setdefault(case["path"], []).append(case)
-STAGER = DOCS / "navin_accuracy_stage.py"
+STAGER = HERE / "navin_accuracy_stage.py"
 staging = None
 previous_stage = next((e for e in reversed(events) if e["event"] == "staging_started"), None)
 if previous_stage:
@@ -324,7 +325,7 @@ while pending or running or staging is not None:
         event("started", name=task["name"], pid=process.pid, cpu_affinity=lane, concurrent=[t["name"] for t in running])
     time.sleep(5)
 event("complete")
-subprocess.run([PYTHON, str(DOCS / "navin_accuracy_report.py")], check=True)
+subprocess.run([PYTHON, str(HERE / "navin_accuracy_report.py")], check=True)
 archive = Path("/mnt/nas/cancer_research/navin_accuracy_2026-10-10/accuracy-evidence.tar.gz")
 archive.parent.mkdir(exist_ok=True)
 if not archive.exists():
@@ -332,8 +333,8 @@ if not archive.exists():
     with tarfile.open(temporary, "w:gz") as tar:
         for relative in ["results", "snapshots", "protocol.json", "dataset_manifest.json"]:
             tar.add(ROOT / relative, arcname=relative)
-        for source in DOCS.glob("navin_accuracy*"):
-            tar.add(source, arcname="docs/" + source.name)
+        for source in HERE.glob("navin_accuracy*"):
+            tar.add(source, arcname="benchmarks/navin_review/" + source.name)
         for source in DOCS.glob("navin-accuracy*"):
             tar.add(source, arcname="docs/" + source.name)
     temporary.replace(archive)

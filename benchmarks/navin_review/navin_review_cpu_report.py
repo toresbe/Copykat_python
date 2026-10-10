@@ -18,7 +18,7 @@ from navin_review_projection import project
 ROOT = Path("/home/toresbe/cancer_research/navin_review_2026-10-09")
 report_lock = open(ROOT / "results/cpuaccount_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(report_lock, fcntl.LOCK_EX)
-DOCS = Path(__file__).resolve().parent
+DOCS = Path(__file__).resolve().parents[2] / "docs"
 variants = {v: label for v, label in LABELS.items() if v != "optimistic"}
 manifest_path = ROOT / "expanded_sweep_manifest.json"
 manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}

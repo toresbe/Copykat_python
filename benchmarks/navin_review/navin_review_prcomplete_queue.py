@@ -11,8 +11,9 @@ from pathlib import Path
 
 from navin_review_benchmark import ROOT, save
 
-DOCS = Path(__file__).resolve().parent
-DRIVER = DOCS / "navin_review_benchmark.py"
+HERE = Path(__file__).resolve().parent
+DOCS = Path(__file__).resolve().parents[2] / "docs"
+DRIVER = HERE / "navin_review_benchmark.py"
 PYTHON = "/home/toresbe/envs/copykat_py_main/bin/python"
 ACCURACY = Path("/home/toresbe/cancer_research/navin_accuracy_2026-10-10/results/accuracy_schedule.json")
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000, 80000, 120000, 170057]
@@ -126,8 +127,8 @@ for job in jobs:
         raise RuntimeError("Supervisor exited without output " + job["name"])
     z = json.loads(output.read_text())
     event("finished", name=job["name"], status=z["status"])
-    subprocess.run([PYTHON, "-B", str(DOCS / "navin_review_cpu_report.py")], check=True)
-    subprocess.run([PYTHON, "-B", str(DOCS / "navin_review_serial_report.py")], check=True)
+    subprocess.run([PYTHON, "-B", str(HERE / "navin_review_cpu_report.py")], check=True)
+    subprocess.run([PYTHON, "-B", str(HERE / "navin_review_serial_report.py")], check=True)
 event("complete")
 archive = Path("/mnt/nas/cancer_research/navin_review_2026-10-09/navin-review-six-pr-vram-evidence.tar.gz")
 if not archive.exists():
@@ -142,8 +143,8 @@ if not archive.exists():
             "input_manifest.json",
         ]:
             tar.add(ROOT / name, arcname=name)
-        for p in DOCS.glob("navin_review*"):
-            tar.add(p, arcname="docs/" + p.name)
+        for p in HERE.glob("navin_review*"):
+            tar.add(p, arcname="benchmarks/navin_review/" + p.name)
         for p in DOCS.glob("navin-review*"):
             tar.add(p, arcname="docs/" + p.name)
     temp.replace(archive)

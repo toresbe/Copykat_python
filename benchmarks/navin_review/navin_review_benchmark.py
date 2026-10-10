@@ -21,7 +21,7 @@ import traceback
 from pathlib import Path
 
 ROOT = Path(os.getenv("COPYKAT_REVIEW_ROOT", "/home/toresbe/cancer_research/navin_review_2026-10-09"))
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 PYTHON = os.getenv("COPYKAT_REVIEW_PYTHON", "/home/toresbe/envs/copykat_py_main/bin/python")
 
 

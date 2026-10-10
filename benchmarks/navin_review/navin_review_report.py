@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from navin_review_labels import LABELS, SCOPE
 
 ROOT = Path("/home/toresbe/cancer_research/navin_review_2026-10-09")
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "results"
 ASSETS = REPO / "docs/navin-review-assets"
 ASSETS.mkdir(exist_ok=True)
