@@ -5,14 +5,16 @@ Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R 
 
 import logging
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, cast
 
 import fastcluster
+import numba
 import numpy as np
 from joblib import Parallel, delayed
+from numba import njit, prange
 from scipy.cluster.hierarchy import fcluster
 from scipy.spatial.distance import cdist, pdist
 from sklearn.decomposition import PCA
@@ -422,6 +424,160 @@ def _fit_gmm_3component(
     return means, weights, sigma
 
 
+@njit
+def _pairwise_sum(a: FloatArray, lo: int, n: int) -> float:
+    """``a[lo:lo + n].sum()`` with NumPy's pairwise summation order (bit-identical)."""
+    if n < 8:
+        res = 0.0
+        for i in range(lo, lo + n):
+            res += a[i]
+        return res
+    if n <= 128:
+        r0, r1, r2, r3 = a[lo], a[lo + 1], a[lo + 2], a[lo + 3]
+        r4, r5, r6, r7 = a[lo + 4], a[lo + 5], a[lo + 6], a[lo + 7]
+        m = n - n % 8
+        for i in range(lo + 8, lo + m, 8):
+            r0 += a[i]
+            r1 += a[i + 1]
+            r2 += a[i + 2]
+            r3 += a[i + 3]
+            r4 += a[i + 4]
+            r5 += a[i + 5]
+            r6 += a[i + 6]
+            r7 += a[i + 7]
+        res = ((r0 + r1) + (r2 + r3)) + ((r4 + r5) + (r6 + r7))
+        for i in range(lo + m, lo + n):
+            res += a[i]
+        return res
+    n2 = n // 2
+    n2 -= n2 % 8
+    return _pairwise_sum(a, lo, n2) + _pairwise_sum(a, lo + n2, n - n2)
+
+
+@njit(parallel=True)
+def _fit_gmm_3component_rows(
+    X: FloatArray,
+    sigma_init: FloatArray,
+    mu_init: FloatArray,
+    max_iter: int,
+    tol: float,
+    out_means: FloatArray,
+    out_weights: FloatArray,
+    out_sigma: FloatArray,
+) -> None:
+    """``_fit_gmm_3component`` for every row of ``X`` (cells x genes), rows in parallel threads.
+
+    Performs the same floating-point operations in the same order as the NumPy
+    version, including NumPy's summation orders (pairwise for full sums,
+    sequential down columns, left to right across a row of three), so each row
+    gets the same result as fitting it alone with NumPy wherever NumPy's
+    ``exp``/``log`` are the C library's (no AVX-512 kernels).
+    """
+    n_rows, n = X.shape
+    tiny = np.finfo(np.float64).tiny
+    sqrt_2pi = np.sqrt(2.0 * np.pi)
+    for r in prange(n_rows):
+        x = X[r]
+        resp = np.empty(3 * n)
+        terms = np.empty(3 * n)
+        log_rs = np.empty(n)
+        m0, m1, m2 = mu_init[0], mu_init[1], mu_init[2]
+        w0 = w1 = w2 = 1.0 / 3.0
+        sigma = max(sigma_init[r], 1e-8)
+        prev_loglik = -np.inf
+        for _ in range(max_iter):
+            norm = sigma * sqrt_2pi
+            nk0 = nk1 = nk2 = 0.0
+            sx0 = sx1 = sx2 = 0.0
+            for i in range(n):
+                xi = x[i]
+                z0 = (xi - m0) / sigma
+                z1 = (xi - m1) / sigma
+                z2 = (xi - m2) / sigma
+                d0 = np.exp(-0.5 * z0 * z0) / norm * w0
+                d1 = np.exp(-0.5 * z1 * z1) / norm * w1
+                d2 = np.exp(-0.5 * z2 * z2) / norm * w2
+                rs = d0 + d1 + d2
+                if rs <= 0:
+                    rs = tiny
+                log_rs[i] = np.log(rs)
+                q0 = d0 / rs
+                q1 = d1 / rs
+                q2 = d2 / rs
+                resp[3 * i] = q0
+                resp[3 * i + 1] = q1
+                resp[3 * i + 2] = q2
+                nk0 += q0
+                nk1 += q1
+                nk2 += q2
+                sx0 += q0 * xi
+                sx1 += q1 * xi
+                sx2 += q2 * xi
+            if nk0 <= 0:
+                nk0 = tiny
+            if nk1 <= 0:
+                nk1 = tiny
+            if nk2 <= 0:
+                nk2 = tiny
+            w0, w1, w2 = nk0 / n, nk1 / n, nk2 / n
+            m0, m1, m2 = sx0 / nk0, sx1 / nk1, sx2 / nk2
+            for i in range(n):
+                xi = x[i]
+                e0 = xi - m0
+                e1 = xi - m1
+                e2 = xi - m2
+                terms[3 * i] = resp[3 * i] * (e0 * e0)
+                terms[3 * i + 1] = resp[3 * i + 1] * (e1 * e1)
+                terms[3 * i + 2] = resp[3 * i + 2] * (e2 * e2)
+            var = (0.0 + _pairwise_sum(terms, 0, 3 * n)) / n
+            sigma = np.sqrt(max(var, 1e-12))
+            loglik = 0.0 + _pairwise_sum(log_rs, 0, n)
+            if abs(loglik - prev_loglik) < tol * (abs(prev_loglik) + tol):
+                break
+            prev_loglik = loglik
+        out_means[r, 0], out_means[r, 1], out_means[r, 2] = m0, m1, m2
+        out_weights[r, 0], out_weights[r, 1], out_weights[r, 2] = w0, w1, w2
+        out_sigma[r] = sigma
+
+
+def _gmm_threads(n_cores: int, n_tasks: int) -> int:
+    return max(1, min(_effective_threads(n_cores), n_tasks, numba.config.NUMBA_NUM_THREADS))
+
+
+def _fit_gmm_3component_many(
+    columns: GeneByCell,
+    sigma_init: Sequence[float],
+    max_iter: int,
+    n_cores: int = 1,
+    tol: float = 1e-8,
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Fit ``_fit_gmm_3component`` (default ``mu_init``) to every column, in parallel threads.
+
+    Returns means (n x 3), weights (n x 3) and sigmas (n,).
+    """
+    X = np.ascontiguousarray(np.asarray(columns, dtype=np.float64).T)
+    n_rows = X.shape[0]
+    means = np.empty((n_rows, 3))
+    weights = np.empty((n_rows, 3))
+    sigma = np.empty(n_rows)
+    previous_threads = numba.get_num_threads()
+    numba.set_num_threads(_gmm_threads(n_cores, n_rows))
+    try:
+        _fit_gmm_3component_rows(
+            X,
+            np.asarray(sigma_init, dtype=np.float64),
+            np.array([-0.2, 0.0, 0.2]),
+            int(max_iter),
+            float(tol),
+            means,
+            weights,
+            sigma,
+        )
+    finally:
+        numba.set_num_threads(previous_threads)
+    return means, weights, sigma
+
+
 def baseline_norm_cl(
     norm_mat_smooth: GeneByCell,
     min_cells: int = 5,
@@ -577,6 +733,40 @@ def baseline_norm_cl(
     )
 
 
+# Cells per wave of parallel per-cell GMM fits in baseline_gmm, as a multiple
+# of the thread count: waves start at one cell per thread and double up to this.
+_GMM_MAX_WAVE_PER_THREAD = 16
+
+
+def _gmm_fits_in_order(CNA_mat: GeneByCell, n_cores: int) -> Iterator[tuple[int, FloatArray, FloatArray]]:
+    """Yield ``(cell index, means, weights)`` of each cell's GMM fit, in cell order.
+
+    Cells are fitted in waves of parallel threads, so a caller that stops early
+    wastes at most one wave; each fit is identical to a serial
+    ``_fit_gmm_3component`` call.
+    """
+    n_cells = CNA_mat.shape[1]
+    if backend.use_gpu():
+        for m in range(n_cells):
+            sam = CNA_mat[:, m]
+            sg = max(0.05, 0.5 * float(np.std(sam)))
+            means, weights, _sigma = _fit_gmm_3component(sam, sigma_init=sg, max_iter=500)
+            yield m, means, weights
+        return
+    n_threads = _gmm_threads(n_cores, n_cells)
+    wave = n_threads
+    lo = 0
+    while lo < n_cells:
+        hi = min(n_cells, lo + wave)
+        block = CNA_mat[:, lo:hi]
+        sigma0 = [max(0.05, 0.5 * float(np.std(block[:, j]))) for j in range(hi - lo)]
+        wave_means, wave_weights, _ = _fit_gmm_3component_many(block, sigma0, max_iter=500, n_cores=n_threads)
+        for j in range(hi - lo):
+            yield lo + j, wave_means[j], wave_weights[j]
+        lo = hi
+        wave = min(2 * wave, _GMM_MAX_WAVE_PER_THREAD * n_threads)
+
+
 def baseline_gmm(
     CNA_mat: GeneByCell,
     cell_names: Sequence[str],
@@ -624,12 +814,7 @@ def baseline_gmm(
     N_normal = []
     N_normal_labels = []
 
-    for m in range(n_cells):
-        sam = CNA_mat[:, m]
-        sg = max(0.05, 0.5 * float(np.std(sam)))
-
-        means, weights, _sigma = _fit_gmm_3component(sam, sigma_init=sg, max_iter=500)
-
+    for m, means, weights in _gmm_fits_in_order(CNA_mat, n_cores):
         # Check if any component mean is near zero (neutral)
         neutral_mask = np.abs(means) <= mu_cut
         has_neutral_component = np.any(neutral_mask)
