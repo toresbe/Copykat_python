@@ -21,6 +21,7 @@ import time
 from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, cast
 
 import numpy as np
@@ -589,7 +590,22 @@ def copykat(
         "requested_cores": int(n_cores),
         "available_cores": int(os.cpu_count() or 1),
         "steps": [],
+        "parameters": {
+            "id_type": id_type, "cell_line": cell_line, "genome": genome,
+            "ngene_chr": ngene_chr, "min_gene_per_cell": min_gene_per_cell,
+            "LOW_DR": LOW_DR, "UP_DR": UP_DR, "win_size": win_size, "KS_cut": KS_cut,
+            "distance": distance, "n_cores": n_cores, "pca_components_requested": pca_components,
+            "output_seg": output_seg, "plot_genes": plot_genes, "random_seed": 1234,
+            "meta_csv": meta_csv, "row_split_col": row_split_col,
+        },
+        "versions": {},
+        "warnings": [],
     }
+    for package in ("copykat-py", "numpy", "scipy", "pandas", "scikit-learn", "fastcluster"):
+        try:
+            runtime_info["versions"][package] = version(package)
+        except PackageNotFoundError:
+            runtime_info["versions"][package] = "unavailable (source checkout or package not installed)"
 
     logger.info("running copykat-py v1.0.0")
 
@@ -639,6 +655,8 @@ def copykat(
         WNS1 = "low data quality"
         UP_DR = LOW_DR
         logger.warning("  WARNING: low data quality; assigned LOW_DR to UP_DR...")
+        runtime_info["warnings"].append("Low data quality; effective UP_DR was set to LOW_DR")
+    runtime_info["parameters"]["UP_DR_effective"] = UP_DR
     elapsed = _record_step(runtime_info, "read_and_filter", step_start, extra=prep_stats)
     logger.info(f"  step 1 runtime: {_format_seconds(elapsed)}")
 
@@ -648,6 +666,7 @@ def copykat(
     logger.info("step 2: annotating gene coordinates ...")
     step_start = time.perf_counter()
     anno_mat, anno_rows = annotate_gene_rows(gene_names, id_type=id_type, genome=genome)
+    runtime_info["parameters"]["gene_order"] = "chromosome,start_position" if genome == "mm10" else "abspos"
 
     # =========================================================================
     # Step 3: Remove cell cycle genes and HLA genes (hg20 only)
@@ -881,6 +900,15 @@ def copykat(
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     del norm_mat_smooth
     baseline_cluster_info = get_last_cluster_info()
+    runtime_info["reference"] = {
+        "mode": (
+            "synthetic" if cell_line == "yes" else "known_normal" if WNS == "run with known normal" else "automatic"
+        ),
+        "supplied_count": len(set(norm_cell_names)) if isinstance(norm_cell_names, list) else 0,
+        "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
+        if isinstance(norm_cell_names, list) else 0,
+        "baseline_anchor_count": len(_preN_to_names(preN, cell_name_list).intersection(cell_name_list)),
+    }
     elapsed = _record_step(
         runtime_info, "baseline_estimation", step_start, parallel_info=baseline_cluster_info, extra={"warning": WNS}
     )
@@ -1371,6 +1399,7 @@ def copykat(
                 WNS1=WNS1,
                 WNS=WNS,
                 output_path=f"{sample_name}heatmap.png",
+                genome=genome,
             )
             elapsed = _record_step(runtime_info, "plot_heatmap", step_start)
             logger.info(f"  step 10 runtime: {_format_seconds(elapsed)}")
@@ -1383,7 +1412,7 @@ def copykat(
             meta_pred_path = _meta_with_pred(meta_csv, pred_dict, sample_name)
             plot_heatmap_annotated(
                 mat=mat_adj,
-                cell_names=cna_out.columns[3:].tolist(),
+                cell_names=cna_out.columns[7:].tolist(),
                 chrom_info=chrom_numeric,
                 meta_csv=meta_pred_path,
                 row_split_col=row_split_col,
@@ -1391,6 +1420,7 @@ def copykat(
                 distance=distance,
                 n_cores=n_cores,
                 output_path=f"{sample_name}annotated_heatmap.png",
+                genome=genome,
             )
             elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
             logger.info(f"  step 10b runtime: {_format_seconds(elapsed)}")
@@ -1444,20 +1474,3 @@ def _write_seg_file(RNA_adj_df: pd.DataFrame, mat_adj: FloatArray, cell_cols: Se
 
     seg_df = pd.DataFrame(rows)
     seg_df.to_csv(f"{sample_name}CNA_results.seg", sep="\t", index=False)
-from importlib.metadata import PackageNotFoundError, version
-        "parameters": {
-            "id_type": id_type, "cell_line": cell_line, "genome": genome,
-            "ngene_chr": ngene_chr, "min_gene_per_cell": min_gene_per_cell,
-            "LOW_DR": LOW_DR, "UP_DR": UP_DR, "win_size": win_size, "KS_cut": KS_cut,
-            "distance": distance, "n_cores": n_cores, "pca_components_requested": pca_components,
-            "output_seg": output_seg, "plot_genes": plot_genes, "random_seed": 1234,
-            "meta_csv": meta_csv, "row_split_col": row_split_col,
-        },
-        "versions": {},
-        "warnings": [],
-    for package in ("copykat-py", "numpy", "scipy", "pandas", "scikit-learn", "fastcluster"):
-        try:
-            runtime_info["versions"][package] = version(package)
-        except PackageNotFoundError:
-            runtime_info["versions"][package] = "unavailable (source checkout or package not installed)"
-    runtime_info["parameters"]["gene_order"] = "chromosome,start_position" if genome == "mm10" else "abspos"

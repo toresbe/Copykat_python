@@ -9,6 +9,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from copykat_py.data_loader import load_full_anno
+from copykat_py.genomic_coordinates import annotation_order
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def annotate_gene_rows(
     Returns
     -------
     anno : pd.DataFrame
-        Annotation sorted by abspos. Columns: <id column>, then the remaining
+        Annotation sorted in genomic order. Columns: <id column>, then the remaining
         annotation columns (abspos, chromosome_name, start_position, ...).
     rows : np.ndarray
         For each annotation row, the index of the matching expression-matrix row.
@@ -62,14 +63,12 @@ def annotate_gene_rows(
     anno.index.name = id_col
     anno = anno.reset_index()
 
-    # R's order(abspos) preserves tied gene order; this matters for mm10, where
-    # abspos is chromosome-level and smoothing/segmentation are order-sensitive.
-    order = np.argsort(anno["abspos"].to_numpy(), kind="mergesort")
+    order = annotation_order(anno, genome)
     anno = anno.iloc[order].reset_index(drop=True)
     rows = rows[order]
 
     # Re-derive 'chrom' as integer for downstream compatibility
-    # chromosome_name can be 1..22, X=23, Y=24
+    # hg20: X=23, Y=24; mm10: X=20, Y=21
     anno["chromosome_name"] = anno["chromosome_name"].astype(str)
 
     logger.info(f"  {len(anno)} genes annotated")
@@ -91,7 +90,7 @@ def annotate_genes(mat: pd.DataFrame, id_type: str = "S", genome: str = "hg20") 
     Returns
     -------
     pd.DataFrame
-        Combined annotation + expression, sorted by abspos.
+        Combined annotation + expression, sorted in genomic order.
         Columns: abspos, chromosome_name, start_position, end_position,
                  ensembl_gene_id, hgnc_symbol (or mgi_symbol), band, <cell1>, <cell2>, ...
     """

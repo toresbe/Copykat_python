@@ -17,6 +17,7 @@ from scipy.io import mmread
 
 from copykat_py._logging import default_progress_output, log_progress_to, with_default_progress_output
 from copykat_py._types import CopyKATResult, RawInput, RawMatrix, SparseMatrix
+from copykat_py.genomic_coordinates import split_cna_table
 
 logger = logging.getLogger(__name__)
 
@@ -452,9 +453,7 @@ def _run_copykat_analysis(
             from copykat_py.plotting import plot_heatmap_annotated
 
             cna_df = result["CNAmat"]
-            ann_mat = cna_df.iloc[:, 3:].values.astype(np.float32)
-            ann_cell_names = cna_df.columns[3:].tolist()
-            ann_chrom_info = cna_df.iloc[:, 0].to_numpy()
+            ann_mat, ann_cell_names, ann_chrom_info, ann_genome = split_cna_table(cna_df)
             ann_output = f"{args.sample_name}_copykat_annotated_heatmap.png"
             plot_heatmap_annotated(
                 mat=ann_mat,
@@ -466,6 +465,7 @@ def _run_copykat_analysis(
                 distance=args.distance,
                 n_cores=args.n_cores,
                 output_path=ann_output,
+                genome=ann_genome,
             )
         return result
     finally:
@@ -636,8 +636,7 @@ Meta CSV format
         required=True,
         help="[required] CNA results file produced by copykat-py "
         "(*_copykat_CNA_results.txt, tab-separated). "
-        "First three columns must be chrom / chrompos / abspos; "
-        "remaining columns are cells.",
+        "Accepts hg20 bin tables or mm10 gene tables; annotation columns are detected automatically.",
     )
     parser.add_argument(
         "--meta",
@@ -678,14 +677,20 @@ Meta CSV format
         metavar="PATH",
         help="[optional] Output PNG path. Defaults to {sample_name}_copykat_annotated_heatmap.png.",
     )
+    parser.add_argument(
+        "--continuous-meta", nargs="+", default=None, metavar="COLUMN",
+        help="Force selected numeric metadata columns to use continuous colors (e.g. n_umi).",
+    )
+    parser.add_argument(
+        "--no-row-split", action="store_true",
+        help="Cluster all cells together without categorical row groups.",
+    )
 
     args = parser.parse_args()
 
     logger.info(f"Loading CNA results: {args.cna}")
     cna_df = pd.read_csv(args.cna, sep="\t", index_col=False)
-    cell_names = cna_df.columns[3:].tolist()
-    chrom_info = cna_df.iloc[:, 0].to_numpy()
-    mat = cna_df.iloc[:, 3:].values.astype(np.float32)
+    mat, cell_names, chrom_info, genome = split_cna_table(cna_df)
     logger.info(f"  {mat.shape[1]} cells x {mat.shape[0]} bins")
 
     from copykat_py.plotting import plot_heatmap_annotated
@@ -695,11 +700,13 @@ Meta CSV format
         cell_names=cell_names,
         chrom_info=chrom_info,
         meta_csv=args.meta,
-        row_split_col=args.row_split,
+        row_split_col="" if args.no_row_split else args.row_split,
         sample_name=args.sample_name,
         distance=args.distance,
         n_cores=args.n_cores,
         output_path=args.output,
+        continuous_meta=args.continuous_meta,
+        genome=genome,
     )
 
 
