@@ -2,7 +2,7 @@
 
 Follow-up: [two serial repeat rounds at 2k–40k](navin-review-serial-benchmarks.md), queued after this sweep completes.
 
-Last refreshed: 2026-10-10 11:24:55 UTC.
+Last refreshed: 2026-10-10 11:25:59 UTC.
 
 Currently proposed changes = pinned upstream main `ea1a15c` plus performance PRs [#4](https://github.com/navinlabcode/Copykat_python/pull/4), [#5](https://github.com/navinlabcode/Copykat_python/pull/5), [#6](https://github.com/navinlabcode/Copykat_python/pull/6), [#7](https://github.com/navinlabcode/Copykat_python/pull/7), [#8](https://github.com/navinlabcode/Copykat_python/pull/8) and [#9](https://github.com/navinlabcode/Copykat_python/pull/9). The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep is underway after accuracy completed; current running and queued states appear in the CPU-accounted report. The original five-PR snapshot of PRs #4 and #6–#9 excluded #5; its evidence is retained in the historical archives. The open CLI fix #3 is outside both performance snapshots. CPU experimental (no verification) = `perf/exact-shortcuts` at `ff63f19`, with Arrow output, memory/storage refactors, Ward-engine and repeated-bin changes. This broader experimental integration is distinct from the open-PR snapshots. These benchmark records are pinned to their source snapshots; subsequent Git branch construction is documented in `fork-integration-audit.md`.
 
@@ -32,7 +32,7 @@ The previous 170k CPU point was censored by an explicit 180-second process-time 
 | 30,000 | Currently proposed changes (6 PRs) | ok | 633.05 | 801.72 | 28.52 | pinned physical8 |
 | 40,000 | Currently proposed changes (6 PRs) | ok | 1127.23 | 1352.78 | 37.92 | pinned physical8 |
 | 80,000 | Currently proposed changes (6 PRs) | ok | 2081.32 | 2466.09 | 74.06 | pinned physical8 |
-| 120,000 | Currently proposed changes (6 PRs) | running; 42.6 min elapsed | — | — | — | recorded on completion |
+| 120,000 | Currently proposed changes (6 PRs) | running; 43.6 min elapsed | — | — | — | recorded on completion |
 | 170,057 | Currently proposed changes (6 PRs) | queued | — | — | — | — |
 | 2,000 | CPU experimental (no verification) | ok | 15.62 | 22.18 | 7.70 | pinned physical8 |
 | 5,000 | CPU experimental (no verification) | ok | 12.98 | 36.43 | 7.70 | pinned physical8 |
