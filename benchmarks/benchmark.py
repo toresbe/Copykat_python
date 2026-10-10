@@ -20,9 +20,11 @@ import time
 import traceback
 from pathlib import Path
 
-ROOT = Path(os.getenv("COPYKAT_REVIEW_ROOT", "/home/toresbe/cancer_research/benchmark_2026-10-09"))
-REPO = Path(__file__).resolve().parents[2]
-PYTHON = os.getenv("COPYKAT_REVIEW_PYTHON", "/home/toresbe/envs/copykat_py_main/bin/python")
+import bench_config as cfg
+
+ROOT = cfg.ROOT
+REPO = Path(__file__).resolve().parents[1]
+PYTHON = cfg.PYTHON
 
 
 def save(path, obj):
@@ -79,9 +81,7 @@ def load_raw(sample):
     if sample.startswith("xenium"):
         import h5py
 
-        with h5py.File(
-            os.getenv("COPYKAT_BENCH_XENIUM", "/home/toresbe/cancer_research/xenium/cell_feature_matrix.h5")
-        ) as f:
+        with h5py.File(cfg.XENIUM_H5) as f:
             m = f["matrix"]
             a = sparse.csc_matrix((m["data"][:], m["indices"][:], m["indptr"][:]), shape=tuple(m["shape"][:]))
             keep = m["features/feature_type"][:].astype(str) == "Gene Expression"
@@ -98,7 +98,6 @@ def load_raw(sample):
         z = np.load(p, allow_pickle=False)
         a = sparse.csc_matrix((z["data"], z["indices"], z["indptr"]), shape=tuple(z["shape"]))
         return {"matrix": a, "genes": z["genes"].astype(object), "barcodes": z["barcodes"].astype(object)}, None, "mm10"
-    sys.path.insert(1, str(REPO / ".claude/worktrees/gpu-acceleration-optimization-bfa6f0/benchmarks"))
     os.environ["COPYKAT_BENCH_CACHE"] = str(ROOT / "scratch/cache")
     from datasets import load_sample
 
@@ -368,11 +367,7 @@ def supervise(args):
         os.sched_setaffinity(0, selected)
     for key in ["OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"]:
         env[key] = str(args.cores)
-    runtime = (
-        os.getenv("COPYKAT_REVIEW_GPU_PYTHON", "/home/toresbe/envs/copykat_py_gpu/bin/python")
-        if args.backend
-        else PYTHON
-    )
+    runtime = cfg.GPU_PYTHON if args.backend else PYTHON
     command = [
         runtime,
         str(Path(__file__).resolve()),

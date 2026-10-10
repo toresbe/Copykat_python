@@ -86,4 +86,4 @@ Error bars show the observed minimum–maximum, not confidence intervals. Only p
 | 30,000 | GPU experimental (no verification) | identical / identical / identical / identical |
 | 40,000 | GPU experimental (no verification) | identical / identical / identical / identical |
 
-Individual JSON results, source/input manifests and serial admission events are under `/home/toresbe/cancer_research/benchmark_2026-10-09`. Full-precision output hashes are retained. A separate NAS archive is created when the serial phase completes. [Original scaling and output checks](benchmark-cpu.md).
+Individual JSON results, source/input manifests and serial admission events are under `$COPYKAT_BENCH_ROOT`. Full-precision output hashes are retained. A separate NAS archive is created when the serial phase completes. [Original scaling and output checks](benchmark-cpu.md).

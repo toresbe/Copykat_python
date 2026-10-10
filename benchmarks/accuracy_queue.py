@@ -12,13 +12,14 @@ import tarfile
 import time
 from pathlib import Path
 
+import bench_config as cfg
 from accuracy_data import ROOT, discover, save
 
-PERF = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
+PERF = cfg.ROOT
 HERE = Path(__file__).resolve().parent
-DOCS = Path(__file__).resolve().parents[2] / "docs"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
 WORKER = HERE / "accuracy_worker.py"
-PYTHON = "/home/toresbe/envs/copykat_py_gpu/bin/python"  # same dependencies for both implementations
+PYTHON = cfg.GPU_PYTHON  # same dependencies for both implementations
 schedule = ROOT / "results/accuracy_schedule.json"
 CPU_LANES = [list(range(i, i + 4)) for i in range(0, 28, 4)]
 GPU_LANE = list(range(28, 32))
@@ -326,7 +327,7 @@ while pending or running or staging is not None:
     time.sleep(5)
 event("complete")
 subprocess.run([PYTHON, str(HERE / "accuracy_report.py")], check=True)
-archive = Path("/mnt/nas/cancer_research/accuracy_2026-10-10/accuracy-evidence.tar.gz")
+archive = cfg.archive_path("accuracy-evidence.tar.gz")
 archive.parent.mkdir(exist_ok=True)
 if not archive.exists():
     temporary = archive.with_suffix(".tmp")

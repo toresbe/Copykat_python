@@ -86,7 +86,7 @@ data collection; the labels are imperfect proxies, not independent DNA truth.
 Mouse data and direct genomic-profile accuracy are out of scope for that cell
 call panel.
 
-Large raw evidence archives remain under `/mnt/nas/cancer_research/`; the repo
+Large raw evidence archives remain under `$COPYKAT_BENCH_ARCHIVE/`; the repo
 contains compact reports, scripts, and selected figures. Archive paths and
 checksums are recorded in the source reports. No raw archive was copied into
 the repository.

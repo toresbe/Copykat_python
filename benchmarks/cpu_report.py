@@ -6,19 +6,21 @@ import os
 import time
 from pathlib import Path
 
-os.environ.setdefault("MPLCONFIGDIR", "/home/toresbe/cancer_research/benchmark_2026-10-09/scratch/matplotlib")
+import bench_config as cfg
+
+os.environ.setdefault("MPLCONFIGDIR", str(cfg.ROOT / "scratch/matplotlib"))
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 from labels import LABELS, SCOPE
+from matplotlib.lines import Line2D
 from projection import project
 
-ROOT = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
+ROOT = cfg.ROOT
 report_lock = open(ROOT / "results/cpuaccount_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(report_lock, fcntl.LOCK_EX)
-DOCS = Path(__file__).resolve().parents[2] / "docs"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
 variants = {v: label for v, label in LABELS.items() if v != "optimistic"}
 manifest_path = ROOT / "expanded_sweep_manifest.json"
 manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
@@ -26,8 +28,7 @@ sizes = manifest.get("sizes", [10000, 30000, 170057])
 lines = [
     "# Uncapped CPU-accounted scaling",
     "",
-    "Follow-up: [two serial repeat rounds at 2k–40k](benchmark-serial.md), "
-    "queued after this sweep completes.",
+    "Follow-up: [two serial repeat rounds at 2k–40k](benchmark-serial.md), queued after this sweep completes.",
     "",
     "Last refreshed: " + time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()) + ".",
     "",
@@ -484,7 +485,7 @@ if full_gpu and full_gpu.get("status") == "ok" and previous_gpu_path.exists():
         for key in keys
     )
     lines += ["", "Full GPU repeat vs the earlier completed 170k run: " + checks + "."]
-archive = Path("/mnt/nas/cancer_research/benchmark_2026-10-09/benchmark-cpuaccount-evidence.tar.gz")
+archive = cfg.archive_path("benchmark-cpuaccount-evidence.tar.gz")
 lines += [
     "",
     "Completed-sweep NAS archive target: `" + str(archive) + "`. "

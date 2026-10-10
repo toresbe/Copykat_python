@@ -3,9 +3,10 @@
 import json
 import os
 import subprocess
-from pathlib import Path
 
-ROOT = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
+import bench_config as cfg
+
+ROOT = cfg.ROOT
 code = r"""
 import sys
 sys.path.insert(0,sys.argv[1])
@@ -21,7 +22,7 @@ for variant in ["cpu_stack", "gpu"]:
     path = ROOT / "results" / ("writer_signed_zero_" + variant + ".tsv")
     env = dict(os.environ, MPLCONFIGDIR=str(ROOT / "scratch/matplotlib"), PYTHONDONTWRITEBYTECODE="1")
     subprocess.run(
-        ["/home/toresbe/envs/copykat_py_main/bin/python", "-c", code, str(ROOT / "snapshots" / variant), str(path)],
+        [cfg.PYTHON, "-c", code, str(ROOT / "snapshots" / variant), str(path)],
         env=env,
         check=True,
     )

@@ -7,9 +7,10 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import bench_config as cfg
 import numpy as np
 
-os.environ.setdefault("MPLCONFIGDIR", "/home/toresbe/cancer_research/accuracy_2026-10-10/scratch/matplotlib")
+os.environ.setdefault("MPLCONFIGDIR", str(cfg.ACCURACY_ROOT / "scratch/matplotlib"))
 import matplotlib
 
 matplotlib.use("Agg")
@@ -18,7 +19,7 @@ from accuracy_data import ROOT, save
 from accuracy_worker import metrics
 from scipy.cluster.hierarchy import dendrogram
 
-DOCS = Path(__file__).resolve().parents[2] / "docs"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
 lock = open(ROOT / "results/accuracy_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(lock, fcntl.LOCK_EX)
 assets = DOCS / "accuracy-assets"

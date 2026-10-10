@@ -286,7 +286,7 @@
       "median_shared_clade_height_delta": 0.27674722714388866
     },
     "interpretation": "material inference change, including the mouse genomic-order correction; WGS concordance supports corrected order on one sample, not universal biological accuracy",
-    "evidence_nas": "/mnt/nas/cancer_research/mm10_genomic_order_validation/proposal_vs_assembly_20261010"
+    "evidence_nas": "$COPYKAT_BENCH_ARCHIVE/mm10_genomic_order_validation/proposal_vs_assembly_20261010"
   },
   "benchmark_evidence": {
     "drivers": [
@@ -320,7 +320,7 @@
       "marker/arm aggregate gains include individual regressions; e.g. Wang2019_Brain/SF9259S -0.267 and Li2019_Skin/p26 -0.204 balanced-accuracy delta",
       "T989 mouse order changes 1,237 calls between aneuploid and diploid classes; single-sample WGS is not a guarantee"
     ],
-    "raw_evidence": "large raw benchmark/accuracy archives remain on /mnt/nas/cancer_research; compact scripts, reports, and selected figures are in repository"
+    "raw_evidence": "large raw benchmark/accuracy archives remain on $COPYKAT_BENCH_ARCHIVE; compact scripts, reports, and selected figures are in repository"
   },
   "validation": {
     "passed": [

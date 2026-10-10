@@ -5,9 +5,11 @@ import subprocess
 import time
 from pathlib import Path
 
-root = Path("/home/toresbe/cancer_research/accuracy_2026-10-10")
+import bench_config as cfg
+
+root = cfg.ACCURACY_ROOT
 report = Path(__file__).with_name("accuracy_report.py")
-python = "/home/toresbe/envs/copykat_py_gpu/bin/python"
+python = cfg.GPU_PYTHON
 while True:
     subprocess.run([python, str(report)], check=True)
     schedule = root / "results/accuracy_schedule.json"

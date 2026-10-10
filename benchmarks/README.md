@@ -33,11 +33,23 @@ Background: [`benchmark-proposal.md`](../docs/benchmark-proposal.md),
 
 ## Configuration
 
-Environment variables: `COPYKAT_REVIEW_ROOT` (working directory on fast
-storage), `COPYKAT_REVIEW_PYTHON`, `COPYKAT_REVIEW_GPU_PYTHON`,
-`COPYKAT_BENCH_SAMPLES`, `COPYKAT_BENCH_CACHE`, `COPYKAT_BENCH_XENIUM`.
+Nothing is hard-coded to a machine: every location defaults to a path under
+`~/copykat_bench` (see `bench_config.py`) and the current Python interpreter.
+Override with environment variables:
 
-Several scheduler/report scripts and the `.sh` sweeps still hard-code
-`/home/toresbe/...` interpreter, checkout and data paths (including the
-`benchmark_2026-10-09` and `accuracy_2026-10-10` working directories); edit
-them for another machine.
+| Variable | Meaning | Default |
+|---|---|---|
+| `COPYKAT_BENCH_HOME` | Base directory for the defaults below | `~/copykat_bench` |
+| `COPYKAT_BENCH_ROOT` | Performance working directory (snapshots, results, scratch) | `$HOME_/benchmark` |
+| `COPYKAT_BENCH_ACCURACY_ROOT` | Accuracy-study working directory | `$HOME_/accuracy` |
+| `COPYKAT_BENCH_DATA` | Input data (README samples, Xenium, 3CA, ScPCA, Tabula Sapiens) | `$HOME_/data` |
+| `COPYKAT_BENCH_SAMPLES` / `COPYKAT_BENCH_XENIUM` | README samples directory / Xenium `cell_feature_matrix.h5` | under `COPYKAT_BENCH_DATA` |
+| `COPYKAT_BENCH_PYTHON` | Interpreter for CPU runs, schedulers and reports | the current interpreter |
+| `COPYKAT_BENCH_GPU_PYTHON` | Interpreter for GPU runs | `COPYKAT_BENCH_PYTHON` |
+| `COPYKAT_BENCH_ARCHIVE` | Where evidence tarballs are written | `$HOME_/archive` |
+| `COPYKAT_BENCH_CACHE` | Parsed-matrix cache | `$HOME_/cache` |
+
+(`$HOME_` is `COPYKAT_BENCH_HOME`.) The shell sweeps run from the repository
+root regardless of where you call them. Reports are written to `docs/`.
+The reports in `docs/` refer to these locations by variable name; the original
+measurements were taken on one specific machine with specific datasets.

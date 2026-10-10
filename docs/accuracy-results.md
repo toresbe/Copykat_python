@@ -168,7 +168,7 @@ Non-anchor excludes the candidate’s actual reference cells from BOTH implement
 | two-per-study cap across split matrices | 12 |
 | two-per-study cap; fraction-extreme selection | 336 |
 
-Each exclusion, source path and selected sample is retained in `dataset_manifest.json`. Unlabelled Xenium, mouse data, unsupported/non-UMI formats and unmapped DNA/RNA profiles are outside this cell-call panel; no genomic-profile accuracy claim is made. The cell-type error tables, paired per-cell calls, reference membership, full-precision final CNA arm means and linkage matrices are under `/home/toresbe/cancer_research/accuracy_2026-10-10/results`. Compact diagnostics use original-precision calculations; the candidate’s own F3 precision policy remains unchanged. Calculation I/O and caches use the SSD; the final evidence archive uses the NAS.
+Each exclusion, source path and selected sample is retained in `dataset_manifest.json`. Unlabelled Xenium, mouse data, unsupported/non-UMI formats and unmapped DNA/RNA profiles are outside this cell-call panel; no genomic-profile accuracy claim is made. The cell-type error tables, paired per-cell calls, reference membership, full-precision final CNA arm means and linkage matrices are under `$COPYKAT_BENCH_ACCURACY_ROOT/results`. Compact diagnostics use original-precision calculations; the candidate’s own F3 precision policy remains unchanged. Calculation I/O and caches use the SSD; the final evidence archive uses the NAS.
 
 ![Study-level paired accuracy](accuracy-assets/study-accuracy.png)
 

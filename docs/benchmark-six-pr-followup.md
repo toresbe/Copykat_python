@@ -2,7 +2,7 @@
 
 The original five-PR snapshot omitted performance PR #5 (Arrow gene writer), because the first extraction targeted the stricter numerical/output-preserving subset. It was not the complete collection of open performance PRs. The original source snapshot and results are retained as **Earlier five-PR subset**. The newly prepared **Currently proposed changes (6 PRs)** filesystem snapshot includes upstream `ea1a15c` plus the exact heads of PRs #4–#9. The CLI exit-status fix #3 is not performance relevant and remains outside this integration. No Git refs or branches change.
 
-The six-PR patch order and SHA-256 hashes of every source file are recorded in `/home/toresbe/cancer_research/benchmark_2026-10-09/proposed6_snapshot_manifest.json`. Benchmark workers assert that imports resolve to their named snapshot and record the entry-module hash. Input sampling, eight requested physical cores, default algorithm parameters and output formatting policies match the calculation-focused performance study.
+The six-PR patch order and SHA-256 hashes of every source file are recorded in `$COPYKAT_BENCH_ROOT/proposed6_snapshot_manifest.json`. Benchmark workers assert that imports resolve to their named snapshot and record the entry-module hash. Input sampling, eight requested physical cores, default algorithm parameters and output formatting policies match the calculation-focused performance study.
 
 At 40k, main and the five-PR subset took 1266.89 and 1261.79 seconds in the first serial round. Shared DLM gains reduced smoothing from 9.27 to 1.95 seconds, while three unchanged clustering stages took about 1038 seconds. Gene-table output remained about 166 seconds. These stage proportions explain the small total improvement. Plot=false runs do not measure the heatmap PR; default runs may not use known-normal inputs or the discarded fallback-clustering path. The omitted Arrow writer is important for this workload and must be measured before making claims about all six PRs.
 
@@ -18,4 +18,4 @@ System RAM usage in the figure is process-tree RSS in decimal GB, excluding GPU 
 
 The report updater refreshes [the scaling report](benchmark-cpu.md) and [serial averages](benchmark-serial.md) as results arrive. GPU reruns update their points with fresh isolated observations; old raw observations are preserved. Before measurements exist, the GPU panel states that it is queued and the six-PR table rows show queued status. The existing 170k estimates refer to the labelled historical snapshots, not unmeasured six-PR performance.
 
-Working data and streaming I/O stay on the SSD. Final evidence is archived separately at `/mnt/nas/cancer_research/benchmark_2026-10-09/benchmark-six-pr-vram-evidence.tar.gz` with a SHA-256 sidecar, preserving earlier archives.
+Working data and streaming I/O stay on the SSD. Final evidence is archived separately at `$COPYKAT_BENCH_ARCHIVE/benchmark-six-pr-vram-evidence.tar.gz` with a SHA-256 sidecar, preserving earlier archives.

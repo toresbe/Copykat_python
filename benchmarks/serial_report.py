@@ -7,17 +7,19 @@ import statistics
 import time
 from pathlib import Path
 
-os.environ.setdefault("MPLCONFIGDIR", "/home/toresbe/cancer_research/benchmark_2026-10-09/scratch/matplotlib")
+import bench_config as cfg
+
+os.environ.setdefault("MPLCONFIGDIR", str(cfg.ROOT / "scratch/matplotlib"))
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from labels import LABELS, SCOPE
 
-ROOT = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
+ROOT = cfg.ROOT
 report_lock = open(ROOT / "results/serial8_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(report_lock, fcntl.LOCK_EX)
-DOCS = Path(__file__).resolve().parents[2] / "docs"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
 manifest_path = ROOT / "serial_sweep_manifest.json"
 if not manifest_path.exists():
     raise SystemExit(0)

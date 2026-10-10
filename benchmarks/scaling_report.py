@@ -7,11 +7,12 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import bench_config as cfg
 import matplotlib.pyplot as plt
 from labels import LABELS, SCOPE
 
-ROOT = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
-REPO = Path(__file__).resolve().parents[2]
+ROOT = cfg.ROOT
+REPO = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 ASSETS = REPO / "docs/benchmark-assets"
 ASSETS.mkdir(exist_ok=True)
@@ -285,8 +286,8 @@ lines += [
     "review scripts; calculation scratch is excluded.",
     "",
     "Use `prepare.py` to reconstruct snapshots from the recorded Git objects. "
-    "The benchmark driver accepts `COPYKAT_REVIEW_ROOT`, `COPYKAT_REVIEW_PYTHON`, "
-    "`COPYKAT_REVIEW_GPU_PYTHON` and `COPYKAT_BENCH_XENIUM`. "
+    "The benchmark driver accepts `COPYKAT_BENCH_ROOT`, `COPYKAT_BENCH_PYTHON`, "
+    "`COPYKAT_BENCH_GPU_PYTHON` and `COPYKAT_BENCH_XENIUM`. "
     "Stage T989 and the captured DLM input on your SSD before the corresponding follow-up runs. "
     "The shell sweeps document exact calls for this machine. Results include "
     "censored runs and their last completed stages. "

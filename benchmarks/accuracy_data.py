@@ -6,12 +6,13 @@ import json
 import re
 from pathlib import Path
 
+import bench_config as cfg
 import numpy as np
 import pandas as pd
 from scipy import sparse
 
-ROOT = Path("/home/toresbe/cancer_research/accuracy_2026-10-10")
-DATA = Path("/home/toresbe/cancer_research")
+ROOT = cfg.ACCURACY_ROOT
+DATA = cfg.DATA
 UNKNOWN = {"", "unknown", "unassigned", "undetermined", "nan", "na", "n/a", "?", "not assigned", "not available"}
 HEMATOLOGICAL = re.compile(r"leukem|lymphom|myelom|hematolog", re.I)
 

@@ -10,10 +10,11 @@ import tarfile
 import time
 from pathlib import Path
 
+import bench_config as cfg
 from benchmark import ROOT, save
 
 HERE = Path(__file__).resolve().parent
-DOCS = Path(__file__).resolve().parents[2] / "docs"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
 DRIVER = HERE / "benchmark.py"
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000]
 VARIANTS = ["main", "optimistic", "cpu_stack", "gpu"]
@@ -167,10 +168,8 @@ for job in jobs:
         pipeline_cpu_s=result.get("pipeline_cpu_s"),
     )
 event("complete")
-subprocess.run(
-    ["/home/toresbe/envs/copykat_py_main/bin/python", str(HERE / "serial_report.py")], check=True
-)
-archive = Path("/mnt/nas/cancer_research/benchmark_2026-10-09/benchmark-serial8-evidence.tar.gz")
+subprocess.run([cfg.PYTHON, str(HERE / "serial_report.py")], check=True)
+archive = cfg.archive_path("benchmark-serial8-evidence.tar.gz")
 if archive.exists():
     raise SystemExit("Refusing to overwrite " + str(archive))
 temporary = archive.with_suffix(".tmp")

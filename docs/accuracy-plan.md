@@ -35,10 +35,10 @@ Scientific figures include study comparisons, matched chromosome-arm heatmaps an
 
 - Coordinator: `copykat-bench-accuracy.service`, waits for the serial archive, survives client closure, adopts its own surviving workers on restart.
 - Report refresher: `copykat-accuracy-report.service`, low priority, stops after archiving.
-- SSD working directory: `/home/toresbe/cancer_research/accuracy_2026-10-10`.
+- SSD working directory: `$COPYKAT_BENCH_ACCURACY_ROOT`.
 - Frozen selection: `dataset_manifest.json`; protocol: `protocol.json`; results and schedule: `results/`.
 - Live report: [accuracy-results.md](accuracy-results.md).
-- Final NAS evidence: `/mnt/nas/cancer_research/accuracy_2026-10-10/accuracy-evidence.tar.gz`, with a SHA-256 sidecar. Existing final archives are preserved.
+- Final NAS evidence: `$COPYKAT_BENCH_ARCHIVE/accuracy-evidence.tar.gz`, with a SHA-256 sidecar. Existing final archives are preserved.
 
 Harness checks cover sparse column order and duplicate summation, gzip/source digests, axis mismatches, rejection of noninteger counts, categorical metadata, unknown labels, abstention penalties, healthy specificity and subset masks. They do not start inference or benchmark performance.
 

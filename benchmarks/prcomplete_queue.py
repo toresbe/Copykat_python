@@ -9,13 +9,14 @@ import tarfile
 import time
 from pathlib import Path
 
+import bench_config as cfg
 from benchmark import ROOT, save
 
 HERE = Path(__file__).resolve().parent
-DOCS = Path(__file__).resolve().parents[2] / "docs"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
 DRIVER = HERE / "benchmark.py"
-PYTHON = "/home/toresbe/envs/copykat_py_main/bin/python"
-ACCURACY = Path("/home/toresbe/cancer_research/accuracy_2026-10-10/results/accuracy_schedule.json")
+PYTHON = cfg.PYTHON
+ACCURACY = cfg.ACCURACY_ROOT / "results/accuracy_schedule.json"
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000, 80000, 120000, 170057]
 schedule = ROOT / "results/prcomplete_schedule.json"
 events = json.loads(schedule.read_text()) if schedule.exists() else []
@@ -130,7 +131,7 @@ for job in jobs:
     subprocess.run([PYTHON, "-B", str(HERE / "cpu_report.py")], check=True)
     subprocess.run([PYTHON, "-B", str(HERE / "serial_report.py")], check=True)
 event("complete")
-archive = Path("/mnt/nas/cancer_research/benchmark_2026-10-09/benchmark-six-pr-vram-evidence.tar.gz")
+archive = cfg.archive_path("benchmark-six-pr-vram-evidence.tar.gz")
 if not archive.exists():
     temp = archive.with_suffix(".tmp")
     with tarfile.open(temp, "w:gz") as tar:

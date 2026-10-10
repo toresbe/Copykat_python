@@ -87,17 +87,17 @@ an already existing unit):
 ```sh
 systemd-run --user --unit=copykat-bench-expanded-scheduler --collect \
   --property=Restart=on-failure --property=RestartSec=30 --property=KillMode=process \
-  --working-directory=/home/toresbe/Copykat_python \
-  /home/toresbe/miniforge3/bin/python -u /home/toresbe/Copykat_python/benchmarks/parallel.py
+  --working-directory=<repo> \
+  python -u <repo>/benchmarks/parallel.py
 systemd-run --user --unit=copykat-bench-expanded-report --collect \
   --property=Restart=on-failure --property=RestartSec=30 --property=Nice=19 \
-  --working-directory=/home/toresbe/Copykat_python \
-  /home/toresbe/miniforge3/bin/python -u /home/toresbe/Copykat_python/benchmarks/watch.py
+  --working-directory=<repo> \
+  python -u <repo>/benchmarks/watch.py
 ```
 
 The live report is `docs/benchmark-cpu.md`, refreshed every
 minute. Detailed progress and overlap events are under
-`/home/toresbe/cancer_research/benchmark_2026-10-09/results`.
+`$COPYKAT_BENCH_ROOT/results`.
 Calculation inputs, output hashing and joblib memory maps stay on the SSD.
 On completion, the coordinator archives snapshots, evidence, expanded
 manifest and review scripts to a separate checksum-protected NAS archive.

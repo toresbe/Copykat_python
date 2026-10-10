@@ -10,7 +10,9 @@ import tarfile
 import time
 from pathlib import Path
 
-ROOT = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
+import bench_config as cfg
+
+ROOT = cfg.ROOT
 DRIVER = Path(__file__).with_name("benchmark.py")
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000, 80000, 120000, 170057]
 LANES = [list(range(8)), list(range(8, 16))]  # 5950X: exclude SMT siblings 16..31
@@ -227,10 +229,8 @@ while pending or running:
         )
     time.sleep(5)
 event("complete", expanded=True)
-subprocess.run(
-    ["/home/toresbe/envs/copykat_py_main/bin/python", str(DRIVER.with_name("cpu_report.py"))], check=True
-)
-archive = Path("/mnt/nas/cancer_research/benchmark_2026-10-09/benchmark-cpuaccount-evidence.tar.gz")
+subprocess.run([cfg.PYTHON, str(DRIVER.with_name("cpu_report.py"))], check=True)
+archive = cfg.archive_path("benchmark-cpuaccount-evidence.tar.gz")
 archive.parent.mkdir(exist_ok=True)
 if archive.exists():
     raise SystemExit("Refusing to overwrite evidence archive: " + str(archive))

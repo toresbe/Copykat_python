@@ -6,19 +6,17 @@ barcodes.tsv.gz plus metadata.csv whose ``cell_type`` column marks
 Parsed matrices are cached as CSC .npz next to the benchmark cache dir.
 """
 
-import os
-from pathlib import Path
-
+import bench_config as cfg
 import numpy as np
 import pandas as pd
 from scipy import sparse
 from scipy.io import mmread
 
-SAMPLES_DIR = Path(os.getenv("COPYKAT_BENCH_SAMPLES", Path.home() / "cancer_research/copykat_readme_data/samples"))
-CACHE_DIR = Path(os.getenv("COPYKAT_BENCH_CACHE", Path.home() / ".cache/copykat_bench"))
+SAMPLES_DIR = cfg.SAMPLES_DIR
+CACHE_DIR = cfg.CACHE_DIR
 
 
-XENIUM_H5 = Path(os.getenv("COPYKAT_BENCH_XENIUM", Path.home() / "cancer_research/xenium/cell_feature_matrix.h5"))
+XENIUM_H5 = cfg.XENIUM_H5
 
 
 def _load_xenium(n_cells=None, seed=0):

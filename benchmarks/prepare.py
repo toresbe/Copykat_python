@@ -1,8 +1,8 @@
 """Reconstruct benchmark source snapshots without modifying Git refs.
 
-Usage: python benchmarks/prepare.py /SSD/review-directory
+Usage: python benchmarks/prepare.py [WORKDIR]   (default: COPYKAT_BENCH_ROOT)
 Requires existing local source commit objects. Use the same root as the
-benchmark driver (COPYKAT_REVIEW_ROOT) and configure its Python runtimes.
+benchmark driver (COPYKAT_BENCH_ROOT) and configure its Python runtimes.
 """
 
 import io
@@ -12,8 +12,10 @@ import sys
 import tarfile
 from pathlib import Path
 
-repo = Path(__file__).resolve().parents[2]
-root = Path(sys.argv[1])
+import bench_config as cfg
+
+repo = Path(__file__).resolve().parents[1]
+root = Path(sys.argv[1]) if len(sys.argv) > 1 else cfg.ROOT
 for directory in ["snapshots", "results", "scratch"]:
     (root / directory).mkdir(parents=True, exist_ok=True)
 refs = {

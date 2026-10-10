@@ -5,14 +5,16 @@ import subprocess
 import time
 from pathlib import Path
 
-root = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
+import bench_config as cfg
+
+root = cfg.ROOT
 report = Path(__file__).with_name("cpu_report.py")
 while True:
-    subprocess.run(["/home/toresbe/envs/copykat_py_main/bin/python", str(report)], check=True)
+    subprocess.run([cfg.PYTHON, str(report)], check=True)
     serial_manifest = root / "serial_sweep_manifest.json"
     if serial_manifest.exists():
         subprocess.run(
-            ["/home/toresbe/envs/copykat_py_main/bin/python", str(report.with_name("serial_report.py"))],
+            [cfg.PYTHON, str(report.with_name("serial_report.py"))],
             check=True,
         )
     schedule = json.loads((root / "results/parallel_cpuaccount_schedule.json").read_text())

@@ -1,19 +1,19 @@
 """Build the audit figures from measured results (no synthetic datasets)."""
 
 import json
-from pathlib import Path
 
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import bench_config as cfg
 import matplotlib.pyplot as plt
 from scipy.cluster.hierarchy import dendrogram, fcluster
 from sklearn.metrics import adjusted_rand_score
 
-ROOT = Path("/home/toresbe/cancer_research/benchmark_2026-10-09")
+ROOT = cfg.ROOT
 RESULTS = ROOT / "results"
-ASSETS = Path("/home/toresbe/Copykat_python/docs/benchmark-assets")
+ASSETS = cfg.DOCS / "benchmark-assets"
 ASSETS.mkdir(exist_ok=True)
 plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False})
 

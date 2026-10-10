@@ -245,10 +245,10 @@ experimental fork `main` diff.
 ## Benchmark execution and storage
 
 Fresh-run results and source manifests are at
-`/home/toresbe/cancer_research/benchmark_2026-10-09`. Inputs, source
+`$COPYKAT_BENCH_ROOT`. Inputs, source
 snapshots, calculation scratch and output hashing use this SSD. Existing
 archives were left in place; a compact `.tar.gz` evidence bundle is stored
-on `/mnt/nas/cancer_research` after measurements complete. No raw archives
+on `$COPYKAT_BENCH_ARCHIVE` after measurements complete. No raw archives
 are duplicated on the SSD for these calculations.
 
 The reproducible driver is `benchmarks/benchmark.py`; the serial
