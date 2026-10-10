@@ -816,10 +816,8 @@ def copykat(
                 pca_components=selected_pca_components,
                 prediction_override=arm_calls,
             )
-            com_pred = initial_call["predictions"]
-
             # Baseline adjustment: subtract diploid mean, then denoise
-            diploid_mask = com_pred == PredictionLabel.DIPLOID
+            diploid_mask = initial_call.predictions == PredictionLabel.DIPLOID
             if diploid_mask.sum() > 0:
                 mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
             else:
@@ -993,10 +991,8 @@ def copykat(
             n_cores=n_cores,
             pca_components=selected_pca_components,
         )
-        com_pred = initial_call["predictions"]
-
         # Baseline adjustment
-        diploid_mask = com_pred == PredictionLabel.DIPLOID
+        diploid_mask = initial_call.predictions == PredictionLabel.DIPLOID
         if diploid_mask.sum() > 0:
             mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
         else:
