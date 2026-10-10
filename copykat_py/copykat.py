@@ -12,9 +12,12 @@ Faithfully reimplements the R copykat() function workflow:
 9. Output files + heatmap
 """
 
+import io
 import time
 import os
 import json
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 from scipy.io import mmread
@@ -41,6 +44,7 @@ from copykat_py.baseline import (
     baseline_gmm,
     baseline_synthetic,
     _hierarchical_cluster,
+    _effective_threads,
     _fit_gmm_3component,
     get_last_cluster_info,
     resolve_adaptive_pca_components,
@@ -51,6 +55,8 @@ from copykat_py.data_loader import load_cyclegenes
 
 
 _WRITE_CHUNK_BYTES = 512 << 20
+_PARALLEL_WRITE_BYTES = 128 << 20
+_PARALLEL_WRITE_MIN_ROWS = 128
 
 
 def _frame_with_leading_columns(lead_df, values, value_columns):
@@ -81,7 +87,7 @@ def _adjust_baseline_inplace(mat, diploid_mask, chunk_elems=1 << 24):
     return mat
 
 
-def _write_cna_columns(path, lead_df, values, value_columns, round_floats=True):
+def _write_cna_columns(path, lead_df, values, value_columns, round_floats=True, n_cores=1):
     """Write leading annotations and a matrix as bounded Arrow TSV chunks."""
     lead_df = lead_df.reset_index(drop=True)
     value_columns = list(value_columns)
@@ -91,16 +97,49 @@ def _write_cna_columns(path, lead_df, values, value_columns, round_floats=True):
     value_type = pa.from_numpy_dtype(values.dtype)
     schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
     options = pa_csv.WriteOptions(delimiter="\t", quoting_style="none", quoting_header="none")
-    with open(path, "wb") as handle, pa_csv.CSVWriter(handle, schema, write_options=options) as writer:
-        for start in range(0, values.shape[0], chunk_rows):
+    def chunk_table(start, stop, block):
+        block = np.asfortranarray(block)
+        arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
+        arrays.extend(pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1]))
+        return pa.Table.from_arrays(arrays, schema=schema)
+
+    n_threads = _effective_threads(n_cores)
+    parallel_rows = _PARALLEL_WRITE_BYTES // (n_threads * row_bytes)
+    parallel = n_threads > 1 and parallel_rows >= _PARALLEL_WRITE_MIN_ROWS and values.shape[0] > parallel_rows
+    if parallel:
+        chunk_rows = parallel_rows
+
+        def format_chunk(start):
             stop = min(start + chunk_rows, values.shape[0])
             block = values[start:stop]
             if round_floats and np.issubdtype(block.dtype, np.floating):
                 block = np.round(block, 6)
-            block = np.asfortranarray(block)
-            arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
-            arrays.extend(pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1]))
-            writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
+            buffer = io.BytesIO()
+            chunk_options = pa_csv.WriteOptions(
+                delimiter="\t", quoting_style="none", quoting_header="none", include_header=(start == 0)
+            )
+            pa_csv.write_csv(chunk_table(start, stop, block), buffer, write_options=chunk_options)
+            return buffer.getvalue()
+
+        pending = deque()
+        with open(path, "wb") as handle, ThreadPoolExecutor(n_threads) as executor:
+            for start in range(0, values.shape[0], chunk_rows):
+                pending.append(executor.submit(format_chunk, start))
+                if len(pending) >= n_threads:
+                    handle.write(pending.popleft().result())
+            while pending:
+                handle.write(pending.popleft().result())
+    else:
+        with open(path, "wb") as handle, pa_csv.CSVWriter(handle, schema, write_options=options) as writer:
+            for start in range(0, values.shape[0], chunk_rows):
+                stop = min(start + chunk_rows, values.shape[0])
+                block = values[start:stop]
+                if round_floats and np.issubdtype(block.dtype, np.floating):
+                    block = np.round(block, 6)
+                writer.write_table(chunk_table(start, stop, block))
+    release_unused = getattr(pa.default_memory_pool(), "release_unused", None)
+    if release_unused is not None:
+        release_unused()
 
 
 def _meta_with_pred(meta_csv, pred_dict, sample_name):
@@ -769,7 +808,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     step_start = time.perf_counter()
 _write_cna_columns(
         f"{sample_name}CNA_raw_results_gene_by_cell.txt", gene_anno, results_com, cell_cols_seg,
-        round_floats=False,
+        round_floats=False, n_cores=n_cores,
     )
     _record_step(runtime_info, "write_gene_level_output", step_start, extra={"rows": int(results_com.shape[0]), "cols": int(len(anno_cols) + results_com.shape[1])})
     # =========================================================================
@@ -919,7 +958,7 @@ _write_cna_columns(
         
         # Save CNA results
 cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
-        _write_cna_columns(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg)
+        _write_cna_columns(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg, n_cores=n_cores)
         # Save clustering
         clustering_data = {"labels": labels_final if cell_line != "yes" else labels,
                           "Z": Z_final if cell_line != "yes" else Z}
@@ -1103,7 +1142,7 @@ cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
         res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
         
 cna_out = _frame_with_leading_columns(gene_anno, mat_adj, cell_cols_seg)
-        _write_cna_columns(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg)
+        _write_cna_columns(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg, n_cores=n_cores)
         clustering_data = {"labels": labels_final, "Z": Z_final}
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:
             pickle.dump(clustering_data, f)
