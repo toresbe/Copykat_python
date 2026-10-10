@@ -4,8 +4,9 @@ Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R 
 """
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
-from scipy.spatial.distance import pdist, squareform
+from scipy.spatial.distance import cdist, pdist, squareform
 from scipy.cluster.hierarchy import linkage, fcluster
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
@@ -103,7 +104,34 @@ def _reduce_for_clustering(data, max_components=64):
     return reducer.fit_transform(data), n_components
 
 
-def _ward_linkage(data):
+def _effective_threads(n_cores):
+    max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
+    return max(1, min(int(n_cores), max_cores))
+
+
+def _pdist_euclidean(data, n_cores=1, block_bytes=64 << 20):
+    """Build condensed Euclidean distances in row blocks when useful."""
+    n_samples = data.shape[0]
+    n_threads = _effective_threads(n_cores)
+    if n_threads == 1 or n_samples < 1000:
+        return pdist(data, metric="euclidean")
+    data = np.ascontiguousarray(data, dtype=np.float64)
+    dist = np.empty(n_samples * (n_samples - 1) // 2)
+    rows_per_block = max(1, block_bytes // (8 * n_samples))
+    row_start = np.concatenate([[0], np.cumsum(np.arange(n_samples - 1, 0, -1))])
+
+    def _block(lo):
+        hi = min(lo + rows_per_block, n_samples - 1)
+        block = cdist(data[lo:hi], data[lo:], metric="euclidean")
+        for i in range(lo, hi):
+            dist[row_start[i]:row_start[i] + n_samples - 1 - i] = block[i - lo, i - lo + 1:]
+
+    with ThreadPoolExecutor(n_threads) as executor:
+        list(executor.map(_block, range(0, n_samples - 1, rows_per_block)))
+    return dist
+
+
+def _ward_linkage(data, n_cores=1):
     """Exact Ward linkage of the rows of ``data`` (Euclidean), fastest engine that fits.
 
     Returns the linkage matrix and the engine name. Both fastcluster engines
@@ -112,10 +140,10 @@ def _ward_linkage(data):
     n_samples = data.shape[0]
     if HAS_FASTCLUSTER:
         if _ward_pdist_fits(n_samples):
-            dist = pdist(data, metric="euclidean")
+            dist = _pdist_euclidean(data, n_cores=n_cores)
             return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
         return fastcluster.linkage_vector(data, method="ward", metric="euclidean"), "fastcluster.linkage_vector"
-    return linkage(pdist(data, metric="euclidean"), method="ward"), "scipy.linkage"
+    return linkage(_pdist_euclidean(data, n_cores=n_cores), method="ward"), "scipy.linkage"
 
 
 def _hierarchical_cluster(
@@ -173,7 +201,7 @@ def _hierarchical_cluster(
     
     if not reduce:
         if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
-            Z, engine = _ward_linkage(data)
+            Z, engine = _ward_linkage(data, n_cores=n_cores)
             _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
         else:
             dist = pdist(data, metric=metric)
@@ -189,7 +217,7 @@ def _hierarchical_cluster(
     # Keep Ward + Euclidean on the vectorized full/PCA matrix path.
     if metric == "euclidean" and method.startswith("ward"):
         cluster_data, n_components = _reduce_for_clustering(data, max_components=pca_components)
-        Z, engine = _ward_linkage(cluster_data)
+        Z, engine = _ward_linkage(cluster_data, n_cores=n_cores)
         _LAST_CLUSTER_INFO["engine"] = engine
         if n_components is not None:
             _LAST_CLUSTER_INFO["approximate"] = True
