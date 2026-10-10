@@ -104,6 +104,22 @@ def _reduce_for_clustering(data, max_components=64):
     return reducer.fit_transform(data), n_components
 
 
+def _collapse_repeated_features(data, block_rows=4096):
+    """Merge runs of identical adjacent feature columns using sqrt(run length)."""
+    n_samples, n_features = data.shape
+    if n_features < 2:
+        return None
+    changes = np.zeros(n_features - 1, dtype=bool)
+    for lo in range(0, n_samples, block_rows):
+        block = data[lo:lo + block_rows]
+        changes |= np.any(block[:, 1:] != block[:, :-1], axis=0)
+    starts = np.concatenate([[0], np.flatnonzero(changes) + 1])
+    if len(starts) == n_features:
+        return None
+    run_lengths = np.diff(np.concatenate([starts, [n_features]]))
+    return data[:, starts].astype(np.float64) * np.sqrt(run_lengths)
+
+
 def _effective_threads(n_cores):
     max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
     return max(1, min(int(n_cores), max_cores))
@@ -201,8 +217,15 @@ def _hierarchical_cluster(
     
     if not reduce:
         if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
-            Z, engine = _ward_linkage(data, n_cores=n_cores)
-            _LAST_CLUSTER_INFO["engine"] = f"full_matrix+{engine}"
+            collapsed = _collapse_repeated_features(data)
+            if collapsed is None:
+                cluster_data = data
+                prefix = "full_matrix"
+            else:
+                cluster_data = collapsed
+                prefix = f"full_matrix+dedup{collapsed.shape[1]}"
+            Z, engine = _ward_linkage(cluster_data, n_cores=n_cores)
+            _LAST_CLUSTER_INFO["engine"] = f"{prefix}+{engine}"
         else:
             dist = pdist(data, metric=metric)
             if HAS_FASTCLUSTER:
