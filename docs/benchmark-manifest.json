@@ -2,7 +2,7 @@
   "schema_version": 2,
   "status": "assembled and published to fork; provenance tags, both proposal branches, ten semantic branches, and main verified remotely",
   "source_reference": {
-    "repository": "navinlabcode/Copykat_python",
+    "repository": "upstream",
     "branch": "main",
     "sha": "ea1a15c2457c0a69ee61ada07db57a0c9c726bf2"
   },
