@@ -513,8 +513,10 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
         Defaults to the second column when ``None``.
     backend_name : str
         "cpu" (reference), "gpu" (CUDA) or "gpu-compat" (CUDA compatibility
-        name). Both GPU modes retain the CPU PCA and silhouette sampling
-        policies in this execution-only branch. See ``copykat_py.backend``.
+        name). ``gpu`` enables the separately reviewed full-feature Ward,
+        all-cell silhouette, FP64 segment sums, and full-tree heatmap policy;
+        ``gpu-compat`` retains the CPU PCA and silhouette sampling choices.
+        See ``copykat_py.backend``.
 
     Returns
     -------

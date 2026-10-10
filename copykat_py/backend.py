@@ -35,4 +35,4 @@ def use_gpu():
 
 def exact_algorithms():
     """Whether the separately reviewed precision policy is enabled."""
-    return False
+    return _STATE["name"] == "gpu"

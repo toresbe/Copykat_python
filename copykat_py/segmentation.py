@@ -206,7 +206,21 @@ def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
     
     BR = sorted(BR)
     
-    # Segment accumulation policy remains the CPU implementation here.
+    # The optional GPU precision policy uses FP64 segment sums instead of
+    # subtracting adjacent FP32 cumulative sums.
+    if backend.exact_algorithms():
+        from copykat_py.gpu import ops as gpu_ops
+        _LAST_PAR_INFO.update({
+            "parallel": True,
+            "requested_cores": int(n_cores),
+            "effective_cores": 1,
+            "tasks": int(len(BR) - 1),
+            "chunk_size": 0,
+            "mc_samples": int(mc_samples),
+            "engine": "gpu.fp64_segment_mean",
+        })
+        return {"logCNA": gpu_ops.segment_log_means(fttmat, BR), "breaks": BR}
+
     norm_mat_all = np.exp(fttmat)
     cumsum = np.vstack([
         np.zeros((1, n_cells), dtype=norm_mat_all.dtype),
