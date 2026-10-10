@@ -19,6 +19,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from common import plain_log_axes
 from labels import LABELS, SCOPE
 
 ROOT = cfg.ROOT
@@ -144,6 +145,7 @@ for variant, label in labels.items():
 for ax, ylabel in zip(axes, ["Wall-clock time (seconds)"], strict=False):
     ax.set_xscale("log")
     ax.set_yscale("log")
+    plain_log_axes(ax)
     ax.set_xticks([2000, 5000, 10000, 20000, 40000], ["2k", "5k", "10k", "20k", "40k"])
     ax.set_xlabel("Input cells")
     ax.set_ylabel("")

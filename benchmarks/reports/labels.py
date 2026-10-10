@@ -14,12 +14,12 @@ LABELS = {
 }
 SCOPE = (
     "Currently proposed changes = pinned upstream main `ea1a15c` plus performance "
-    "PRs [#4](upstream PR #4), "
-    "[#5](upstream PR #5), "
-    "[#6](upstream PR #6), "
-    "[#7](upstream PR #7), "
-    "[#8](upstream PR #8) and "
-    "[#9](upstream PR #9). "
+    "PRs `#4`, "
+    "`#5`, "
+    "`#6`, "
+    "`#7`, "
+    "`#8` and "
+    "`#9`. "
     "The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep "
     "is underway after accuracy completed; current running and queued states appear in the "
     "CPU-accounted report. The original five-PR snapshot "

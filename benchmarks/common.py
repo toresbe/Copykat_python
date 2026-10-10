@@ -72,3 +72,17 @@ def tree_metrics(pid, observed):
 
     roots = [key for key in observed if observed[key]["parent_key"] not in observed]
     return rss, sum(total(key) for key in roots)
+
+
+def plain_log_axes(ax, y_subs=(1, 2, 5)):
+    """Label log axes with plain numbers (3000, not 3 x 10^3) at a fixed set of ticks.
+
+    Matplotlib's default log formatter switches between plain and scientific
+    labels depending on the data range, which makes figures look inconsistent.
+    """
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+
+    ax.yaxis.set_major_locator(LogLocator(base=10, subs=y_subs))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}" if v >= 1 else f"{v:g}"))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.xaxis.set_minor_formatter(NullFormatter())

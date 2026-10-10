@@ -266,7 +266,7 @@ if d.get("studies"):
     fig.tight_layout()
     fig.savefig(assets / "study-accuracy.png", dpi=200)
     plt.close(fig)
-    lines += ["", "![Study-level paired accuracy](accuracy-assets/study-accuracy.png)"]
+    FIGURE = ["![Study-level paired accuracy](accuracy-assets/study-accuracy.png)", ""]
 # Preset plus both extremes are descriptive figures, never used to change the method.
 mixed = [r for r in paired if r["paired_metrics"]["all_input"]["main"]["coverage_adjusted_balanced_recall"] is not None]
 selected = []
@@ -383,5 +383,7 @@ lines += [
 ]
 target = DOCS / "accuracy-results.md"
 temporary = target.with_suffix(".md.tmp")
+if "FIGURE" in globals():  # the study-level figure goes above the first results section
+    lines[lines.index("## Paired study-level results") : lines.index("## Paired study-level results")] = FIGURE
 temporary.write_text("\n".join(lines) + "\n")
 temporary.replace(target)

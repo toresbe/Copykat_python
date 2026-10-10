@@ -8,6 +8,8 @@ Author/OpenScPCA malignant labels are proxies for aneuploidy, not independent DN
 
 Selected 125 samples from 60 studies; 121 completed aligned pairs. The frozen selection takes up to two fraction-extreme eligible samples per 3CA study, all eligible converted ScPCA libraries, eligible README samples, and up to two healthy donors per count-valid h5ad. Whole selected samples are used, without cell subsampling. Selection uses only installed data/labels and frozen size/class criteria, never model results.
 
+![Study-level paired accuracy](accuracy-assets/study-accuracy.png)
+
 ## Paired study-level results
 
 Coverage-adjusted balanced recall = half of correct malignant calls / all labelled malignant input cells plus correct non-malignant calls / all labelled non-malignant input cells. Unknown labels are unscored; filtered/unclassified cells cannot inflate this measure. Conditional balanced accuracy and coverage are shown separately. Normal-only controls have specificity/false positives rather than balanced accuracy.
@@ -169,8 +171,6 @@ Non-anchor excludes the candidate’s actual reference cells from BOTH implement
 | two-per-study cap; fraction-extreme selection | 336 |
 
 Each exclusion, source path and selected sample is retained in `dataset_manifest.json`. Unlabelled Xenium, mouse data, unsupported/non-UMI formats and unmapped DNA/RNA profiles are outside this cell-call panel; no genomic-profile accuracy claim is made. The cell-type error tables, paired per-cell calls, reference membership, full-precision final CNA arm means and linkage matrices are under `$COPYKAT_BENCH_ACCURACY_ROOT/results`. Compact diagnostics use original-precision calculations; the candidate’s own F3 precision policy remains unchanged. Calculation I/O and caches use the SSD; the final evidence archive uses the NAS.
-
-![Study-level paired accuracy](accuracy-assets/study-accuracy.png)
 
 ![CNA/tree diagnostics: Wang2019_Brain / SF9259S](accuracy-assets/Wang2019_Brain_SF9259S_e3a839a452.png)
 
