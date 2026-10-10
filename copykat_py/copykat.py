@@ -851,8 +851,8 @@ def copykat(
                 prediction_override=arm_calls,
                 low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
             )
-            labels_final, Z_final = final_call_result["labels"], final_call_result["Z"]
-            com_preN = final_call_result["predictions"]
+            labels_final, Z_final = final_call_result.labels, final_call_result.linkage
+            com_preN = final_call_result.predictions
         else:
             labels_final, Z_final = cluster_cells(
                 mat_adj,
@@ -1024,8 +1024,8 @@ def copykat(
             pca_components=selected_pca_components,
             low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
         )
-        labels_final, Z_final = final_call_result["labels"], final_call_result["Z"]
-        com_preN = final_call_result["predictions"]
+        labels_final, Z_final = final_call_result.labels, final_call_result.linkage
+        com_preN = final_call_result.predictions
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}

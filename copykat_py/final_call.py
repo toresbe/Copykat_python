@@ -1,27 +1,27 @@
 """Final cell clustering, copy-number calls, and baseline adjustment."""
 
 from collections.abc import Sequence
-from typing import Any, TypedDict, cast
+from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
 
 from copykat_py import backend
-from copykat_py._types import (
-    BoolArray,
-    ClusterLabels,
-    FloatArray,
-    LinkageMatrix,
-    PredictionLabel,
-)
+from copykat_py._types import BoolArray, ClusterLabels, FloatArray, LinkageMatrix, PredictionLabel
 from copykat_py.baseline import FULL_CLUSTER_MAX_CELLS, _hierarchical_cluster
 
 
-class FinalCallResult(TypedDict):
-    """Ward clustering and the per-cell copy-number calls derived from it."""
+@dataclass(frozen=True, slots=True)
+class FinalCallResult:
+    """Ward clustering and the per-cell copy-number calls derived from it.
+
+    Labels are 1-based cluster IDs. Linkage is the Ward tree, and predictions
+    contains one diploid/aneuploid label per cell.
+    """
 
     labels: ClusterLabels
-    Z: LinkageMatrix
+    linkage: LinkageMatrix
     predictions: npt.NDArray[np.object_]
 
 
@@ -130,7 +130,7 @@ def cluster_and_call(
         low_confidence: Replace ordinary diploid/aneuploid labels with their low-confidence forms.
 
     Returns:
-        A ``FinalCallResult`` containing Ward ``labels``, linkage ``Z``, and per-cell
+        A ``FinalCallResult`` containing Ward ``labels``, the linkage tree, and per-cell
         ``predictions``. With known normals, clusters are scored by their normal-cell
         fraction. Otherwise, the cluster with the lower mean absolute CNA magnitude is
         called diploid. Overrides are applied after cluster scoring, then low-confidence
@@ -167,7 +167,7 @@ def cluster_and_call(
             PredictionLabel.ANEUPLOID_LOW_CONFIDENCE,
             predictions,
         )
-    return {"labels": labels, "Z": linkage, "predictions": predictions}
+    return FinalCallResult(labels=labels, linkage=linkage, predictions=predictions)
 
 
 def adjust_baseline_inplace(
