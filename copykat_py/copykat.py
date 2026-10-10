@@ -816,7 +816,6 @@ def copykat(
                 pca_components=selected_pca_components,
                 prediction_override=arm_calls,
             )
-            labels, Z = initial_call["labels"], initial_call["Z"]
             com_pred = initial_call["predictions"]
 
             # Baseline adjustment: subtract diploid mean, then denoise
@@ -860,8 +859,8 @@ def copykat(
                 n_cores=n_cores,
                 pca_components=selected_pca_components,
             )
-            labels, Z = clustering["labels"], clustering["Z"]
-            labels_final, Z_final = labels, Z
+            labels_final = clustering["labels"]
+            Z_final = clustering["Z"]
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
@@ -901,8 +900,8 @@ def copykat(
 
         # Save clustering
         clustering_data: ClusteringResult = {
-            "labels": labels_final if cell_line is not CellLineMode.YES else labels,
-            "Z": Z_final if cell_line is not CellLineMode.YES else Z,
+            "labels": labels_final,
+            "Z": Z_final,
         }
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:
             pickle.dump(clustering_data, f)
@@ -996,7 +995,6 @@ def copykat(
             n_cores=n_cores,
             pca_components=selected_pca_components,
         )
-        labels, Z = initial_call["labels"], initial_call["Z"]
         com_pred = initial_call["predictions"]
 
         # Baseline adjustment
