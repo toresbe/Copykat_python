@@ -1,5 +1,12 @@
 # Benchmarks
 
+> **Status: untested since the refactor.** These scripts were reorganised
+> (moved out of `docs/`, renamed, merged into one harness, and switched to
+> `bench_config.py` instead of hard-coded paths) without being run. They
+> compile and pass `ruff`, and `fetch_data.py 3ca` was tried on synthetic data,
+> but no benchmark has been run end to end since the change. Expect small
+> breakages (paths, imports, renamed variables) when you first run them.
+
 One harness for measuring CopyKAT-py speed and accuracy. Written reports and
 figures live in [`docs/`](../docs) (`benchmark-*` and `accuracy-*`); the scripts
 that produce them live here. Run everything from the repository root.
