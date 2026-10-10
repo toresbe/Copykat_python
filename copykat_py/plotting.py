@@ -52,19 +52,30 @@ logger = logging.getLogger(__name__)
 class AnnotatedHeatmapOptions:
     """Display and clustering options for an annotated CNA heatmap.
 
-    ``row_split_col=None`` uses the first metadata column, while an empty
-    string disables row splitting. Continuous metadata columns are inferred
-    unless explicitly named in ``continuous_meta``. When ``output_path`` is
-    omitted, a filename is derived from ``sample_name``.
+    The genome belongs to the data and is passed directly to
+    ``plot_heatmap_annotated`` rather than stored in these display options.
 
-    Attributes:
-        row_split_col: Metadata column used to group cells.
-        sample_name: Label shown in the figure title and default filename.
-        distance: Metric used to order cells within each group.
-        n_cores: Parallel threads passed to the clustering backend.
-        output_path: PNG destination, or ``None`` to use the default filename.
-        continuous_meta: Metadata columns to color as continuous values.
-        genome: Genome build used for chromosome labels.
+    Attributes
+    ----------
+    row_split_col : str or None, default None
+        Metadata column used to split and label rows. ``None`` uses the first
+        metadata column after the cell-name column; an empty string disables
+        row splitting and clusters all cells together.
+    sample_name : str, default ""
+        Label shown in the figure title and prefix for the default output
+        filename ``{sample_name}_copykat_annotated_heatmap.png``.
+    distance : DistanceMetric, default DistanceMetric.EUCLIDEAN
+        Distance metric used to order cells within each metadata group.
+        Normalized to a ``DistanceMetric`` when the options are constructed.
+    n_cores : int, default 1
+        Number of CPU workers requested for plotting-time clustering.
+    output_path : str or None, default None
+        PNG destination. ``None`` derives the filename from ``sample_name``.
+    continuous_meta : Sequence of str or None, default None
+        Metadata columns forced to use continuous color scales. Numeric
+        columns are also inferred automatically when they are not the row-split
+        column. ``None`` leaves inference unchanged. Supplied names are stored
+        as an immutable tuple; the row-split column must remain categorical.
     """
 
     row_split_col: str | None = None
@@ -73,11 +84,9 @@ class AnnotatedHeatmapOptions:
     n_cores: int = 1
     output_path: str | None = None
     continuous_meta: Sequence[str] | None = None
-    genome: Genome = Genome.HG20
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "distance", DistanceMetric(self.distance))
-        object.__setattr__(self, "genome", Genome(self.genome))
         if self.continuous_meta is not None:
             object.__setattr__(self, "continuous_meta", tuple(self.continuous_meta))
 
@@ -767,6 +776,8 @@ def plot_heatmap_annotated(
     chrom_info: npt.NDArray[Any],
     meta_csv: str,
     options: AnnotatedHeatmapOptions,
+    *,
+    genome: Genome = Genome.HG20,
 ) -> None:
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
@@ -791,7 +802,10 @@ def plot_heatmap_annotated(
         Cells present in *mat* but absent from the CSV are labelled "unknown".
     options : AnnotatedHeatmapOptions
         Display and clustering configuration for the plot.
+    genome : Genome
+        Genome build of the CNA data, used for chromosome labels.
     """
+    genome = Genome(genome)
     t0 = time.perf_counter()
     n_bins, n_cells = mat.shape
     logger.info(f"  plot_heatmap_annotated: {n_cells} cells × {n_bins} bins")
@@ -900,7 +914,7 @@ def plot_heatmap_annotated(
     )
     ax_chr.set_xticks([])
     ax_chr.set_yticks([])
-    _add_chr_labels(ax_chr, chrom_info, below=True, genome=options.genome)
+    _add_chr_labels(ax_chr, chrom_info, below=True, genome=genome)
     ax_chr.set_xlabel("Genomic position", fontsize=13, labelpad=22)
 
     # ── 7. Annotation sidebars ────────────────────────────────────────────
