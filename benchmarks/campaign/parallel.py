@@ -1,5 +1,10 @@
 """Restart-safe, RAM-gated expanded sweep; preserve every existing result/ref."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import fcntl
 import hashlib
 import json
@@ -13,7 +18,7 @@ from pathlib import Path
 import bench_config as cfg
 
 ROOT = cfg.ROOT
-DRIVER = Path(__file__).with_name("benchmark.py")
+DRIVER = cfg.HERE / "benchmark.py"
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000, 80000, 120000, 170057]
 LANES = [list(range(8)), list(range(8, 16))]  # 5950X: exclude SMT siblings 16..31
 lock = open(ROOT / "results/scheduler.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
@@ -90,7 +95,7 @@ class ExistingProcess:
         else:
             try:
                 command = Path(f"/proc/{self.pid}/cmdline").read_bytes().replace(b"\0", b" ").decode()
-                valid_driver = str(DRIVER) in command or str(DRIVER.with_name("recover.py")) in command
+                valid_driver = str(DRIVER) in command or str(Path(__file__).with_name("recover.py")) in command
                 if not valid_driver or self.name not in command:
                     self.returncode = -1
             except OSError:
@@ -229,7 +234,7 @@ while pending or running:
         )
     time.sleep(5)
 event("complete", expanded=True)
-subprocess.run([cfg.PYTHON, str(DRIVER.with_name("cpu_report.py"))], check=True)
+subprocess.run([cfg.PYTHON, str(cfg.HERE / "reports/cpu_report.py")], check=True)
 archive = cfg.archive_path("benchmark-cpuaccount-evidence.tar.gz")
 archive.parent.mkdir(exist_ok=True)
 if archive.exists():
@@ -244,9 +249,8 @@ with tarfile.open(temporary, "w:gz") as tar:
         "expanded_sweep_manifest.json",
     ]:
         tar.add(ROOT / relative, arcname=relative)
-    for path in DRIVER.parent.glob("*.py"):
-        tar.add(path, arcname="benchmarks/" + path.name)
-    for path in (DRIVER.parents[1] / "docs").glob("benchmark-*"):
+    tar.add(cfg.HERE, arcname="benchmarks", filter=lambda i: None if "__pycache__" in i.name else i)
+    for path in cfg.DOCS.glob("benchmark-*"):
         tar.add(path, arcname="docs/" + path.name)
 temporary.replace(archive)
 h = hashlib.sha256()

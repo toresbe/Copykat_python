@@ -5,6 +5,11 @@ Requires existing local source commit objects. Use the same root as the
 benchmark driver (COPYKAT_BENCH_ROOT) and configure its Python runtimes.
 """
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import io
 import json
 import subprocess
@@ -14,7 +19,7 @@ from pathlib import Path
 
 import bench_config as cfg
 
-repo = Path(__file__).resolve().parents[1]
+repo = Path(__file__).resolve().parents[2]
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else cfg.ROOT
 for directory in ["snapshots", "results", "scratch"]:
     (root / directory).mkdir(parents=True, exist_ok=True)

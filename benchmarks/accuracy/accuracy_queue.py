@@ -1,5 +1,10 @@
 """Accuracy-only parallel study, gated after both performance phases finish."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import contextlib
 import fcntl
 import hashlib
@@ -17,7 +22,7 @@ from accuracy_data import ROOT, discover, save
 
 PERF = cfg.ROOT
 HERE = Path(__file__).resolve().parent
-DOCS = Path(__file__).resolve().parents[1] / "docs"
+DOCS = Path(__file__).resolve().parents[2] / "docs"
 WORKER = HERE / "accuracy_worker.py"
 PYTHON = cfg.GPU_PYTHON  # same dependencies for both implementations
 schedule = ROOT / "results/accuracy_schedule.json"
@@ -334,8 +339,7 @@ if not archive.exists():
     with tarfile.open(temporary, "w:gz") as tar:
         for relative in ["results", "snapshots", "protocol.json", "dataset_manifest.json"]:
             tar.add(ROOT / relative, arcname=relative)
-        for source in HERE.glob("accuracy_*.py"):
-            tar.add(source, arcname="benchmarks/" + source.name)
+        tar.add(cfg.HERE, arcname="benchmarks", filter=lambda i: None if "__pycache__" in i.name else i)
         for source in DOCS.glob("accuracy-*"):
             tar.add(source, arcname="docs/" + source.name)
     temporary.replace(archive)

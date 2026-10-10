@@ -1,5 +1,10 @@
 """Two serial repeat rounds, gated on completion of the existing expanded sweep."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import fcntl
 import hashlib
 import json
@@ -11,11 +16,10 @@ import time
 from pathlib import Path
 
 import bench_config as cfg
-from benchmark import ROOT, save
+from common import ROOT, save
 
-HERE = Path(__file__).resolve().parent
-DOCS = Path(__file__).resolve().parents[1] / "docs"
-DRIVER = HERE / "benchmark.py"
+DOCS = Path(__file__).resolve().parents[2] / "docs"
+DRIVER = cfg.HERE / "benchmark.py"
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000]
 VARIANTS = ["main", "optimistic", "cpu_stack", "gpu"]
 jobs = [
@@ -168,7 +172,7 @@ for job in jobs:
         pipeline_cpu_s=result.get("pipeline_cpu_s"),
     )
 event("complete")
-subprocess.run([cfg.PYTHON, str(HERE / "serial_report.py")], check=True)
+subprocess.run([cfg.PYTHON, str(cfg.HERE / "reports/serial_report.py")], check=True)
 archive = cfg.archive_path("benchmark-serial8-evidence.tar.gz")
 if archive.exists():
     raise SystemExit("Refusing to overwrite " + str(archive))
@@ -183,8 +187,7 @@ with tarfile.open(temporary, "w:gz") as tar:
         "serial_sweep_manifest.json",
     ]:
         tar.add(ROOT / relative, arcname=relative)
-    for path in HERE.glob("*.py"):
-        tar.add(path, arcname="benchmarks/" + path.name)
+    tar.add(cfg.HERE, arcname="benchmarks", filter=lambda i: None if "__pycache__" in i.name else i)
     for path in DOCS.glob("benchmark-*"):
         tar.add(path, arcname="docs/" + path.name)
 temporary.replace(archive)

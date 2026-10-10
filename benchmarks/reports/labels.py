@@ -1,5 +1,10 @@
 """Display names and exact scope of the frozen benchmark snapshots."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 LABELS = {
     "main": "Upstream main",
     "optimistic": "Earlier five-PR subset",

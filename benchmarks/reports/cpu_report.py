@@ -1,5 +1,10 @@
 """Report the uncapped CPU-accounted sweep; partial observations are not timings."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import fcntl
 import json
 import os
@@ -20,7 +25,7 @@ from projection import project
 ROOT = cfg.ROOT
 report_lock = open(ROOT / "results/cpuaccount_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(report_lock, fcntl.LOCK_EX)
-DOCS = Path(__file__).resolve().parents[1] / "docs"
+DOCS = Path(__file__).resolve().parents[2] / "docs"
 variants = {v: label for v, label in LABELS.items() if v != "optimistic"}
 manifest_path = ROOT / "expanded_sweep_manifest.json"
 manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}

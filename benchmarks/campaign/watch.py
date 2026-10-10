@@ -1,20 +1,24 @@
 """Keep the visible report fresh while the existing benchmark scheduler runs."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import json
 import subprocess
 import time
-from pathlib import Path
 
 import bench_config as cfg
 
 root = cfg.ROOT
-report = Path(__file__).with_name("cpu_report.py")
+report = cfg.HERE / "reports/cpu_report.py"
 while True:
     subprocess.run([cfg.PYTHON, str(report)], check=True)
     serial_manifest = root / "serial_sweep_manifest.json"
     if serial_manifest.exists():
         subprocess.run(
-            [cfg.PYTHON, str(report.with_name("serial_report.py"))],
+            [cfg.PYTHON, str(cfg.HERE / "reports/serial_report.py")],
             check=True,
         )
     schedule = json.loads((root / "results/parallel_cpuaccount_schedule.json").read_text())

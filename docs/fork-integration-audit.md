@@ -57,7 +57,7 @@ input hashes, settings, and limitations are in
 
 Reproduction and evidence files are committed in this package:
 
-- Benchmark drivers and utilities (in `benchmarks/`): `benchmark.py`,
+- Benchmark drivers and utilities (under `benchmarks/`, in `campaign/`, `reports/`, `diagnostics/` and `accuracy/`): `benchmark.py`,
   `serial.py`, `writer_edges.py`,
   `parallel.py`, `gpu_memory.py`, and the other
   `*.py` scripts listed in the manifest.

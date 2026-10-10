@@ -1,5 +1,10 @@
 """Serial six-PR and isolated GPU-memory follow-up after accuracy finishes."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import fcntl
 import hashlib
 import json
@@ -10,11 +15,10 @@ import time
 from pathlib import Path
 
 import bench_config as cfg
-from benchmark import ROOT, save
+from common import ROOT, save
 
-HERE = Path(__file__).resolve().parent
-DOCS = Path(__file__).resolve().parents[1] / "docs"
-DRIVER = HERE / "benchmark.py"
+DOCS = Path(__file__).resolve().parents[2] / "docs"
+DRIVER = cfg.HERE / "benchmark.py"
 PYTHON = cfg.PYTHON
 ACCURACY = cfg.ACCURACY_ROOT / "results/accuracy_schedule.json"
 SIZES = [2000, 5000, 10000, 15000, 20000, 25000, 30000, 40000, 80000, 120000, 170057]
@@ -128,8 +132,8 @@ for job in jobs:
         raise RuntimeError("Supervisor exited without output " + job["name"])
     z = json.loads(output.read_text())
     event("finished", name=job["name"], status=z["status"])
-    subprocess.run([PYTHON, "-B", str(HERE / "cpu_report.py")], check=True)
-    subprocess.run([PYTHON, "-B", str(HERE / "serial_report.py")], check=True)
+    subprocess.run([PYTHON, "-B", str(cfg.HERE / "reports/cpu_report.py")], check=True)
+    subprocess.run([PYTHON, "-B", str(cfg.HERE / "reports/serial_report.py")], check=True)
 event("complete")
 archive = cfg.archive_path("benchmark-six-pr-vram-evidence.tar.gz")
 if not archive.exists():
@@ -144,8 +148,7 @@ if not archive.exists():
             "input_manifest.json",
         ]:
             tar.add(ROOT / name, arcname=name)
-        for p in HERE.glob("*.py"):
-            tar.add(p, arcname="benchmarks/" + p.name)
+        tar.add(cfg.HERE, arcname="benchmarks", filter=lambda i: None if "__pycache__" in i.name else i)
         for p in DOCS.glob("benchmark-*"):
             tar.add(p, arcname="docs/" + p.name)
     temp.replace(archive)

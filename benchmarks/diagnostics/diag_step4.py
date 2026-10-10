@@ -6,12 +6,17 @@ and the fraction of truly malignant cells. Usage:
     python diag_step4.py SAMPLE BACKEND
 """
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import os
 import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import contextlib
 import importlib
 

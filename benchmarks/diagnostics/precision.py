@@ -18,6 +18,11 @@ mc_vs_exact    Breakpoints that differ between the MC KS test and the exact
 Usage: python precision.py OUT.jsonl [SAMPLE ...]
 """
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import importlib
 import json
 import os
@@ -25,7 +30,7 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import itertools
 
 from datasets import load_sample, sample_names

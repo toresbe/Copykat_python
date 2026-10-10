@@ -252,8 +252,8 @@ on `$COPYKAT_BENCH_ARCHIVE` after measurements complete. No raw archives
 are duplicated on the SSD for these calculations.
 
 The reproducible driver is `benchmarks/benchmark.py`; the serial
-sweeps are `benchmarks/sweep.sh` and
-`benchmarks/followup.sh`. It checks the imported source path,
+sweeps are `benchmarks/campaign/sweep.sh` and
+`benchmarks/campaign/followup.sh`. It checks the imported source path,
 preserves original-dtype hashes, monitors process-tree RSS, records
 progress and stops at time/memory/SSD guards. It removes only its own
 scratch output directories after hashing. Xenium subsets are nested,

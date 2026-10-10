@@ -88,11 +88,11 @@ an already existing unit):
 systemd-run --user --unit=copykat-bench-expanded-scheduler --collect \
   --property=Restart=on-failure --property=RestartSec=30 --property=KillMode=process \
   --working-directory=<repo> \
-  python -u <repo>/benchmarks/parallel.py
+  python -u <repo>/benchmarks/campaign/parallel.py
 systemd-run --user --unit=copykat-bench-expanded-report --collect \
   --property=Restart=on-failure --property=RestartSec=30 --property=Nice=19 \
   --working-directory=<repo> \
-  python -u <repo>/benchmarks/watch.py
+  python -u <repo>/benchmarks/campaign/watch.py
 ```
 
 The live report is `docs/benchmark-cpu.md`, refreshed every

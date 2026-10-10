@@ -1,5 +1,10 @@
 """Summarize completed and censored audit runs without discarding failures."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import json
 import statistics
 from pathlib import Path
@@ -12,7 +17,7 @@ import matplotlib.pyplot as plt
 from labels import LABELS, SCOPE
 
 ROOT = cfg.ROOT
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "results"
 ASSETS = REPO / "docs/benchmark-assets"
 ASSETS.mkdir(exist_ok=True)
@@ -285,7 +290,7 @@ lines += [
     "The NAS archive contains those small evidence files, source snapshots and "
     "review scripts; calculation scratch is excluded.",
     "",
-    "Use `prepare.py` to reconstruct snapshots from the recorded Git objects. "
+    "Use `benchmarks/campaign/prepare.py` to reconstruct snapshots from the recorded Git objects. "
     "The benchmark driver accepts `COPYKAT_BENCH_ROOT`, `COPYKAT_BENCH_PYTHON`, "
     "`COPYKAT_BENCH_GPU_PYTHON` and `COPYKAT_BENCH_XENIUM`. "
     "Stage T989 and the captured DLM input on your SSD before the corresponding follow-up runs. "

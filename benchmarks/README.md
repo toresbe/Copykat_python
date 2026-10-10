@@ -1,8 +1,8 @@
 # Benchmarks
 
 > **Status: untested since the refactor.** These scripts were reorganised
-> (moved out of `docs/`, renamed, merged into one harness, and switched to
-> `bench_config.py` instead of hard-coded paths) without being run. They
+> (moved out of `docs/`, renamed, merged into one harness, split into
+> subdirectories, and switched to `bench_config.py` instead of hard-coded paths) without being run. They
 > compile and pass `ruff`, and `fetch_data.py 3ca` was tried on synthetic data,
 > but no benchmark has been run end to end since the change. Expect small
 > breakages (paths, imports, renamed variables) when you first run them.
@@ -35,18 +35,36 @@ BENCH_REF=main benchmarks/run.sh xenium10000 --plot --null-outputs
 not included) into `$COPYKAT_BENCH_ROOT/snapshots/` and runs `benchmark.py`
 on it; results are written to `$COPYKAT_BENCH_ROOT/results/<name>.json`. Extra
 arguments pass through to `benchmark.py` (`--backend gpu`, `--timeout`, ...).
-Unlike `prepare.py`, it needs no pinned historical commits.
+Unlike `campaign/prepare.py`, it needs no pinned historical commits.
 
-## Scripts
+## Layout
+
+```
+benchmarks/
+  run.sh                 benchmark the current checkout on one sample
+  fetch_data.py          check for / install input data
+  benchmark.py           the core driver (one run per call)
+  bench_config.py        locations and interpreters (env-var overridable)
+  datasets.py common.py gpu_memory.py     shared helpers
+  diagnostics/           precision.py, diag_step4.py, writer_edges.py
+  campaign/              the multi-run scheduling used for the published measurements
+  reports/               scripts that regenerate the reports and figures in docs/
+  accuracy/              the 125-sample accuracy study
+```
+
+Scripts are run by path (`python benchmarks/campaign/serial.py`); each one in
+a subdirectory adds `benchmarks/` to `sys.path` so it can import the shared
+helpers. Run everything from the repository root. Start with `run.sh`; the
+rest is for reproducing the full campaign.
 
 | Group | Scripts | Report in `docs/` |
 |---|---|---|
-| Data | `datasets.py` (sample loaders and scoring), `prepare.py` (rebuild snapshots from recorded Git objects), `labels.py` | |
-| Driver | `benchmark.py` (one run/variant, with provenance, timeouts, resource sampling), `recover.py` | |
-| Scheduling | `serial.py`, `parallel.py`, `prcomplete_queue.py`, `sweep.sh`, `followup.sh`, `watch.py`, `prcomplete_watch.py` | |
-| Reports | `scaling_report.py`, `cpu_report.py`, `serial_report.py`, `figures.py`, `projection.py` | [`benchmark-scaling.md`](../docs/benchmark-scaling.md), [`benchmark-cpu.md`](../docs/benchmark-cpu.md), [`benchmark-serial.md`](../docs/benchmark-serial.md) |
-| Diagnostics | `gpu_memory.py`, `writer_edges.py`, `precision.py` (CPU-path approximations vs. exact computations), `diag_step4.py` (normal-anchor selection) | |
-| Accuracy study | `accuracy_data.py`, `accuracy_stage.py`, `accuracy_worker.py`, `accuracy_queue.py`, `accuracy_check.py`, `accuracy_watch.py`, `accuracy_report.py` | [`accuracy-results.md`](../docs/accuracy-results.md), [`accuracy-plan.md`](../docs/accuracy-plan.md) |
+| Data | `datasets.py` (sample loaders and scoring), `campaign/prepare.py` (rebuild snapshots from recorded Git objects), `reports/labels.py` | |
+| Driver | `benchmark.py` (one run/variant, with provenance, timeouts, resource sampling), `campaign/recover.py` | |
+| Scheduling (`campaign/`) | `serial.py`, `parallel.py`, `prcomplete_queue.py`, `sweep.sh`, `followup.sh`, `watch.py`, `prcomplete_watch.py` | |
+| Reports (`reports/`) | `scaling_report.py`, `cpu_report.py`, `serial_report.py`, `figures.py`, `projection.py` | [`benchmark-scaling.md`](../docs/benchmark-scaling.md), [`benchmark-cpu.md`](../docs/benchmark-cpu.md), [`benchmark-serial.md`](../docs/benchmark-serial.md) |
+| Diagnostics (`diagnostics/`) | `precision.py` (CPU-path approximations vs. exact computations), `diag_step4.py` (normal-anchor selection), `writer_edges.py`; `gpu_memory.py` (NVML sampling, used by the driver) | |
+| Accuracy study (`accuracy/`) | `accuracy_data.py`, `accuracy_stage.py`, `accuracy_worker.py`, `accuracy_queue.py`, `accuracy_check.py`, `accuracy_watch.py`, `accuracy_report.py` | [`accuracy-results.md`](../docs/accuracy-results.md), [`accuracy-plan.md`](../docs/accuracy-plan.md) |
 
 Background: [`benchmark-proposal.md`](../docs/benchmark-proposal.md),
 [`benchmark-expanded-plan.md`](../docs/benchmark-expanded-plan.md),

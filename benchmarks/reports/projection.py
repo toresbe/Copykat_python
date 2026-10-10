@@ -1,5 +1,10 @@
 """Auditable conditional 170k projections; censored totals never enter fits."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import numpy as np
 
 CLUSTER_STEPS = {"baseline_estimation", "baseline_adjustment", "final_prediction"}

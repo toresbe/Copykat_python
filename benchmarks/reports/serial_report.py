@@ -1,5 +1,10 @@
 """Serial-repeat averages, spread and repeat consistency; no pooled parallel data."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import fcntl
 import json
 import os
@@ -19,7 +24,7 @@ from labels import LABELS, SCOPE
 ROOT = cfg.ROOT
 report_lock = open(ROOT / "results/serial8_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(report_lock, fcntl.LOCK_EX)
-DOCS = Path(__file__).resolve().parents[1] / "docs"
+DOCS = Path(__file__).resolve().parents[2] / "docs"
 manifest_path = ROOT / "serial_sweep_manifest.json"
 if not manifest_path.exists():
     raise SystemExit(0)

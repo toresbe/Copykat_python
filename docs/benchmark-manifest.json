@@ -291,15 +291,15 @@
   "benchmark_evidence": {
     "drivers": [
       "benchmarks/benchmark.py",
-      "benchmarks/serial.py",
-      "benchmarks/writer_edges.py",
-      "benchmarks/parallel.py",
+      "benchmarks/campaign/serial.py",
+      "benchmarks/diagnostics/writer_edges.py",
+      "benchmarks/campaign/parallel.py",
       "benchmarks/gpu_memory.py",
-      "benchmarks/cpu_report.py",
-      "benchmarks/serial_report.py",
+      "benchmarks/reports/cpu_report.py",
+      "benchmarks/reports/serial_report.py",
       "benchmarks/datasets.py",
-      "benchmarks/precision.py",
-      "benchmarks/sweep.sh"
+      "benchmarks/diagnostics/precision.py",
+      "benchmarks/campaign/sweep.sh"
     ],
     "reports": [
       "docs/benchmark-scaling.md",

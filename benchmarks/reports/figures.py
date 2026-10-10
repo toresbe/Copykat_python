@@ -1,5 +1,10 @@
 """Build the audit figures from measured results (no synthetic datasets)."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import json
 
 import matplotlib

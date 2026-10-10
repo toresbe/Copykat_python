@@ -1,5 +1,10 @@
 """Recover supervision of an existing scope without restarting its calculation."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import argparse
 import fcntl
 import json
@@ -10,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from benchmark import ROOT, save, tree_metrics
+from common import ROOT, save, tree_metrics
 
 p = argparse.ArgumentParser()
 p.add_argument("--name", required=True)

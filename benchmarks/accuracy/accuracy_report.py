@@ -1,5 +1,10 @@
 """Paired accuracy, coverage, study bootstrap and scientific diagnostics only."""
 
+import pathlib as _pathlib
+import sys as _sys
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parents[1]))
+
 import fcntl
 import json
 import os
@@ -19,7 +24,7 @@ from accuracy_data import ROOT, save
 from accuracy_worker import metrics
 from scipy.cluster.hierarchy import dendrogram
 
-DOCS = Path(__file__).resolve().parents[1] / "docs"
+DOCS = Path(__file__).resolve().parents[2] / "docs"
 lock = open(ROOT / "results/accuracy_report.lock", "w")  # noqa: SIM115 - process-lifetime flock; descriptor must stay open until exit.
 fcntl.flock(lock, fcntl.LOCK_EX)
 assets = DOCS / "accuracy-assets"
