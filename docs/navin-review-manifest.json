@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "status": "assembled_locally_cpu_validated_pending_fork_push; GPU runtime unavailable in this environment",
+  "status": "assembly and audit package committed locally; fork-only pushes pending",
   "source_reference": {
     "repository": "navinlabcode/Copykat_python",
     "branch": "main",
@@ -248,7 +248,8 @@
       "38fa1325655786616a851c883ca23913ff3ad576",
       "220b5468fe4e5d50ad0a38075c0f6c44b3e06e5a"
     ],
-    "working_tree": "source integration committed at 0197b84; audit package is being committed"
+    "working_tree": "clean after audit package commit; local main will be advanced fast-forward to assembly/main before push",
+    "audit_package_commit": "8683dcdcb74ad2d0bfd6cf7b5b82c6690b0a8132"
   },
   "fresh_integration_comparison": {
     "dataset": "T989 mouse tumor raw scRNA counts",
