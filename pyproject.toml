@@ -8,33 +8,74 @@ version = "1.0.0"
 description = "Python implementation of CopyKAT: Copynumber Karyotyping of Aneuploid Tumors from scRNA-seq data"
 readme = "README.md"
 license = {text = "GPL-2.0"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "numpy>=1.21",
-    "scipy>=1.7",
-    "pandas>=1.3",
-    "anndata>=0.10",
-    "scikit-learn>=1.0",
-    "matplotlib>=3.5",
-    "seaborn>=0.11",
-    "joblib>=1.1",
-    "tqdm>=4.62",
-    "numba>=0.56",
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "pandas>=2.2.2",
+    "anndata>=0.10.8",
+    "scikit-learn>=1.4.2",
+    "matplotlib>=3.8.4",
+    "joblib>=1.2",
+    "numba>=0.60",
     "fastcluster>=1.3.0",
     "pyarrow>=22",
+    "threadpoolctl>=3.1",
 ]
 
 [project.optional-dependencies]
 large-datasets = ["fastcluster>=1.3.0"]
 all = ["fastcluster>=1.3.0"]
+dev = ["ruff>=0.6", "mypy>=1.10", "pandas-stubs", "scipy-stubs"]
 
 [project.scripts]
 copykat-py = "copykat_py.cli:main"
 copykat_matrix = "copykat_py.cli:matrix_main"
 copykat-py-plot = "copykat_py.cli:plot_main"
+copykat-py-report = "copykat_py.reporting.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["copykat_py*"]
 
 [tool.setuptools.package-data]
 "copykat_py" = ["data/*.csv", "data/*.mtx", "data/*.txt"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["copykat_py/data"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # flake8-bugbear
+    "UP",      # pyupgrade
+    "SIM",     # flake8-simplify
+    "C4",      # flake8-comprehensions
+    "NPY",     # numpy-specific rules
+    "RUF",     # ruff-specific rules
+]
+ignore = [
+    "SIM108",  # if/else blocks are often clearer than the ternary it suggests
+]
+# Docstrings and messages use "×" for matrix dimensions ("cells × genes").
+allowed-confusables = ["×"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["copykat_py"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["copykat_py"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[[tool.mypy.overrides]]
+# No type information published for these.
+module = ["fastcluster", "numba", "numba.*", "sklearn", "sklearn.*", "joblib", "threadpoolctl", "anndata", "pyarrow", "pyarrow.*"]
+ignore_missing_imports = true

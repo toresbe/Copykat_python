@@ -1,36 +1,46 @@
 """Command line interfaces for CopyKAT-Py wrappers."""
 
 import argparse
+import logging
 import os
-from pathlib import Path
 import sys
 import time
+from collections.abc import Iterable
+from contextlib import ExitStack
+from pathlib import Path
+from typing import Any, TextIO, cast
 
 import numpy as np
 import pandas as pd
 from scipy import sparse as sp
 from scipy.io import mmread
 
+from copykat_py._logging import default_progress_output, log_progress_to, with_default_progress_output
+from copykat_py._types import CopyKATResult, RawInput, RawMatrix, SparseMatrix
+from copykat_py.genomic_coordinates import split_cna_table
+
+logger = logging.getLogger(__name__)
+
 
 class TeeStream:
     """Write stream output to both terminal and file."""
 
-    def __init__(self, stream, logfile_handle):
+    def __init__(self, stream: TextIO, logfile_handle: TextIO) -> None:
         self.stream = stream
         self.logfile_handle = logfile_handle
 
-    def write(self, data):
+    def write(self, data: str) -> None:
         self.stream.write(data)
         self.logfile_handle.write(data)
         if "\n" in data or "\r" in data:
             self.flush()
 
-    def flush(self):
+    def flush(self) -> None:
         self.stream.flush()
         self.logfile_handle.flush()
 
 
-def _add_common_copykat_args(parser):
+def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
     """Attach CopyKAT runtime arguments shared by matrix and Python wrappers."""
     parser.add_argument(
         "--id-type",
@@ -130,8 +140,7 @@ def _add_common_copykat_args(parser):
         "--pca-components",
         type=int,
         default=None,
-        help="[optional] Adaptive PCA component cap for large clustering steps "
-             "(default: automatic by cell count)",
+        help="[optional] Adaptive PCA component cap for large clustering steps (default: automatic by cell count)",
     )
     parser.add_argument(
         "--output-dir",
@@ -141,26 +150,26 @@ def _add_common_copykat_args(parser):
     )
 
 
-def _add_matrix_metadata_args(parser):
+def _add_matrix_metadata_args(parser: argparse.ArgumentParser) -> None:
     """Attach metadata CSV arguments used by the matrix-style wrappers."""
     parser.add_argument(
         "--meta",
         default=None,
         metavar="CSV",
         help="[optional] Per-cell annotation CSV for the annotated heatmap. "
-             "First column = cell name; remaining columns are drawn as "
-             "coloured sidebars.",
+        "First column = cell name; remaining columns are drawn as "
+        "coloured sidebars.",
     )
     parser.add_argument(
         "--row-split",
         default=None,
         metavar="COLUMN",
         help="[optional] Column in --meta used to split and label heatmap rows. "
-             "Defaults to the second column of the CSV when not given.",
+        "Defaults to the second column of the CSV when not given.",
     )
 
 
-def _build_main_parser():
+def _build_main_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="copykat-py",
         description="CopyKAT-Py: Inference of genomic copy number from single cell RNA-seq data",
@@ -187,7 +196,7 @@ def _build_main_parser():
     return parser
 
 
-def _build_matrix_parser():
+def _build_matrix_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="copykat_matrix",
         description=(
@@ -217,7 +226,7 @@ def _build_matrix_parser():
     return parser
 
 
-def _normalize_selected_meta(values):
+def _normalize_selected_meta(values: str | Iterable[object] | None) -> list[str]:
     """Return selected AnnData obs columns, handling CSV-style input too."""
     if not values:
         return []
@@ -234,7 +243,9 @@ def _normalize_selected_meta(values):
     return columns
 
 
-def _load_matrix_input(input_path, genes_path=None, barcodes_path=None):
+def _load_matrix_input(
+    input_path: str | os.PathLike[str], genes_path: str | None = None, barcodes_path: str | None = None
+) -> RawInput | str:
     """Load raw matrix input from file paths used by CLI wrappers."""
     input_path = str(input_path)
     if input_path.endswith(".mtx") or input_path.endswith(".mtx.gz"):
@@ -257,25 +268,26 @@ def _load_matrix_input(input_path, genes_path=None, barcodes_path=None):
 
         if genes_path:
             genes = pd.read_csv(genes_path, sep="\t", header=None)
-            gene_names = genes.iloc[:, -1].values if genes.shape[1] > 1 else genes.iloc[:, 0].values
+            gene_names = genes.iloc[:, -1].to_numpy() if genes.shape[1] > 1 else genes.iloc[:, 0].to_numpy()
         else:
-            gene_names = [f"gene_{i}" for i in range(mat.shape[0])]
+            gene_names = np.array([f"gene_{i}" for i in range(mat.shape[0])])
 
         if barcodes_path:
-            barcodes = pd.read_csv(barcodes_path, sep="\t", header=None, dtype=str).iloc[:, 0].values
+            barcodes = pd.read_csv(barcodes_path, sep="\t", header=None, dtype=str).iloc[:, 0].to_numpy()
         else:
             barcodes = np.array([f"cell_{i}" for i in range(mat.shape[1])], dtype=object)
 
-        return {
+        raw_input: RawInput = {
             "matrix": mat,
             "genes": gene_names,
             "barcodes": barcodes,
         }
+        return raw_input
 
     return input_path
 
 
-def _load_normal_cells(norm_cells_path):
+def _load_normal_cells(norm_cells_path: str) -> str | list[str]:
     """Read known-normal barcode names from a text file when provided."""
     if not norm_cells_path or not os.path.exists(norm_cells_path):
         return ""
@@ -284,7 +296,7 @@ def _load_normal_cells(norm_cells_path):
         return [line.strip() for line in handle if line.strip()]
 
 
-def _prepare_output_dir(output_dir):
+def _prepare_output_dir(output_dir: str | os.PathLike[str]) -> Path:
     """Create and activate the output directory used by a run."""
     output_path = Path(output_dir).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
@@ -300,13 +312,13 @@ def _prepare_output_dir(output_dir):
     return output_path
 
 
-def _sample_stub(sample_name, default_name):
+def _sample_stub(sample_name: str, default_name: str) -> str:
     """Build a readable file stem for wrapper-created helper files."""
     cleaned = str(sample_name).strip()
     return cleaned if cleaned else default_name
 
 
-def _anndata_to_rawmat(adata, layer=None, use_raw=False):
+def _anndata_to_rawmat(adata: Any, layer: str | None = None, use_raw: bool = False) -> tuple[Any, RawInput, str]:
     """Convert an AnnData object to CopyKAT's rawmat structure."""
     if layer and use_raw:
         raise ValueError("--layer and --use-raw cannot be used together")
@@ -320,8 +332,7 @@ def _anndata_to_rawmat(adata, layer=None, use_raw=False):
     elif layer:
         if layer not in adata.layers:
             raise ValueError(
-                f"Layer '{layer}' not found in adata.layers. "
-                f"Available layers: {list(adata.layers.keys())}"
+                f"Layer '{layer}' not found in adata.layers. Available layers: {list(adata.layers.keys())}"
             )
         matrix = adata.layers[layer]
         gene_names = adata.var_names.astype(str).to_numpy()
@@ -332,11 +343,11 @@ def _anndata_to_rawmat(adata, layer=None, use_raw=False):
         matrix_label = "adata.X"
 
     if sp.issparse(matrix):
-        matrix_t = matrix.T.tocsc(copy=True).astype(np.float32)
+        matrix_t = cast(SparseMatrix, matrix).T.tocsc(copy=True).astype(np.float32)
     else:
         matrix_t = sp.csc_matrix(np.asarray(matrix, dtype=np.float32).T)
 
-    rawmat = {
+    rawmat: RawInput = {
         "matrix": matrix_t,
         "genes": gene_names,
         "barcodes": adata.obs_names.astype(str).to_numpy(),
@@ -344,7 +355,9 @@ def _anndata_to_rawmat(adata, layer=None, use_raw=False):
     return adata, rawmat, matrix_label
 
 
-def _write_selected_obs_meta_csv(adata, selecting_meta, output_dir, sample_name):
+def _write_selected_obs_meta_csv(
+    adata: Any, selecting_meta: str | Iterable[object] | None, output_dir: str | os.PathLike[str], sample_name: str
+) -> tuple[str | None, list[str]]:
     """Persist selected AnnData obs columns as the metadata CSV expected by copykat()."""
     columns = _normalize_selected_meta(selecting_meta)
     if not columns:
@@ -353,10 +366,7 @@ def _write_selected_obs_meta_csv(adata, selecting_meta, output_dir, sample_name)
     obs_columns = [str(col) for col in adata.obs.columns.tolist()]
     missing = [column for column in columns if column not in obs_columns]
     if missing:
-        raise ValueError(
-            f"Requested obs columns not found: {missing}. "
-            f"Available obs columns: {obs_columns}"
-        )
+        raise ValueError(f"Requested obs columns not found: {missing}. Available obs columns: {obs_columns}")
 
     meta_df = adata.obs.loc[:, columns].copy()
     meta_df.index = meta_df.index.astype(str)
@@ -368,14 +378,14 @@ def _write_selected_obs_meta_csv(adata, selecting_meta, output_dir, sample_name)
 
 
 def _run_copykat_analysis(
-    args,
-    rawmat,
+    args: argparse.Namespace,
+    rawmat: RawMatrix,
     *,
-    meta_csv=None,
-    row_split_col=None,
-    input_label=None,
-    post_plot_meta=None,
-):
+    meta_csv: str | None = None,
+    row_split_col: str | None = None,
+    input_label: str | None = None,
+    post_plot_meta: str | None = None,
+) -> CopyKATResult:
     """Run copykat() with consistent logging and output-directory setup."""
     norm_cells_path = os.path.abspath(args.norm_cells) if args.norm_cells else ""
     meta_csv = os.path.abspath(meta_csv) if meta_csv is not None else None
@@ -387,23 +397,27 @@ def _run_copykat_analysis(
     from copykat_py.copykat import copykat
 
     log_path = output_dir / "copykat_run.log"
-    log_handle = open(log_path, "a", encoding="utf-8")
-    old_stdout = sys.stdout
+    log_handle = open(log_path, "a", encoding="utf-8")  # noqa: SIM115 - closed in the `finally` below
+    # Progress goes to the console (unless the caller configured logging) and
+    # to the run log. Anything else written to stderr, such as third-party
+    # warnings, is copied to the run log too.
+    progress_output = ExitStack()
+    progress_output.enter_context(default_progress_output())
+    progress_output.enter_context(log_progress_to(log_handle))
     old_stderr = sys.stderr
-    sys.stdout = TeeStream(sys.stdout, log_handle)
     sys.stderr = TeeStream(sys.stderr, log_handle)
 
-    print("=" * 80)
-    print(f"CopyKAT-Py run started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Working directory: {output_dir}")
-    print(f"Input: {input_label or getattr(args, 'input', '<in-memory>')}")
-    print(f"Requested cores: {args.n_cores}")
+    logger.info("=" * 80)
+    logger.info(f"CopyKAT-Py run started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Working directory: {output_dir}")
+    logger.info(f"Input: {input_label or getattr(args, 'input', '<in-memory>')}")
+    logger.info(f"Requested cores: {args.n_cores}")
     if args.pca_components is not None:
-        print(f"Requested adaptive PCA components: {args.pca_components}")
+        logger.info(f"Requested adaptive PCA components: {args.pca_components}")
     if meta_csv is not None:
-        print(f"Metadata source: {meta_csv}")
+        logger.info(f"Metadata source: {meta_csv}")
     if row_split_col is not None:
-        print(f"Row split column: {row_split_col}")
+        logger.info(f"Row split column: {row_split_col}")
 
     try:
         result = copykat(
@@ -428,20 +442,18 @@ def _run_copykat_analysis(
             row_split_col=row_split_col,
         )
 
-        print("CopyKAT-Py analysis complete.")
+        logger.info("CopyKAT-Py analysis complete.")
         if "prediction" in result:
             pred = result["prediction"]["copykat.pred"].value_counts()
             for key, value in pred.items():
-                print(f"  {key}: {value} cells")
+                logger.info(f"  {key}: {value} cells")
 
         if post_plot_meta and args.plot_genes and "CNAmat" in result:
-            print("\nGenerating annotated heatmap...")
+            logger.info("\nGenerating annotated heatmap...")
             from copykat_py.plotting import plot_heatmap_annotated
 
             cna_df = result["CNAmat"]
-            ann_mat = cna_df.iloc[:, 3:].values.astype(np.float32)
-            ann_cell_names = cna_df.columns[3:].tolist()
-            ann_chrom_info = cna_df.iloc[:, 0].values
+            ann_mat, ann_cell_names, ann_chrom_info, ann_genome = split_cna_table(cna_df)
             ann_output = f"{args.sample_name}_copykat_annotated_heatmap.png"
             plot_heatmap_annotated(
                 mat=ann_mat,
@@ -453,19 +465,19 @@ def _run_copykat_analysis(
                 distance=args.distance,
                 n_cores=args.n_cores,
                 output_path=ann_output,
+                genome=ann_genome,
             )
         return result
     finally:
-        print(f"CopyKAT-Py run finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Detailed log saved to: {log_path}")
-        sys.stdout.flush()
+        logger.info(f"CopyKAT-Py run finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Detailed log saved to: {log_path}")
         sys.stderr.flush()
-        sys.stdout = old_stdout
         sys.stderr = old_stderr
+        progress_output.close()
         log_handle.close()
 
 
-def main():
+def main() -> CopyKATResult:
     """Entry point for the legacy matrix-focused ``copykat-py`` CLI."""
     parser = _build_main_parser()
     args = parser.parse_args()
@@ -480,7 +492,7 @@ def main():
     )
 
 
-def matrix_main():
+def matrix_main() -> CopyKATResult:
     """Entry point for ``copykat_matrix``."""
     parser = _build_matrix_parser()
     args = parser.parse_args()
@@ -495,31 +507,32 @@ def matrix_main():
     )
 
 
+@with_default_progress_output
 def copykat_anndata(
-    adata,
+    adata: Any,
     *,
-    selecting_meta=None,
-    row_split=None,
-    sample_name="",
-    distance="euclidean",
-    genome="hg20",
-    n_cores=1,
-    output_dir=".",
-    layer=None,
-    use_raw=False,
-    id_type="S",
-    cell_line="no",
-    ngene_chr=5,
-    min_genes=200,
-    low_dr=0.05,
-    up_dr=0.1,
-    win_size=25,
-    norm_cells="",
-    ks_cut=0.1,
-    output_seg=False,
-    plot_genes=True,
-    pca_components=None,
-):
+    selecting_meta: str | Iterable[str] | None = None,
+    row_split: str | None = None,
+    sample_name: str = "",
+    distance: str = "euclidean",
+    genome: str = "hg20",
+    n_cores: int = 1,
+    output_dir: str | os.PathLike[str] = ".",
+    layer: str | None = None,
+    use_raw: bool = False,
+    id_type: str = "S",
+    cell_line: str = "no",
+    ngene_chr: int = 5,
+    min_genes: int = 200,
+    low_dr: float = 0.05,
+    up_dr: float = 0.1,
+    win_size: int = 25,
+    norm_cells: str | os.PathLike[str] = "",
+    ks_cut: float = 0.1,
+    output_seg: bool = False,
+    plot_genes: bool = True,
+    pca_components: int | None = None,
+) -> CopyKATResult:
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
     _, rawmat, matrix_label = _anndata_to_rawmat(
         adata,
@@ -541,7 +554,7 @@ def copykat_anndata(
         row_split_col = selected_meta[0]
 
     if selected_meta:
-        print(f"Selected obs columns: {selected_meta}")
+        logger.info(f"Selected obs columns: {selected_meta}")
 
     args = argparse.Namespace(
         input="<AnnData object>",
@@ -577,7 +590,8 @@ def copykat_anndata(
     )
 
 
-def plot_main():
+@with_default_progress_output
+def plot_main() -> None:
     """Entry point for ``copykat-py-plot``: annotated heatmap from CNA results."""
     parser = argparse.ArgumentParser(
         prog="copykat-py-plot",
@@ -621,29 +635,28 @@ Meta CSV format
         "-c",
         required=True,
         help="[required] CNA results file produced by copykat-py "
-             "(*_copykat_CNA_results.txt, tab-separated). "
-             "First three columns must be chrom / chrompos / abspos; "
-             "remaining columns are cells.",
+        "(*_copykat_CNA_results.txt, tab-separated). "
+        "Accepts hg20 bin tables or mm10 gene tables; annotation columns are detected automatically.",
     )
     parser.add_argument(
         "--meta",
         "-m",
         required=True,
         help="[required] Annotation CSV. First column = cell name; remaining columns are "
-             "drawn as coloured sidebars. Header row is auto-detected.",
+        "drawn as coloured sidebars. Header row is auto-detected.",
     )
     parser.add_argument(
         "--row-split",
         default=None,
         metavar="COLUMN",
         help="[optional] Metadata column used to split and label rows. "
-             "Defaults to the second column of the CSV when not supplied.",
+        "Defaults to the second column of the CSV when not supplied.",
     )
     parser.add_argument(
         "--sample-name",
         default="",
         help="[optional] Label shown in the figure title and used as the output filename "
-             "prefix when --output is not given.",
+        "prefix when --output is not given.",
     )
     parser.add_argument(
         "--distance",
@@ -662,18 +675,23 @@ Meta CSV format
         "-o",
         default=None,
         metavar="PATH",
-        help="[optional] Output PNG path. Defaults to "
-             "{sample_name}_copykat_annotated_heatmap.png.",
+        help="[optional] Output PNG path. Defaults to {sample_name}_copykat_annotated_heatmap.png.",
+    )
+    parser.add_argument(
+        "--continuous-meta", nargs="+", default=None, metavar="COLUMN",
+        help="Force selected numeric metadata columns to use continuous colors (e.g. n_umi).",
+    )
+    parser.add_argument(
+        "--no-row-split", action="store_true",
+        help="Cluster all cells together without categorical row groups.",
     )
 
     args = parser.parse_args()
 
-    print(f"Loading CNA results: {args.cna}")
+    logger.info(f"Loading CNA results: {args.cna}")
     cna_df = pd.read_csv(args.cna, sep="\t", index_col=False)
-    cell_names = cna_df.columns[3:].tolist()
-    chrom_info = cna_df.iloc[:, 0].values
-    mat = cna_df.iloc[:, 3:].values.astype(np.float32)
-    print(f"  {mat.shape[1]} cells x {mat.shape[0]} bins")
+    mat, cell_names, chrom_info, genome = split_cna_table(cna_df)
+    logger.info(f"  {mat.shape[1]} cells x {mat.shape[0]} bins")
 
     from copykat_py.plotting import plot_heatmap_annotated
 
@@ -682,11 +700,13 @@ Meta CSV format
         cell_names=cell_names,
         chrom_info=chrom_info,
         meta_csv=args.meta,
-        row_split_col=args.row_split,
+        row_split_col="" if args.no_row_split else args.row_split,
         sample_name=args.sample_name,
         distance=args.distance,
         n_cores=args.n_cores,
         output_path=args.output,
+        continuous_meta=args.continuous_meta,
+        genome=genome,
     )
 
 
