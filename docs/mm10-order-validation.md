@@ -11,8 +11,8 @@ rows. Human `hg20` ordering remains by `abspos`.
 
 The validation used the T989 mouse tumor single-cell RNA count matrix and the
 matched scWGS/AneuFinder pseudobulk gain/loss reference. Input files are in
-`/home/toresbe/cancer_research/mm10_test/T989/`; the reference table is
-`/home/toresbe/cancer_research/cnv_benchmark_data/zenodo_20260649/mouse_wgs_results_formated.csv`.
+`$COPYKAT_BENCH_DATA/mm10_test/T989/`; the reference table is
+`$COPYKAT_BENCH_DATA/cnv_benchmark_data/zenodo_20260649/mouse_wgs_results_formated.csv`.
 The matrix, gene, barcode, and reference SHA-256 values respectively are:
 
 ```text
@@ -29,7 +29,7 @@ parameters (`id_type=S`, `cell_line=no`, `ngene_chr=5`, `min_gene_per_cell=200`,
 control monkeypatched the annotation order to the previous stable `abspos`
 sort; the comparison used chromosome/start order. Both retained 7,751 annotated
 genes and 8,740 cells before later filtering. Outputs and runtime logs are kept
-on NAS under `/mnt/nas/cancer_research/mm10_genomic_order_validation/`.
+on NAS under `$COPYKAT_BENCH_ARCHIVE/mm10_genomic_order_validation/`.
 
 The WGS comparison joins each CopyKAT gene start to the overlapping reference
 gain-minus-loss interval and correlates the mean CNA profile of CopyKAT-called
@@ -84,6 +84,6 @@ for the ordering change; the speed result is one run per pinned snapshot and
 must not be generalized as an isolated PR speedup.
 
 Compact prediction/linkage summaries and linkage matrices are archived at
-`/mnt/nas/cancer_research/mm10_genomic_order_validation/proposal_vs_assembly_20261010/`.
+`$COPYKAT_BENCH_ARCHIVE/mm10_genomic_order_validation/proposal_vs_assembly_20261010/`.
 The assembled run's CNA outputs remain on the NAS under
 `assembled_main/`; the interrupted six-PR output file was discarded.

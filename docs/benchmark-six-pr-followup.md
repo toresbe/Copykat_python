@@ -1,0 +1,21 @@
+# Corrected six-PR performance and GPU-memory follow-up
+
+The original five-PR snapshot omitted performance PR #5 (Arrow gene writer), because the first extraction targeted the stricter numerical/output-preserving subset. It was not the complete collection of open performance PRs. The original source snapshot and results are retained as **Earlier five-PR subset**. The newly prepared **Currently proposed changes (6 PRs)** filesystem snapshot includes upstream `ea1a15c` plus the exact heads of PRs #4–#9. The CLI exit-status fix #3 is not performance relevant and remains outside this integration. No Git refs or branches change.
+
+The six-PR patch order and SHA-256 hashes of every source file are recorded in `$COPYKAT_BENCH_ROOT/proposed6_snapshot_manifest.json`. Benchmark workers assert that imports resolve to their named snapshot and record the entry-module hash. Input sampling, eight requested physical cores, default algorithm parameters and output formatting policies match the calculation-focused performance study.
+
+At 40k, main and the five-PR subset took 1266.89 and 1261.79 seconds in the first serial round. Shared DLM gains reduced smoothing from 9.27 to 1.95 seconds, while three unchanged clustering stages took about 1038 seconds. Gene-table output remained about 166 seconds. These stage proportions explain the small total improvement. Plot=false runs do not measure the heatmap PR; default runs may not use known-normal inputs or the discarded fallback-clustering path. The omitted Arrow writer is important for this workload and must be measured before making claims about all six PRs.
+
+Status update (2026-10-10): the accuracy archive is complete and the six-PR follow-up sweep is running serially. At the 11:20 UTC report refresh the 120k run remained active in bin conversion after 38.3 minutes; the 170,057-cell run remained queued. Check `benchmark-cpu.md` for later ledger updates. The benchmark snapshots and results remain independent of the Git branch assembly recorded in `fork-integration-audit.md`. The durable `copykat-bench-prcomplete.service` waits for the accuracy archive, then runs strictly serially to avoid accuracy contention. The schedule contains 30 new attempts:
+
+- Eleven GPU repeats at 2k, 5k, 10k, 15k, 20k, 25k, 30k, 40k, 80k, 120k and 170,057 cells, with per-process NVML GPU-memory sampling.
+- Eleven six-PR runs at those same sizes, including a genuine 170k attempt with no time cap and the existing RAM/SSD guards.
+- A second six-PR round at the eight 2k–40k sizes, in descending order, for serial means and observed ranges.
+
+Large TSV outputs remain formatted through the actual selected implementation and written through /dev/null symlinks. Formatting is measured; physical SSD persistence throughput is excluded. The Arrow writer is not disabled. Output predictions, original CNA numeric hashes and trees are compared against the baseline where a completed pair exists. Any changed text formatting remains an explicit PR #5 contract.
+
+System RAM usage in the figure is process-tree RSS in decimal GB, excluding GPU VRAM; it is not total machine occupancy and may count shared pages more than once. The new GPU panel uses NVML `usedGpuMemory` summed only for the benchmark's compute-process descendants, sampled every 0.25 seconds. This includes CUDA contexts/allocator reservations visible to NVML and excludes unrelated applications. Samples may miss short peaks; PyTorch peak allocated/reserved counters are stored separately. [NVIDIA's API reference](https://docs.nvidia.com/deploy/nvml-api/latest/api/group__nvmlDeviceQueries.html) defines this measurement.
+
+The report updater refreshes [the scaling report](benchmark-cpu.md) and [serial averages](benchmark-serial.md) as results arrive. GPU reruns update their points with fresh isolated observations; old raw observations are preserved. Before measurements exist, the GPU panel states that it is queued and the six-PR table rows show queued status. The existing 170k estimates refer to the labelled historical snapshots, not unmeasured six-PR performance.
+
+Working data and streaming I/O stay on the SSD. Final evidence is archived separately at `$COPYKAT_BENCH_ARCHIVE/benchmark-six-pr-vram-evidence.tar.gz` with a SHA-256 sidecar, preserving earlier archives.

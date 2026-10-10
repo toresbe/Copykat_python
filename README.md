@@ -338,7 +338,7 @@ The proposal branches preserve the six performance PRs as explicit merges. The a
 - `--anchor markers` selects an immune/endothelial marker-enriched normal reference when available. `--final-call arm_correlation` changes final human hg20 cell calls using arm-level profiles; both are opt-in and intended for solid tumors.
 - `copykat-py-allele` provides a separate read-counting, phasing, and allele-orientation workflow. It needs external sequencing tools and data described in [the allele workflow guide](docs/allele_orientation.md).
 
-The review package in `docs/navin-review-manifest.json`, `docs/fork-integration-audit.md`, and the linked benchmark reports records source commits, dependencies, numerical/output contracts, measured gains, regressions, and incomplete evidence. Existing timings remain evidence for their pinned snapshots, not this assembled commit.
+The review package in `docs/benchmark-manifest.json`, `docs/fork-integration-audit.md`, and the linked benchmark reports records source commits, dependencies, numerical/output contracts, measured gains, regressions, and incomplete evidence. Existing timings remain evidence for their pinned snapshots, not this assembled commit.
 
 ### Validation for 11 datasets from [Cancer Cell Atlas (3CA)](https://www.weizmann.ac.il/sites/3CA/)
 
