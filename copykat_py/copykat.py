@@ -17,7 +17,7 @@ import logging
 import os
 import pickle
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, cast
 
@@ -34,7 +34,6 @@ from copykat_py._types import (
     AnchorPath,
     AnchorStrategy,
     BaselineWarning,
-    BoolArray,
     CellLineMode,
     ClusteringResult,
     ClusterLabels,
@@ -76,6 +75,14 @@ from copykat_py.baseline import (
 )
 from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
+from copykat_py.final_call import (
+    _preN_to_names,
+    cluster_and_call,
+    cluster_cells,
+)
+from copykat_py.final_call import (
+    adjust_baseline_inplace as _adjust_baseline_inplace,
+)
 from copykat_py.input import (
     _keep_cells_by_chr_coverage,
     _prepare_input_matrix,
@@ -89,39 +96,6 @@ from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 
 logger = logging.getLogger(__name__)
-
-
-def _adjust_baseline_inplace(mat: FloatArray, diploid_mask: BoolArray, chunk_elems: int = 1 << 24) -> FloatArray:
-    """Subtract the diploid baseline and flatten noise around it, overwriting ``mat``.
-
-    Same arithmetic as the original out-of-place version: center on the
-    diploid mean, re-center cells, replace values within 0.25 SD of the
-    diploid profile with the cell mean, and re-center cells again.
-    """
-    if backend.use_gpu():
-        from copykat_py.gpu import ops
-
-        return cast(FloatArray, ops.adjust_baseline(mat, diploid_mask))
-    mat -= mat[:, diploid_mask].mean(axis=1, keepdims=True)
-    mat -= mat.mean(axis=0, keepdims=True)
-
-    diploid = mat[:, diploid_mask]
-    cf_h = np.std(diploid, axis=1)
-    base = np.mean(diploid, axis=1)
-    del diploid
-    threshold = 0.25 * cf_h
-    cell_means = mat.mean(axis=0, keepdims=True)
-
-    step = max(1, chunk_elems // max(1, mat.shape[1]))
-    for start in range(0, mat.shape[0], step):
-        block = mat[start : start + step]
-        noise_mask = (
-            np.abs(block - base[start : start + step, np.newaxis]) <= threshold[start : start + step, np.newaxis]
-        )
-        np.copyto(block, np.broadcast_to(cell_means, block.shape), where=noise_mask)
-
-    mat -= mat.mean(axis=0, keepdims=True)
-    return mat
 
 
 def _meta_with_pred(meta_csv: str, pred_dict: dict[str, str] | None, sample_name: str) -> str:
@@ -200,48 +174,6 @@ def _record_step(
         entry.update(extra)
     runtime_info["steps"].append(entry)
     return elapsed
-
-
-def _preN_to_names(preN: str | bytes | Sequence[Any] | npt.NDArray[Any] | None, cell_names: Sequence[str]) -> set[str]:
-    if preN is None:
-        return set()
-
-    if isinstance(preN, str | bytes):
-        return {str(preN)}
-
-    values = list(preN)
-    if not values:
-        return set()
-
-    names = []
-    for value in values:
-        if isinstance(value, int | np.integer):
-            idx = int(value)
-            if 0 <= idx < len(cell_names):
-                names.append(cell_names[idx])
-        else:
-            names.append(str(value))
-    return set(names)
-
-
-def _assign_binary_labels(
-    cluster_labels: ClusterLabels,
-    scores: Sequence[float] | FloatArray,
-    high_label: PredictionLabel,
-    low_label: PredictionLabel,
-) -> npt.NDArray[np.object_]:
-    labels = np.empty(len(cluster_labels), dtype=object)
-    labels[:] = ""
-    cluster_vals = np.asarray(sorted(set(cluster_labels)))
-    score_arr = np.asarray(scores, dtype=float)
-    max_score = np.max(score_arr)
-    min_score = np.min(score_arr)
-
-    for cluster_val in cluster_vals[score_arr == max_score]:
-        labels[cluster_labels == cluster_val] = high_label
-    for cluster_val in cluster_vals[score_arr == min_score]:
-        labels[cluster_labels == cluster_val] = low_label
-    return labels
 
 
 @with_default_progress_output
@@ -856,7 +788,6 @@ def copykat(
 
         logger.info("step 7: adjust baseline ...")
         step_start = time.perf_counter()
-        step7_reduce = uber_mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
 
         if cell_line is CellLineMode.YES:
             mat_adj = uber_mat_adj
@@ -875,39 +806,15 @@ def copykat(
                     runtime_info["final_call_path"] = FinalCallStrategy.ARM_CORRELATION
                 else:
                     runtime_info["final_call_path"] = "clusters_insufficient_anchor"
-            # First hierarchical clustering for initial prediction
-            labels, Z = _hierarchical_cluster(
-                uber_mat_adj.T,
-                2,
-                method="ward",
-                metric="euclidean",
+            labels, Z, com_pred = cluster_and_call(
+                uber_mat_adj,
+                cell_cols_seg,
+                cell_name_list,
+                preN,
                 n_cores=n_cores,
-                reduce=step7_reduce,
                 pca_components=selected_pca_components,
+                prediction_override=arm_calls,
             )
-            hc_umap = labels
-
-            # Determine which cluster is normal based on preN enrichment
-            if preN is not None and len(preN) > 0:
-                preN_names = _preN_to_names(preN, cell_name_list)
-                cl_ID = []
-                for cl_val in sorted(set(hc_umap)):
-                    cli_names = [cell_cols_seg[j] for j in range(len(cell_cols_seg)) if hc_umap[j] == cl_val]
-                    pid = len(set(cli_names) & preN_names) / max(len(cli_names), 1)
-                    cl_ID.append(pid)
-                com_pred = _assign_binary_labels(hc_umap, cl_ID, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID)
-            else:
-                # If no preN, assign based on total CNA magnitude
-                cl_mag = []
-                for cl_val in sorted(set(hc_umap)):
-                    mask = hc_umap == cl_val
-                    cl_mag.append(np.mean(np.abs(uber_mat_adj[:, mask])))
-                com_pred = _assign_binary_labels(
-                    hc_umap, -np.asarray(cl_mag, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
-                )
-
-            if arm_calls is not None:
-                com_pred = np.where(arm_calls, PredictionLabel.ANEUPLOID, PredictionLabel.DIPLOID)
 
             # Baseline adjustment: subtract diploid mean, then denoise
             diploid_mask = com_pred == PredictionLabel.DIPLOID
@@ -931,57 +838,21 @@ def copykat(
         # =========================================================================
         logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
-        step8_reduce = mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
         if cell_line is not CellLineMode.YES:
-            labels_final, Z_final = _hierarchical_cluster(
-                mat_adj.T,
-                2,
-                method="ward",
-                metric="euclidean",
+            labels_final, Z_final, com_preN = cluster_and_call(
+                mat_adj,
+                cell_cols_seg,
+                cell_name_list,
+                preN,
                 n_cores=n_cores,
-                reduce=step8_reduce,
                 pca_components=selected_pca_components,
+                prediction_override=arm_calls,
+                low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
             )
-            hc_final = labels_final
-
-            if preN is not None and len(preN) > 0:
-                preN_names = _preN_to_names(preN, cell_name_list)
-                cl_ID_final = []
-                for cl_val in sorted(set(hc_final)):
-                    cli_names = [cell_cols_seg[j] for j in range(len(cell_cols_seg)) if hc_final[j] == cl_val]
-                    pid = len(set(cli_names) & preN_names) / max(len(cli_names), 1)
-                    cl_ID_final.append(pid)
-                com_preN = _assign_binary_labels(
-                    hc_final, cl_ID_final, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
-                )
-            else:
-                cl_mag = []
-                for cl_val in sorted(set(hc_final)):
-                    mask = hc_final == cl_val
-                    cl_mag.append(np.mean(np.abs(mat_adj[:, mask])))
-                com_preN = _assign_binary_labels(
-                    hc_final, -np.asarray(cl_mag, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
-                )
-
-            if arm_calls is not None:
-                # The Ward tree still orders the heatmap; this option supplies the final call.
-                com_preN = np.where(arm_calls, PredictionLabel.ANEUPLOID, PredictionLabel.DIPLOID)
-
-            if WNS is BaselineWarning.UNCLASSIFIED:
-                com_preN = np.where(
-                    com_preN == PredictionLabel.DIPLOID, PredictionLabel.DIPLOID_LOW_CONFIDENCE, com_preN
-                )
-                com_preN = np.where(
-                    com_preN == PredictionLabel.ANEUPLOID, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE, com_preN
-                )
         else:
-            labels, Z = _hierarchical_cluster(
-                mat_adj.T,
-                2,
-                method="ward",
-                metric="euclidean",
+            labels, Z = cluster_cells(
+                mat_adj,
                 n_cores=n_cores,
-                reduce=step8_reduce,
                 pca_components=selected_pca_components,
             )
             labels_final, Z_final = labels, Z
@@ -1111,39 +982,14 @@ def copykat(
 
         logger.info("step 7: adjust baseline ...")
         step_start = time.perf_counter()
-        step7_reduce = uber_mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
-        # Same prediction logic as hg20 (mirroring the R code mm10 section)
-        labels, Z = _hierarchical_cluster(
-            uber_mat_adj.T,
-            2,
-            method="ward",
-            metric="euclidean",
+        labels, Z, com_pred = cluster_and_call(
+            uber_mat_adj,
+            cell_cols_seg,
+            cell_name_list,
+            preN,
             n_cores=n_cores,
-            reduce=step7_reduce,
             pca_components=selected_pca_components,
         )
-        hc_umap = labels
-
-        if preN is not None and len(preN) > 0:
-            preN_names = _preN_to_names(preN, cell_name_list)
-
-            cl_ID = []
-            for cl_val in sorted(set(hc_umap)):
-                cli_names = [cell_cols_seg[j] for j in range(len(cell_cols_seg)) if hc_umap[j] == cl_val]
-                pid = len(set(cli_names) & preN_names) / max(len(cli_names), 1)
-                cl_ID.append(pid)
-        else:
-            cl_ID = []
-            for cl_val in sorted(set(hc_umap)):
-                mask = hc_umap == cl_val
-                cl_ID.append(float(np.mean(np.abs(uber_mat_adj[:, mask]))))
-
-        if preN is not None and len(preN) > 0:
-            com_pred = _assign_binary_labels(hc_umap, cl_ID, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID)
-        else:
-            com_pred = _assign_binary_labels(
-                hc_umap, -np.asarray(cl_ID, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
-            )
 
         # Baseline adjustment
         diploid_mask = com_pred == PredictionLabel.DIPLOID
@@ -1165,40 +1011,15 @@ def copykat(
         # Final prediction
         logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
-        step8_reduce = mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
-        labels_final, Z_final = _hierarchical_cluster(
-            mat_adj.T,
-            2,
-            method="ward",
-            metric="euclidean",
+        labels_final, Z_final, com_preN = cluster_and_call(
+            mat_adj,
+            cell_cols_seg,
+            cell_name_list,
+            preN,
             n_cores=n_cores,
-            reduce=step8_reduce,
             pca_components=selected_pca_components,
+            low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
         )
-        hc_final = labels_final
-
-        if preN is not None and len(preN) > 0:
-            preN_names = _preN_to_names(preN, cell_name_list)
-            cl_ID_final = []
-            for cl_val in sorted(set(hc_final)):
-                cli_names = [cell_cols_seg[j] for j in range(len(cell_cols_seg)) if hc_final[j] == cl_val]
-                pid = len(set(cli_names) & preN_names) / max(len(cli_names), 1)
-                cl_ID_final.append(pid)
-            com_preN = _assign_binary_labels(hc_final, cl_ID_final, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID)
-        else:
-            cl_mag = []
-            for cl_val in sorted(set(hc_final)):
-                mask = hc_final == cl_val
-                cl_mag.append(np.mean(np.abs(mat_adj[:, mask])))
-            com_preN = _assign_binary_labels(
-                hc_final, -np.asarray(cl_mag, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
-            )
-
-        if WNS is BaselineWarning.UNCLASSIFIED:
-            com_preN = np.where(com_preN == PredictionLabel.DIPLOID, PredictionLabel.DIPLOID_LOW_CONFIDENCE, com_preN)
-            com_preN = np.where(
-                com_preN == PredictionLabel.ANEUPLOID, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE, com_preN
-            )
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
