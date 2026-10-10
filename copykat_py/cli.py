@@ -616,7 +616,7 @@ def copykat_anndata(
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
     genome = Genome(genome)
     distance = DistanceMetric(distance)
-    id_type = GeneIdType.ENSEMBL if str(id_type).upper().startswith("E") else GeneIdType.SYMBOL
+    id_type = GeneIdType.from_legacy(id_type)
     cell_line = CellLineMode(cell_line)
     _, rawmat, matrix_label = _anndata_to_rawmat(
         adata,

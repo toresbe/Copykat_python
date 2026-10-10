@@ -82,17 +82,13 @@ def _simple_cell_order(mat: FloatArray, predictions: Mapping[str, str] | None = 
     """Cheap fallback ordering used when clustering is unavailable or unsafe."""
     if predictions is not None:
         pred_list = list(predictions.values())
-        pred_rank = np.array(
-            [
-                0
-                if str(p) in {PredictionLabel.ANEUPLOID, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE}
-                else 1
-                if str(p) in {PredictionLabel.DIPLOID, PredictionLabel.DIPLOID_LOW_CONFIDENCE}
-                else 2
-                for p in pred_list
-            ],
-            dtype=np.int16,
-        )
+        rank_by_label = {
+            PredictionLabel.ANEUPLOID: 0,
+            PredictionLabel.ANEUPLOID_LOW_CONFIDENCE: 0,
+            PredictionLabel.DIPLOID: 1,
+            PredictionLabel.DIPLOID_LOW_CONFIDENCE: 1,
+        }
+        pred_rank = np.array([rank_by_label.get(str(pred), 2) for pred in pred_list], dtype=np.int16)
         cna_magnitude = np.sum(np.abs(mat), axis=0)
         return np.lexsort((-cna_magnitude, pred_rank))
 

@@ -332,7 +332,7 @@ def copykat(
     """
     distance = DistanceMetric(distance)
     backend_name = ExecutionBackend(backend_name)
-    id_type = GeneIdType.ENSEMBL if str(id_type).upper().startswith("E") else GeneIdType.SYMBOL
+    id_type = GeneIdType.from_legacy(id_type)
     cell_line = CellLineMode(cell_line)
     ks_method = KSMethod(ks_method)
     anchor = AnchorStrategy(anchor)
@@ -700,14 +700,14 @@ def copykat(
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     del norm_mat_smooth
     baseline_cluster_info = get_last_cluster_info()
+    if cell_line is CellLineMode.YES:
+        reference_mode = ReferenceMode.SYNTHETIC
+    elif WNS is BaselineWarning.KNOWN_NORMAL:
+        reference_mode = ReferenceMode.KNOWN_NORMAL
+    else:
+        reference_mode = ReferenceMode.AUTOMATIC
     runtime_info["reference"] = {
-        "mode": (
-            ReferenceMode.SYNTHETIC
-            if cell_line is CellLineMode.YES
-            else ReferenceMode.KNOWN_NORMAL
-            if WNS is BaselineWarning.KNOWN_NORMAL
-            else ReferenceMode.AUTOMATIC
-        ),
+        "mode": reference_mode,
         "supplied_count": len(set(norm_cell_names)) if isinstance(norm_cell_names, list) else 0,
         "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
         if isinstance(norm_cell_names, list)

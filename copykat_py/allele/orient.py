@@ -25,8 +25,10 @@ def _swap_labels(pred):
     swap = {
         PredictionLabel.ANEUPLOID.value: PredictionLabel.DIPLOID.value,
         PredictionLabel.DIPLOID.value: PredictionLabel.ANEUPLOID.value,
+        PredictionLabel.ANEUPLOID_LOW_CONFIDENCE.value: PredictionLabel.DIPLOID_LOW_CONFIDENCE.value,
+        PredictionLabel.DIPLOID_LOW_CONFIDENCE.value: PredictionLabel.ANEUPLOID_LOW_CONFIDENCE.value,
     }
-    return pred.str.replace(r"aneuploid|diploid", lambda m: swap[m.group(0)], regex=True)
+    return pred.replace(swap)
 
 
 def orient_prediction(prediction, counts_dir, phase_csv, min_f_diff=MIN_F_DIFF):
@@ -46,11 +48,11 @@ def orient_prediction(prediction, counts_dir, phase_csv, min_f_diff=MIN_F_DIFF):
     pred = prediction.iloc[:, 1].astype(str)
     idx = prediction.iloc[:, 0].map(_counts.barcode_key).map(col)
     has = idx.notna().to_numpy()
+    is_aneuploid = pred.str.contains(PredictionLabel.ANEUPLOID.value).to_numpy()
+    is_diploid = pred.str.contains(PredictionLabel.DIPLOID.value).to_numpy() & ~is_aneuploid
     groups = {
-        PredictionLabel.ANEUPLOID: pred.str.contains(PredictionLabel.ANEUPLOID.value).to_numpy() & has,
-        PredictionLabel.DIPLOID: pred.str.contains(PredictionLabel.DIPLOID.value).to_numpy()
-        & ~pred.str.contains(PredictionLabel.ANEUPLOID.value).to_numpy()
-        & has,
+        PredictionLabel.ANEUPLOID: is_aneuploid & has,
+        PredictionLabel.DIPLOID: is_diploid & has,
     }
     report = {"snps_phased": len(snps), "flipped": False}
     for g, m in groups.items():

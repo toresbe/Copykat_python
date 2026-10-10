@@ -605,16 +605,13 @@ def baseline_gmm(
 
         # Check if any component mean is near zero (neutral)
         neutral_mask = np.abs(means) <= mu_cut
-        s = np.sum(neutral_mask)
-
-        if s >= 1:
-            frq = np.sum(weights[neutral_mask])
-            if frq > Nfraq_cut:
-                pred = PredictionLabel.DIPLOID
-            else:
-                pred = PredictionLabel.ANEUPLOID
-        else:
-            pred = PredictionLabel.ANEUPLOID
+        has_neutral_component = np.any(neutral_mask)
+        neutral_fraction = np.sum(weights[neutral_mask])
+        pred = (
+            PredictionLabel.DIPLOID
+            if has_neutral_component and neutral_fraction > Nfraq_cut
+            else PredictionLabel.ANEUPLOID
+        )
 
         N_normal_labels.append(pred)
 

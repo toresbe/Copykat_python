@@ -106,9 +106,10 @@ def _href(path: Path, output_dir: Path) -> str:
 
 def render_report(report: RunReport, fmt: ReportFormat | str, output_dir: Path) -> str:
     """Render without executing code or loading large matrix files."""
-    fmt = ReportFormat(fmt)
-    if fmt not in FORMATS:
-        raise ValueError(f"Unknown report format: {fmt}")
+    try:
+        fmt = ReportFormat(fmt)
+    except ValueError as error:
+        raise ValueError(f"Unknown report format: {fmt}") from error
     sections = report_sections(report)
     if fmt is ReportFormat.JSON:
         return (
@@ -160,8 +161,11 @@ def render_report(report: RunReport, fmt: ReportFormat | str, output_dir: Path) 
 
 def write_reports(report: RunReport, formats: Iterable[ReportFormat | str], output_dir: str | Path) -> list[Path]:
     """Write selected formats; only report files are created or replaced."""
-    selected = list(dict.fromkeys(ReportFormat(fmt) for fmt in formats))
-    if not selected or any(fmt not in FORMATS for fmt in selected):
+    try:
+        selected = list(dict.fromkeys(ReportFormat(fmt) for fmt in formats))
+    except ValueError as error:
+        raise ValueError(f"Select one or more formats: {', '.join(FORMATS)}") from error
+    if not selected:
         raise ValueError(f"Select one or more formats: {', '.join(FORMATS)}")
     directory = Path(output_dir).resolve()
     # Render everything before writing, so a missing image does not leave partial reports.

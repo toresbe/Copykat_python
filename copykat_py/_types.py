@@ -8,6 +8,8 @@ document them rather than enforce them):
 - Clustering works on the transpose, ``CellByFeature`` (cells x features).
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, NotRequired, TypeAlias, TypedDict
@@ -93,6 +95,13 @@ class GeneIdType(StrEnum):
 
     SYMBOL = "S"
     ENSEMBL = "E"
+
+    @classmethod
+    def from_legacy(cls, value: GeneIdType | str) -> GeneIdType:
+        """Normalize the historical ID-type argument, which treated E-prefixed values as Ensembl."""
+        if isinstance(value, cls):
+            return value
+        return cls.ENSEMBL if str(value).upper().startswith(cls.ENSEMBL.value) else cls.SYMBOL
 
 
 class CellLineMode(StrEnum):
