@@ -16,40 +16,65 @@ import sys
 
 def _build_index(a):
     from copykat_py.allele.kmer_index import build_index
-    n_keys, n_snps = build_index(a.fasta, a.snps, a.out, gtf=a.gtf, genome_wide=not a.gene_bodies_only,
-                                 junctions=not a.no_junctions, device=a.device)
+
+    n_keys, n_snps = build_index(
+        a.fasta,
+        a.snps,
+        a.out,
+        gtf=a.gtf,
+        genome_wide=not a.gene_bodies_only,
+        junctions=not a.no_junctions,
+        device=a.device,
+    )
     print(f"index: {n_keys} k-mers for {n_snps} SNPs in {a.out}")
 
 
 def _count(a):
     from copykat_py.allele.gpu_count import count_alleles
-    count_alleles(a.index, a.whitelist, a.out, fastq=a.fastq, sra=a.sra, umi_len=a.umi_len, workers=a.workers,
-                  igzip=a.igzip, fastq_dump=a.fastq_dump, device=a.device,
-                  log=lambda m: print(m, flush=True))
+
+    count_alleles(
+        a.index,
+        a.whitelist,
+        a.out,
+        fastq=a.fastq,
+        sra=a.sra,
+        umi_len=a.umi_len,
+        workers=a.workers,
+        igzip=a.igzip,
+        fastq_dump=a.fastq_dump,
+        device=a.device,
+        log=lambda m: print(m, flush=True),
+    )
 
 
 def _panel(a):
     from copykat_py.allele.phase import build_panel
+
     build_panel(a.panel_vcf_dir, a.snps, a.out, bcftools=a.bcftools, jobs=a.jobs)
 
 
 def _phase(a):
     from copykat_py.allele.phase import phase_sample
-    res = phase_sample(a.counts, a.panel, a.genetic_map, a.out, eagle=a.eagle, bcftools=a.bcftools,
-                       bgzip=a.bgzip, threads=a.threads)
+
+    res = phase_sample(
+        a.counts, a.panel, a.genetic_map, a.out, eagle=a.eagle, bcftools=a.bcftools, bgzip=a.bgzip, threads=a.threads
+    )
     print(f"{len(res)} heterozygous SNPs phased -> {a.out}")
 
 
 def _orient(a):
     from copykat_py.allele.orient import orient_prediction_file
-    _, report = orient_prediction_file(a.prediction, a.counts, a.phase, out_prefix=a.out_prefix,
-                                       min_f_diff=a.min_f_diff)
+
+    _, report = orient_prediction_file(
+        a.prediction, a.counts, a.phase, out_prefix=a.out_prefix, min_f_diff=a.min_f_diff
+    )
     print(json.dumps({k: v for k, v in report.items() if not k.startswith("segments_")}))
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="copykat-py-allele", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog="copykat-py-allele", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("build-index", help="k-mer index for the GPU counter (once per genome/SNP list)")
@@ -100,8 +125,12 @@ def main(argv=None):
     p.add_argument("--counts", required=True, help="cellsnp-lite-format directory")
     p.add_argument("--phase", required=True, help="CSV from `phase`")
     p.add_argument("--out-prefix", help="output prefix (default: next to the prediction file)")
-    p.add_argument("--min-f-diff", type=float, default=0.02,
-                   help="flip if F(diploid) - F(aneuploid) >= this (pre-registered: 0.02)")
+    p.add_argument(
+        "--min-f-diff",
+        type=float,
+        default=0.02,
+        help="flip if F(diploid) - F(aneuploid) >= this (pre-registered: 0.02)",
+    )
     p.set_defaults(func=_orient)
 
     a = ap.parse_args(argv)

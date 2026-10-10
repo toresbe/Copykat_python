@@ -23,7 +23,7 @@ import torch
 
 K = 31
 GENOME_CHUNK = 50_000_000
-_LUT = np.full(256, 4, np.uint8)            # A C G T (either case) -> 0..3, everything else -> 4 (N)
+_LUT = np.full(256, 4, np.uint8)  # A C G T (either case) -> 0..3, everything else -> 4 (N)
 for _i, _b in enumerate(b"ACGT"):
     _LUT[_b] = _i
     _LUT[_b + 32] = _i
@@ -52,7 +52,7 @@ def kmer_codes(windows, device):
     rev = torch.zeros((w.shape[0], n), dtype=torch.int64, device=device)
     bad = torch.zeros((w.shape[0], n), dtype=torch.bool, device=device)
     for i in range(K):
-        col = w[:, i:i + n]
+        col = w[:, i : i + n]
         bad |= col == 4
         c = col.clamp(max=3)
         fwd = (fwd << 2) | c
@@ -68,7 +68,7 @@ def genome_occurrences(keys, genome, device):
     counts = torch.zeros(len(keys), dtype=torch.int32, device=device)
     for seq in genome.values():
         for st in range(0, len(seq), GENOME_CHUNK):
-            s = torch.from_numpy(seq[st:min(st + GENOME_CHUNK + K - 1, len(seq))]).to(device)
+            s = torch.from_numpy(seq[st : min(st + GENOME_CHUNK + K - 1, len(seq))]).to(device)
             q = kmer_codes(s[None, :], device)[0]
             q = q[q >= 0]
             i = torch.searchsorted(keys_t, q).clamp(max=len(keys) - 1)
@@ -93,13 +93,22 @@ def _first_base_codes(series):
 def select_snps(genome, snp_vcf, gtf=None, gene_flank=1000):
     """Biallelic single-base SNPs whose REF matches the genome; with a GTF, only those in gene bodies
     (+- gene_flank); without one, genome-wide."""
-    s = pd.read_csv(snp_vcf, sep="\t", comment="#", header=None, usecols=[0, 1, 3, 4],
-                    names=["chr", "pos", "ref", "alt"], dtype={"chr": str})
+    s = pd.read_csv(
+        snp_vcf,
+        sep="\t",
+        comment="#",
+        header=None,
+        usecols=[0, 1, 3, 4],
+        names=["chr", "pos", "ref", "alt"],
+        dtype={"chr": str},
+    )
     s["chr"] = s.chr.str.replace("chr", "", regex=False)
     s = s[(s.ref.str.len() == 1) & (s.alt.str.len() == 1)]
     keep = np.ones(len(s), bool)
     if gtf is not None:
-        g = pd.read_csv(gtf, sep="\t", comment="#", header=None, usecols=[0, 2, 3, 4], names=["chr", "type", "start", "end"])
+        g = pd.read_csv(
+            gtf, sep="\t", comment="#", header=None, usecols=[0, 2, 3, 4], names=["chr", "type", "start", "end"]
+        )
         g = g[g.type == "gene"]
         g["chr"] = g.chr.str.replace("chr", "", regex=False)
         keep[:] = False
@@ -113,8 +122,8 @@ def select_snps(genome, snp_vcf, gtf=None, gene_flank=1000):
             cov = np.cumsum(iv) > 0
             keep[m] = cov[np.clip(s.pos.to_numpy()[m] - 1, 0, len(cov) - 1)]
     s = s[keep & s.chr.isin(list(genome)).to_numpy()].reset_index(drop=True)
-    s = s[np.array([p <= len(genome[c]) for c, p in zip(s.chr, s.pos)])].reset_index(drop=True)
-    ref = np.array([genome[c][p - 1] for c, p in zip(s.chr, s.pos)])
+    s = s[np.array([p <= len(genome[c]) for c, p in zip(s.chr, s.pos, strict=False)])].reset_index(drop=True)
+    ref = np.array([genome[c][p - 1] for c, p in zip(s.chr, s.pos, strict=False)])
     return s[ref == _first_base_codes(s.ref)].reset_index(drop=True)
 
 
@@ -124,7 +133,7 @@ def snp_kmers(genome, snps, device):
     for c, sc in snps.groupby("chr"):
         seq = genome[c]
         for b0 in range(0, len(sc), 200_000):
-            part = sc.iloc[b0:b0 + 200_000]
+            part = sc.iloc[b0 : b0 + 200_000]
             idx = (part.pos.to_numpy() - 1)[:, None] + np.arange(-(K - 1), K)[None, :]
             inside = (idx >= 0).all(1) & (idx < len(seq)).all(1)
             win = seq[np.clip(idx, 0, len(seq) - 1)]
@@ -145,8 +154,9 @@ def snp_kmers(genome, snps, device):
 
 def junction_kmers(genome, gtf, snps, device):
     """Exon-junction k-mers containing a SNP (REF and ALT); absent from the genome and unambiguous."""
-    g = pd.read_csv(gtf, sep="\t", comment="#", header=None, usecols=[0, 2, 3, 4, 8],
-                    names=["chr", "type", "start", "end", "attr"])
+    g = pd.read_csv(
+        gtf, sep="\t", comment="#", header=None, usecols=[0, 2, 3, 4, 8], names=["chr", "type", "start", "end", "attr"]
+    )
     ex = g[g.type == "exon"].copy()
     ex["chr"] = ex.chr.str.replace("chr", "", regex=False)
     ex["tx"] = ex.attr.str.extract(r'transcript_id "([^"]+)"')[0]
@@ -157,8 +167,8 @@ def junction_kmers(genome, gtf, snps, device):
         if len(e) < 2:
             continue
         e = e.sort_values("start")
-        tpos = np.concatenate([np.arange(s - 1, t) for s, t in zip(e.start, e.end)])   # 0-based genomic
-        jump = np.flatnonzero(np.diff(tpos) != 1)          # a junction follows transcript index jump[i]
+        tpos = np.concatenate([np.arange(s - 1, t) for s, t in zip(e.start, e.end, strict=False)])  # 0-based genomic
+        jump = np.flatnonzero(np.diff(tpos) != 1)  # a junction follows transcript index jump[i]
         p, sid, alt = by_chr[c]
         lo, hi = np.searchsorted(p, tpos[0]), np.searchsorted(p, tpos[-1], side="right")
         if hi <= lo:
@@ -170,8 +180,8 @@ def junction_kmers(genome, gtf, snps, device):
             continue
         d = np.min(np.abs(ti[:, None] - (jump[None, :] + 0.5)), axis=1)
         ok = (d < K - 1) & (ti >= K - 1) & (ti + K - 1 < len(tpos))
-        for t_i, s_i, a in zip(ti[ok], s_ids[ok], s_alt[ok]):
-            wins.append(tpos[t_i - (K - 1): t_i + K])
+        for t_i, s_i, a in zip(ti[ok], s_ids[ok], s_alt[ok], strict=False):
+            wins.append(tpos[t_i - (K - 1) : t_i + K])
             snp_ids.append(s_i)
             alts.append(a)
     W, snp_ids, alts = np.array(wins), np.array(snp_ids), np.array(alts)
@@ -181,7 +191,7 @@ def junction_kmers(genome, gtf, snps, device):
         m = chrs == c
         seq[m] = genome[c][W[m]]
     contig = np.diff(W, axis=1) == 1
-    crosses = np.stack([~contig[:, j:j + K - 1].all(1) for j in range(K)], 1)
+    crosses = np.stack([~contig[:, j : j + K - 1].all(1) for j in range(K)], 1)
     keys, vals = [], []
     for allele in (0, 1):
         s = seq.copy()
@@ -193,7 +203,7 @@ def junction_kmers(genome, gtf, snps, device):
         keys.append(codes[m])
         vals.append(v[m].astype(np.int32))
     kv = np.unique(np.stack([np.concatenate(keys), np.concatenate(vals).astype(np.int64)], 1), axis=0)
-    keys, vals = kv[:, 0], kv[:, 1].astype(np.int32)        # same junction in several transcripts -> once
+    keys, vals = kv[:, 0], kv[:, 1].astype(np.int32)  # same junction in several transcripts -> once
     single = np.r_[True, keys[1:] != keys[:-1]] & np.r_[keys[1:] != keys[:-1], True]
     keys, vals = keys[single], vals[single]
     absent = genome_occurrences(keys, genome, device) == 0

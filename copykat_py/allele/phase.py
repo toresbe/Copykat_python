@@ -41,22 +41,30 @@ def build_panel(panel_vcf_dir, snp_vcf, out_dir, bcftools=None, jobs=8):
     os.makedirs(out_dir, exist_ok=True)
     sites = os.path.join(out_dir, "sites.tsv.gz")
     if not os.path.exists(sites):
-        _run(f"zcat {snp_vcf} | grep -v '^#' | awk 'BEGIN{{OFS=\"\\t\"}} {{c=$1; sub(/^chr/,\"\",c); print \"chr\"c,$2}}' "
-             f"| gzip > {sites}")
+        _run(
+            f'zcat {snp_vcf} | grep -v \'^#\' | awk \'BEGIN{{OFS="\\t"}} {{c=$1; sub(/^chr/,"",c); print "chr"c,$2}}\' '
+            f"| gzip > {sites}"
+        )
     pending = [c for c in AUTOSOMES if not os.path.exists(os.path.join(out_dir, f"panel_chr{c}.bcf.csi"))]
     for i in range(0, len(pending), jobs):
         procs = []
-        for c in pending[i:i + jobs]:
+        for c in pending[i : i + jobs]:
             src = os.path.join(panel_vcf_dir, PANEL_NAME.format(c=c))
             out = os.path.join(out_dir, f"panel_chr{c}.bcf")
-            procs.append(subprocess.Popen(f"{bcftools} view -T {sites} -m2 -M2 -v snps {src} -Ob -o {out} "
-                                          f"&& {bcftools} index -f {out}", shell=True, executable="/bin/bash"))
+            procs.append(
+                subprocess.Popen(
+                    f"{bcftools} view -T {sites} -m2 -M2 -v snps {src} -Ob -o {out} && {bcftools} index -f {out}",
+                    shell=True,
+                    executable="/bin/bash",
+                )
+            )
         if any(p.wait() for p in procs):
             raise RuntimeError("bcftools failed while building the panel")
 
 
-def phase_sample(counts_dir, panel_dir, genetic_map, out_csv, eagle=None, bcftools=None, bgzip=None,
-                 threads=16, work_dir=None):
+def phase_sample(
+    counts_dir, panel_dir, genetic_map, out_csv, eagle=None, bcftools=None, bgzip=None, threads=16, work_dir=None
+):
     """Phase the pooled heterozygous SNPs of one sample; writes out_csv and returns the table."""
     eagle, bcftools, bgzip = _tool("eagle", eagle), _tool("bcftools", bcftools), _tool("bgzip", bgzip)
     snps, AD, DP, _ = _counts.load_counts(counts_dir)
@@ -80,13 +88,16 @@ def phase_sample(counts_dir, panel_dir, genetic_map, out_csv, eagle=None, bcftoo
                 f.write(f"chr{c}\t{r.pos}\t.\t{r.ref}\t{r.alt}\t.\tPASS\t.\tGT\t0/1\n")
         _run(f"{bgzip} -f {vcf} && {bcftools} index -f {vcf}.gz")
         prefix = os.path.join(tmp, f"phased_chr{c}")
-        _run(f"{eagle} --vcfRef {panel} --vcfTarget {vcf}.gz --geneticMapFile {genetic_map} --outPrefix {prefix} "
-             f"--chrom chr{c} --numThreads {threads} --allowRefAltSwap > {prefix}.log 2>&1")
-        ph = pd.read_csv(f"{prefix}.vcf.gz", sep="\t", comment="#", header=None, usecols=[1, 3, 9],
-                         names=["pos", "ref", "gt"])
+        _run(
+            f"{eagle} --vcfRef {panel} --vcfTarget {vcf}.gz --geneticMapFile {genetic_map} --outPrefix {prefix} "
+            f"--chrom chr{c} --numThreads {threads} --allowRefAltSwap > {prefix}.log 2>&1"
+        )
+        ph = pd.read_csv(
+            f"{prefix}.vcf.gz", sep="\t", comment="#", header=None, usecols=[1, 3, 9], names=["pos", "ref", "gt"]
+        )
         ph = ph[ph["gt"].isin(["0|1", "1|0"])].merge(h[["pos", "ref"]].rename(columns={"ref": "ref0"}), on="pos")
         hap = (ph["gt"] == "1|0").astype(int).to_numpy()
-        hap = np.where(ph.ref == ph.ref0, hap, 1 - hap)        # Eagle may swap REF/ALT; keep the counts' coding
+        hap = np.where(ph.ref == ph.ref0, hap, 1 - hap)  # Eagle may swap REF/ALT; keep the counts' coding
         out.append(pd.DataFrame({"chr": c, "pos": ph.pos, "ref": ph.ref0, "h": hap}))
     if not out:
         raise RuntimeError("no chromosome could be phased (panel missing or too few heterozygous SNPs)")

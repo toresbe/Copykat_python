@@ -2,7 +2,7 @@
 
 Follow-up: [two serial repeat rounds at 2k–40k](navin-review-serial-benchmarks.md), queued after this sweep completes.
 
-Last refreshed: 2026-10-10 11:25:59 UTC.
+Last refreshed: 2026-10-10 12:53:32 UTC.
 
 Currently proposed changes = pinned upstream main `ea1a15c` plus performance PRs [#4](https://github.com/navinlabcode/Copykat_python/pull/4), [#5](https://github.com/navinlabcode/Copykat_python/pull/5), [#6](https://github.com/navinlabcode/Copykat_python/pull/6), [#7](https://github.com/navinlabcode/Copykat_python/pull/7), [#8](https://github.com/navinlabcode/Copykat_python/pull/8) and [#9](https://github.com/navinlabcode/Copykat_python/pull/9). The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep is underway after accuracy completed; current running and queued states appear in the CPU-accounted report. The original five-PR snapshot of PRs #4 and #6–#9 excluded #5; its evidence is retained in the historical archives. The open CLI fix #3 is outside both performance snapshots. CPU experimental (no verification) = `perf/exact-shortcuts` at `ff63f19`, with Arrow output, memory/storage refactors, Ward-engine and repeated-bin changes. This broader experimental integration is distinct from the open-PR snapshots. These benchmark records are pinned to their source snapshots; subsequent Git branch construction is documented in `fork-integration-audit.md`.
 
@@ -32,8 +32,8 @@ The previous 170k CPU point was censored by an explicit 180-second process-time 
 | 30,000 | Currently proposed changes (6 PRs) | ok | 633.05 | 801.72 | 28.52 | pinned physical8 |
 | 40,000 | Currently proposed changes (6 PRs) | ok | 1127.23 | 1352.78 | 37.92 | pinned physical8 |
 | 80,000 | Currently proposed changes (6 PRs) | ok | 2081.32 | 2466.09 | 74.06 | pinned physical8 |
-| 120,000 | Currently proposed changes (6 PRs) | running; 43.6 min elapsed | — | — | — | recorded on completion |
-| 170,057 | Currently proposed changes (6 PRs) | queued | — | — | — | — |
+| 120,000 | Currently proposed changes (6 PRs) | memory_guard | — | — | 94.80 | pinned physical8 |
+| 170,057 | Currently proposed changes (6 PRs) | skipped_by_user | — | — | — | original unpinned |
 | 2,000 | CPU experimental (no verification) | ok | 15.62 | 22.18 | 7.70 | pinned physical8 |
 | 5,000 | CPU experimental (no verification) | ok | 12.98 | 36.43 | 7.70 | pinned physical8 |
 | 10,000 | CPU experimental (no verification) | ok | 24.24 | 67.69 | 7.70 | original unpinned |
@@ -72,8 +72,9 @@ The snapshot was upstream plus the five recorded PR patches, not the wrong sourc
 | Implementation | Elapsed estimate, min | Time model range, min | Host CPU estimate, core-min | Peak tree RSS estimate, GB | Memory model range, GB | Observed stop, min / GB |
 |---|---:|---:|---:|---:|---:|---|
 | Upstream main | 177.2 | 147.5–177.2 | 204.1 | 150.3 | 150.3–156.4 | 73.7 / 97.2 |
+| Currently proposed changes (6 PRs) | 162.8 | 115.8–162.8 | 193.0 | 156.4 | 155.4–157.4 | not run; skipped by request |
 
-These estimates assume sufficient RAM, the same algorithms and CPU placement, and no substantial swapping. They are not predictions of completion time under the current memory guard or heavy paging. Already completed stages in the stopped 170k run retain their observed time. Missing clustering stages use completed 80k/120k stages with the same PCA128/fastcluster engine: a power-law fit when two observations exist, otherwise a quadratic assumption. Model ranges compare that estimate with quadratic and n·log(n) stage scaling. Other missing stages scale linearly from the largest completed stage. Completed stages from stopped 120k runs are usable stage evidence; their incomplete totals never enter the fit. Host CPU estimates apply the completed 80k CPU/elapsed ratio to the stage-based elapsed estimate; they are weaker extrapolations than the stage timings.
+These estimates assume sufficient RAM, the same algorithms and CPU placement, and no substantial swapping. They are not predictions of completion time under the current memory guard or heavy paging. Already completed stages in the stopped 170k run retain their observed time. The six-PR 170k run was skipped by user request: every stage is extrapolated from smaller inputs, with no measured 170k stage or memory lower bound. Missing clustering stages use completed 80k/120k stages with the same PCA128/fastcluster engine: a power-law fit when two observations exist, otherwise a quadratic assumption. Model ranges compare that estimate with quadratic and n·log(n) stage scaling. Other missing stages scale linearly from the largest completed stage. Completed stages from stopped 120k runs are usable stage evidence; their incomplete totals never enter the fit. Host CPU estimates apply the completed 80k CPU/elapsed ratio to the stage-based elapsed estimate; they are weaker extrapolations than the stage timings.
 
 Memory uses a linear fit with intercept to successful pinned 20k–80k tree-RSS peaks. Its sensitivity range compares that fit with the last-two-point linear fit and proportional scaling from 80k. Stopped 120k/170k peaks are lower bounds and are not treated as completed peaks. Tree RSS can count shared pages more than once; these values are not exact physical-RAM requirements. The recovered CPU-stack 170k run has no comparable whole-run tree-RSS history, so its different cgroup-memory measurement is not plotted as tree RSS. All inputs, stage estimates and model parameters are saved in `/home/toresbe/cancer_research/navin_review_2026-10-09/results/170k_projections.json`.
 
@@ -129,6 +130,8 @@ These diagnostic checks run sequentially on CPUs 0–7 with no other review benc
 | 30,000 | Currently proposed changes (6 PRs) | pca256+fastcluster.linkage_vector | pca256+fastcluster.linkage_vector | pca256+fastcluster.linkage_vector |
 | 40,000 | Currently proposed changes (6 PRs) | pca256+fastcluster.linkage_vector | pca256+fastcluster.linkage_vector | pca256+fastcluster.linkage_vector |
 | 80,000 | Currently proposed changes (6 PRs) | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector |
+| 120,000 | Currently proposed changes (6 PRs) | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector |
+| 170,057 | Currently proposed changes (6 PRs) | — | — | — |
 | 2,000 | CPU experimental (no verification) | full_matrix+pdist+fastcluster.linkage | full_matrix+dedup195+pdist+fastcluster.linkage | full_matrix+dedup195+pdist+fastcluster.linkage |
 | 5,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup135+pdist+fastcluster.linkage | dedup135+pdist+fastcluster.linkage |
 | 10,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup154+pdist+fastcluster.linkage | dedup154+pdist+fastcluster.linkage |

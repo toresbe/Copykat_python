@@ -14,7 +14,7 @@ import pandas as pd
 from scipy.special import betaln, gammaln, logsumexp
 
 THETAS = np.array([0.6, 0.7, 0.8, 0.9])
-P_CNA = 1e-4                    # probability of a state change between consecutive SNPs
+P_CNA = 1e-4  # probability of a state change between consecutive SNPs
 MIN_SEG_BP = 5_000_000
 MIN_SEG_SNPS = 20
 # state 0 balanced; 1 + 2k: A-major at THETAS[k]; 2 + 2k: B-major at THETAS[k]
@@ -91,12 +91,19 @@ def segments(snps, k, n):
         on = 1 - post[:, 0] > 0.5
         a_major = post[:, 1::2].sum(1) >= post[:, 2::2].sum(1)
         edges = np.flatnonzero(np.diff(np.r_[0, on.astype(int), 0]))
-        for s0, s1 in zip(edges[::2], edges[1::2]):
+        for s0, s1 in zip(edges[::2], edges[1::2], strict=False):
             if pos[s1 - 1] - pos[s0] >= MIN_SEG_BP and s1 - s0 >= MIN_SEG_SNPS:
                 j = idx[s0:s1]
                 major = np.where(a_major[s0:s1], k[j], n[j] - k[j]).sum()
-                segs.append({"chr": c, "start": int(pos[s0]), "end": int(pos[s1 - 1]), "snps": int(s1 - s0),
-                             "theta": float(major / max(n[j].sum(), 1))})
+                segs.append(
+                    {
+                        "chr": c,
+                        "start": int(pos[s0]),
+                        "end": int(pos[s1 - 1]),
+                        "snps": int(s1 - s0),
+                        "theta": float(major / max(n[j].sum(), 1)),
+                    }
+                )
     seg = pd.DataFrame(segs, columns=["chr", "start", "end", "snps", "theta"])
     fraction = float((seg.end - seg.start).sum() / covered) if covered else 0.0
     return seg, fraction

@@ -6,12 +6,13 @@ import sys
 
 def load(path):
     rows = {}
-    for line in open(path):
-        if line.startswith("FAILED"):
-            rows[line.split()[1]] = None
-            continue
-        d = json.loads(line)
-        rows[d["sample"]] = d
+    with open(path) as stream:
+        for line in stream:
+            if line.startswith("FAILED"):
+                rows[line.split()[1]] = None
+                continue
+            d = json.loads(line)
+            rows[d["sample"]] = d
     return rows
 
 
@@ -29,8 +30,11 @@ def main(paths):
             if m is None:
                 print(f"{name[:30]:30s} wall={d['wall_seconds']:7.1f}s (unlabelled) {big}")
                 continue
-            print(f"{name[:30]:30s} wall={d['wall_seconds']:7.1f}s acc={m['accuracy']:.3f} bacc={m['balanced_accuracy']:.3f} "
-                  f"f1={m['f1_aneuploid']:.3f} ari={m['ari']:.3f} lowconf={int(m['low_conf'])} {big}")
+            print(
+                f"{name[:30]:30s} wall={d['wall_seconds']:7.1f}s "
+                f"acc={m['accuracy']:.3f} bacc={m['balanced_accuracy']:.3f} "
+                f"f1={m['f1_aneuploid']:.3f} ari={m['ari']:.3f} lowconf={int(m['low_conf'])} {big}"
+            )
         print(f"total wall {tot:.1f}s")
 
 

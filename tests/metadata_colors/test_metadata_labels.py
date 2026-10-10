@@ -7,8 +7,10 @@ from copykat_py.metadata_labels import annotation_title, is_prediction_column, l
 
 class MetadataLabelTests(unittest.TestCase):
     def test_warning_caption_preserves_unknown_statuses_and_omits_empty(self):
-        self.assertEqual(warning_caption("data quality is ok", "unclassified.prediction"),
-                         "Data quality: OK · Low-confidence classification")
+        self.assertEqual(
+            warning_caption("data quality is ok", "unclassified.prediction"),
+            "Data quality: OK · Low-confidence classification",
+        )
         self.assertEqual(warning_caption("", "future warning"), "future warning")
         self.assertEqual(warning_caption("", ""), "")
 

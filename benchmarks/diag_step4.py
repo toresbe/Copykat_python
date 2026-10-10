@@ -12,9 +12,10 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from datasets import load_sample  # noqa: E402
+import contextlib
+import importlib
 
-import importlib  # noqa: E402
+from datasets import load_sample
 
 ck = importlib.import_module("copykat_py.copykat")
 bl = importlib.import_module("copykat_py.baseline")
@@ -30,8 +31,14 @@ def main(sample, backend_name):
     gmm = bl._fit_gmm_3component
 
     def spy(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, pca_components=None, genome="hg20"):
-        res = orig(norm_mat_smooth, min_cells=min_cells, n_cores=n_cores, cell_names=cell_names,
-                   pca_components=pca_components, genome=genome)
+        res = orig(
+            norm_mat_smooth,
+            min_cells=min_cells,
+            n_cores=n_cores,
+            cell_names=cell_names,
+            pca_components=pca_components,
+            genome=genome,
+        )
         labels = res["cl"]
         names = np.asarray(cell_names, dtype=object)
         mal = truth.reindex(names).to_numpy()
@@ -48,10 +55,8 @@ def main(sample, backend_name):
 
     ck.baseline_norm_cl = spy
     os.chdir(os.path.expanduser("~/.cache/copykat_bench/diag"))
-    try:
+    with contextlib.suppress(_Stop):
         ck.copykat(rawmat, sam_name="diag", n_cores=32, plot_genes=False, backend_name=backend_name)
-    except _Stop:
-        pass
 
 
 if __name__ == "__main__":

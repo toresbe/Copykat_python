@@ -7,6 +7,8 @@ memory, so matrices larger than the GPU (e.g. 170k cells x 12k bins) work;
 host<->device copies are a small fraction of the work they replace.
 """
 
+import itertools
+
 import numpy as np
 import torch
 
@@ -63,7 +65,7 @@ def _center_rows_inplace(X):
     acc = torch.zeros(X.shape[1], dtype=torch.float64, device=X.device)
     step = _chunk(n, 8 * X.shape[1], 0.1)
     for lo in range(0, n, step):
-        acc += X[lo:lo + step].double().sum(0)
+        acc += X[lo : lo + step].double().sum(0)
     X -= (acc / n).to(X.dtype)
     return X
 
@@ -81,6 +83,7 @@ def median(x, dim):
 # Pre-smoothing filters on sparse counts
 # ---------------------------------------------------------------------------
 
+
 class DeviceCounts:
     """A sparse (genes x cells) count matrix held on the device as COO.
 
@@ -95,8 +98,7 @@ class DeviceCounts:
         csr = sparse.csr_matrix(mat)
         n_genes, n_cells = csr.shape
         indptr = torch.from_numpy(csr.indptr.astype(np.int64)).to(DEVICE)
-        self.row = torch.repeat_interleave(
-            torch.arange(n_genes, dtype=torch.int32, device=DEVICE), torch.diff(indptr))
+        self.row = torch.repeat_interleave(torch.arange(n_genes, dtype=torch.int32, device=DEVICE), torch.diff(indptr))
         self.col = torch.from_numpy(csr.indices.astype(np.int32)).to(DEVICE)
         self.val = torch.from_numpy(csr.data).to(DEVICE).float()
         nz = self.val != 0  # explicit zeros are not detections
@@ -119,9 +121,9 @@ class DeviceCounts:
         counts = torch.zeros(n_chrom * n_cells, dtype=torch.int64, device=DEVICE)
         step = 1 << 26
         for lo in range(0, len(self.row), step):
-            c = code_of_row[self.row[lo:lo + step].long()]
+            c = code_of_row[self.row[lo : lo + step].long()]
             ok = c >= 0
-            key = c[ok] * n_cells + self.col[lo:lo + step][ok].long()
+            key = c[ok] * n_cells + self.col[lo : lo + step][ok].long()
             counts += torch.bincount(key, minlength=n_chrom * n_cells)
         counts = counts.view(n_chrom, n_cells)
         keep = (counts.sum(0) >= 5) & (counts > 0).all(0) & (counts.min(0).values >= ngene_chr)
@@ -143,8 +145,11 @@ class DeviceCounts:
         if self._col_ptr is None:
             order = torch.argsort(self.col, stable=True)
             self.row, self.col, self.val = self.row[order], self.col[order], self.val[order]
-            self._col_ptr = torch.searchsorted(
-                self.col, torch.arange(self.shape[1] + 1, dtype=torch.int32, device=DEVICE)).cpu().numpy()
+            self._col_ptr = (
+                torch.searchsorted(self.col, torch.arange(self.shape[1] + 1, dtype=torch.int32, device=DEVICE))
+                .cpu()
+                .numpy()
+            )
         a, b = int(self._col_ptr[lo]), int(self._col_ptr[hi])
         out = torch.zeros((self.shape[0], hi - lo), dtype=torch.float64, device=DEVICE)
         out[self.row[a:b].long(), (self.col[a:b] - lo).long()] = self.val[a:b].double()
@@ -154,6 +159,7 @@ class DeviceCounts:
 # ---------------------------------------------------------------------------
 # Step 3: Freeman-Tukey + centring + DLM smoothing
 # ---------------------------------------------------------------------------
+
 
 def _dense_columns(counts, lo, hi):
     """Columns [lo, hi) of a dense or sparse (genes x cells) matrix as an fp64 device tensor."""
@@ -167,7 +173,8 @@ def _dense_columns(counts, lo, hi):
             torch.from_numpy(block.indptr.astype(np.int64)),
             torch.from_numpy(block.indices.astype(np.int64)),
             torch.from_numpy(block.data.astype(np.float64)),
-            size=block.shape, dtype=torch.float64,
+            size=block.shape,
+            dtype=torch.float64,
         ).to(DEVICE)
         return t.to_dense()
     return _upload(counts[:, lo:hi], torch.float64)
@@ -201,6 +208,7 @@ def freeman_tukey_smooth(counts, K, B):
 # Clustering
 # ---------------------------------------------------------------------------
 
+
 def _upload_collapsed(data):
     """Upload the rows of ``data`` (n x d host array) as float32, collapsing runs
     of identical adjacent columns like ``baseline._collapse_repeated_features``
@@ -214,8 +222,8 @@ def _upload_collapsed(data):
     changes = torch.zeros(max(d - 1, 0), dtype=torch.bool, device=DEVICE)
     step = _chunk(n, 8 * d, 0.1)
     for lo in range(0, n, step):
-        blk = _upload(data[lo:lo + step])
-        X[lo:lo + step] = blk
+        blk = _upload(data[lo : lo + step])
+        X[lo : lo + step] = blk
         if d > 1:
             changes |= (blk[:, 1:] != blk[:, :-1]).any(dim=0)
         del blk
@@ -228,7 +236,7 @@ def _upload_collapsed(data):
     scale = torch.sqrt(runs.double())
     out = torch.empty((n, len(starts)), dtype=torch.float32, device=DEVICE)
     for lo in range(0, n, step):
-        out[lo:lo + step] = (X[lo:lo + step, starts].double() * scale).float()
+        out[lo : lo + step] = (X[lo : lo + step, starts].double() * scale).float()
     del X
     return out, out.shape[1]
 
@@ -272,6 +280,7 @@ def ward_cluster(data, reduce_to=None, collapse=True):
 # Baseline estimation helpers
 # ---------------------------------------------------------------------------
 
+
 def cluster_medians(mat, labels, cluster_ids):
     """Per-cluster median profiles of the columns of ``mat`` (genes x cells).
 
@@ -285,7 +294,7 @@ def cluster_medians(mat, labels, cluster_ids):
     for lo in range(0, n_genes, step):
         hi = min(n_genes, lo + step)
         M = _upload(mat[lo:hi], torch.float32 if mat.dtype == np.float32 else torch.float64)
-        for o, idx in zip(out, members):
+        for o, idx in zip(out, members, strict=False):
             o[lo:hi] = median(M[:, idx], dim=1).cpu().numpy()
         del M
     return out
@@ -306,7 +315,7 @@ def silhouette(data, labels, block_rows=None):
     nrm = torch.empty(n, dtype=torch.float32, device=DEVICE)
     step = _chunk(n, 8 * X.shape[1], 0.1)
     for lo in range(0, n, step):
-        nrm[lo:lo + step] = (X[lo:lo + step].double() ** 2).sum(1).float()
+        nrm[lo : lo + step] = (X[lo : lo + step].double() ** 2).sum(1).float()
     if block_rows is None:
         block_rows = _chunk(n, 4 * 3 * n, 0.5)
     sums = torch.empty((n, k), dtype=torch.float64, device=DEVICE)
@@ -332,6 +341,7 @@ def silhouette(data, labels, block_rows=None):
 # Step 5: segmentation
 # ---------------------------------------------------------------------------
 
+
 def segment_log_means(fttmat, breaks):
     """log(mean(exp(x))) over each segment [BR[i], BR[i+1]] per cell, in FP64.
 
@@ -344,8 +354,8 @@ def segment_log_means(fttmat, breaks):
     BR = list(breaks)
     # gene -> segment index (later segments win on shared boundaries)
     seg_of_gene = np.empty(n_genes, dtype=np.int64)
-    for s, (left, right) in enumerate(zip(BR[:-1], BR[1:])):
-        seg_of_gene[left:right + 1] = s
+    for s, (left, right) in enumerate(itertools.pairwise(BR)):
+        seg_of_gene[left : right + 1] = s
     left = np.asarray(BR[:-1])
     right = np.asarray(BR[1:])
     seg_len = np.maximum(1, right - left + 1).astype(np.float64)
@@ -373,6 +383,7 @@ def segment_log_means(fttmat, breaks):
 # Step 6: genomic bins
 # ---------------------------------------------------------------------------
 
+
 def bin_medians(values, bin_gene_indices, n_bins, source_bin):
     """Median over each bin's gene rows for every cell, as a host fp64 F-order array.
 
@@ -387,8 +398,11 @@ def bin_medians(values, bin_gene_indices, n_bins, source_bin):
         if rows:
             by_len.setdefault(len(rows), []).append(b)
     groups = [
-        (L, torch.as_tensor(np.array([bin_gene_indices[b] for b in bins], dtype=np.int64), device=DEVICE),
-         torch.as_tensor(np.array(bins), device=DEVICE))
+        (
+            L,
+            torch.as_tensor(np.array([bin_gene_indices[b] for b in bins], dtype=np.int64), device=DEVICE),
+            torch.as_tensor(np.array(bins), device=DEVICE),
+        )
         for L, bins in by_len.items()
     ]
     src = torch.as_tensor(np.asarray(source_bin), device=DEVICE)
@@ -402,8 +416,8 @@ def bin_medians(values, bin_gene_indices, n_bins, source_bin):
         for L, idx, bt in groups:
             step = _chunk(len(bt), 4 * 2 * L * (hi - lo), 0.2)
             for b0 in range(0, len(bt), step):
-                g = V[idx[b0:b0 + step]]  # (nb x L x cells)
-                out[bt[b0:b0 + step]] = median(g, dim=1) if L > 1 else g[:, 0]
+                g = V[idx[b0 : b0 + step]]  # (nb x L x cells)
+                out[bt[b0 : b0 + step]] = median(g, dim=1) if L > 1 else g[:, 0]
                 del g
         _download_into(result[:, lo:hi], out[src])
         del V, out

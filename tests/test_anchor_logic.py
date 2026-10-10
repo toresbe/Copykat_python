@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from copykat_py.anchor import count_markers, choose_anchor_cluster
+from copykat_py.anchor import choose_anchor_cluster, count_markers
 
 
 def test_marker_counting_from_dataframe_and_csv(tmp_path) -> None:

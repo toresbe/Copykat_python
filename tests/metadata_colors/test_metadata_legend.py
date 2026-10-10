@@ -11,8 +11,10 @@ class MetadataLegendTests(unittest.TestCase):
     def test_groups_are_titled_borderless_and_stacked(self):
         fig, ax = plt.subplots()
         try:
-            groups = [("CopyKAT Python", [("blue", "Diploid"), ("orange", "Aneuploid")]),
-                      ("Cell type", [("green", "T cell")])]
+            groups = [
+                ("CopyKAT Python", [("blue", "Diploid"), ("orange", "Aneuploid")]),
+                ("Cell type", [("green", "T cell")]),
+            ]
             legends = draw_metadata_legends(ax, groups, start=0.8)
             self.assertEqual(len(legends), 2)
             self.assertEqual(legends[0].get_title().get_text(), "CopyKAT Python")

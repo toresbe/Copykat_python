@@ -26,7 +26,9 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from datasets import load_sample, sample_names  # noqa: E402
+import itertools
+
+from datasets import load_sample, sample_names
 
 ck = importlib.import_module("copykat_py.copykat")
 bl = importlib.import_module("copykat_py.baseline")
@@ -77,7 +79,7 @@ def _breakpoints(ftt, clu, bins, cut, method, seed_offset=0):
             bre = sg._find_breakpoints_exact(E[:, c], bins, cut)
         else:
             bre = sg._find_breakpoints_for_cluster(E[:, c], bins, cut, rng_seed=42 + c + seed_offset, mc_samples=1000)
-        BR.update([0] + bre + [n - 1])
+        BR.update([0, *bre, n - 1])
     return BR
 
 
@@ -100,18 +102,25 @@ def analyse(sample):
     pcs = PCA(n_components=min(256, n - 1, X.shape[1]), svd_solver="randomized", random_state=1234).fit_transform(X)
     Z_pca = fc_linkage(pcs.astype(np.float64), method="ward")
     for k in (2, 6):
-        out[f"pca_ari_k{k}"] = float(adjusted_rand_score(fcluster(Z_exact, k, "maxclust"), fcluster(Z_pca, k, "maxclust")))
+        out[f"pca_ari_k{k}"] = float(
+            adjusted_rand_score(fcluster(Z_exact, k, "maxclust"), fcluster(Z_pca, k, "maxclust"))
+        )
 
     labels_2 = fcluster(Z_exact, 2, "maxclust")
     out["sil_exact"] = ops.silhouette(X, labels_2)
     if n > 3000:
         rng = np.random.RandomState(1234)
         target = max(3000, min(int(0.20 * n), 20000))
-        idx = np.concatenate([
-            rng.choice(np.where(labels_2 == c)[0], size=min(len(np.where(labels_2 == c)[0]),
-                       max(200, int(target * (labels_2 == c).sum() / n))), replace=False)
-            for c in np.unique(labels_2)
-        ])
+        idx = np.concatenate(
+            [
+                rng.choice(
+                    np.where(labels_2 == c)[0],
+                    size=min(len(np.where(labels_2 == c)[0]), max(200, int(target * (labels_2 == c).sum() / n))),
+                    replace=False,
+                )
+                for c in np.unique(labels_2)
+            ]
+        )
         out["sil_sub"] = float(silhouette_score(X[idx], labels_2[idx]))
     else:
         out["sil_sub"] = out["sil_exact"]
@@ -124,9 +133,9 @@ def analyse(sample):
     e32 = np.exp(ftt)
     cs = np.vstack([np.zeros((1, e32.shape[1]), np.float32), np.cumsum(e32, axis=0)])
     worst = 0.0
-    for left, right in zip(BR[:-1], BR[1:]):
+    for left, right in itertools.pairwise(BR):
         m32 = np.log(np.maximum((cs[right + 1] - cs[left]) / (right - left + 1), 1e-300))
-        m64 = np.log(np.exp(ftt[left:right + 1].astype(np.float64)).mean(axis=0))
+        m64 = np.log(np.exp(ftt[left : right + 1].astype(np.float64)).mean(axis=0))
         worst = max(worst, float(np.max(np.abs(m32 - m64))))
     out["cumsum_err"] = worst
 

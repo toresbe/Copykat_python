@@ -31,8 +31,9 @@ def _lower_tile(G_ptr, row, cols, mask, stride_g, nrm_r, err_r, size_r, nrm_ptr,
 
 
 @triton.jit
-def _row_argmin_kernel(G_ptr, stride_g, rows_ptr, nrm_ptr, size_ptr, err_ptr, m,
-                       out_val_ptr, out_idx_ptr, BLOCK: tl.constexpr):
+def _row_argmin_kernel(
+    G_ptr, stride_g, rows_ptr, nrm_ptr, size_ptr, err_ptr, m, out_val_ptr, out_idx_ptr, BLOCK: tl.constexpr
+):
     i = tl.program_id(0)
     self_col = tl.load(rows_ptr + i)
     nrm_r = tl.load(nrm_ptr + self_col)
@@ -54,8 +55,20 @@ def _row_argmin_kernel(G_ptr, stride_g, rows_ptr, nrm_ptr, size_ptr, err_ptr, m,
 
 
 @triton.jit
-def _row_reach_kernel(G_ptr, stride_g, rows_ptr, nrm_ptr, size_ptr, err_ptr, thr_ptr, m,
-                      out_cnt_ptr, out_cols_ptr, CAP: tl.constexpr, BLOCK: tl.constexpr):
+def _row_reach_kernel(
+    G_ptr,
+    stride_g,
+    rows_ptr,
+    nrm_ptr,
+    size_ptr,
+    err_ptr,
+    thr_ptr,
+    m,
+    out_cnt_ptr,
+    out_cols_ptr,
+    CAP: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
     i = tl.program_id(0)
     self_col = tl.load(rows_ptr + i)
     nrm_r = tl.load(nrm_ptr + self_col)
@@ -90,6 +103,7 @@ def row_reach(G, rows, nrm32, size32, err, thr, cap=16):
     q, m = G.shape
     cnt = torch.empty(q, dtype=torch.int32, device=G.device)
     cols = torch.full((q, cap), -1, dtype=torch.int32, device=G.device)
-    _row_reach_kernel[(q,)](G, G.stride(0), rows, nrm32, size32, err, thr, m, cnt, cols,
-                            CAP=cap, BLOCK=1024, num_warps=4)
+    _row_reach_kernel[(q,)](
+        G, G.stride(0), rows, nrm32, size32, err, thr, m, cnt, cols, CAP=cap, BLOCK=1024, num_warps=4
+    )
     return cnt, cols.long()

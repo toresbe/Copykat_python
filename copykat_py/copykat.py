@@ -206,7 +206,7 @@ def _preN_to_names(preN: str | bytes | Sequence[Any] | npt.NDArray[Any] | None, 
     if preN is None:
         return set()
 
-    if isinstance(preN, (str, bytes)):
+    if isinstance(preN, str | bytes):
         return {str(preN)}
 
     values = list(preN)
@@ -215,7 +215,7 @@ def _preN_to_names(preN: str | bytes | Sequence[Any] | npt.NDArray[Any] | None, 
 
     names = []
     for value in values:
-        if isinstance(value, (int, np.integer)):
+        if isinstance(value, int | np.integer):
             idx = int(value)
             if 0 <= idx < len(cell_names):
                 names.append(cell_names[idx])

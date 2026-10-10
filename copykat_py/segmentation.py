@@ -145,7 +145,7 @@ def _gamma_ks_distance(a1: float, r1: float, a2: float, r2: float, tail: float =
             edges = [lo, turning_point, hi]
 
     distance = 0.0
-    for left, right in zip(edges[:-1], edges[1:], strict=False):
+    for left, right in itertools.pairwise(edges):
         f_left, f_right = log_density_ratio(left), log_density_ratio(right)
         if f_left == 0:
             root = left

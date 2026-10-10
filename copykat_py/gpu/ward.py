@@ -36,7 +36,7 @@ try:
 except Exception:  # pragma: no cover - Triton missing or unsupported GPU
     nn_triton = None
 
-_EPS32 = 2.0 ** -24
+_EPS32 = 2.0**-24
 
 
 def _ward_factor(si, sj):
@@ -57,7 +57,7 @@ def _exact_rows(C, size, rows):
     for i, r in enumerate(rows.tolist()):
         acc = torch.zeros(m, dtype=torch.float64, device=C.device)
         for c0 in range(0, d, col):
-            diff = C[:, c0:c0 + col].double() - C[r, c0:c0 + col].double()
+            diff = C[:, c0 : c0 + col].double() - C[r, c0 : c0 + col].double()
             acc += (diff * diff).sum(1)
         w = _ward_factor(size[r], size) * acc
         w[r] = float("inf")
@@ -98,7 +98,7 @@ def _sq_norms(X, chunk_elems=int(2.5e8)):
     out = torch.empty(X.shape[0], dtype=torch.float64, device=X.device)
     step = max(1, chunk_elems // max(1, X.shape[1]))
     for lo in range(0, X.shape[0], step):
-        out[lo:lo + step] = (X[lo:lo + step].double() ** 2).sum(1)
+        out[lo : lo + step] = (X[lo : lo + step].double() ** 2).sum(1)
     return out
 
 
@@ -109,10 +109,10 @@ def _exact_pairs(C, size, rows, cols, mem_bytes):
     w = torch.empty(cols.shape, dtype=torch.float64, device=C.device)
     sub = max(1, int(mem_bytes // (8 * 2 * kk * d)))
     for s0 in range(0, len(rows), sub):
-        r = rows[s0:s0 + sub]
-        ci = cols[s0:s0 + sub]
+        r = rows[s0 : s0 + sub]
+        ci = cols[s0 : s0 + sub]
         diff = C[r].double()[:, None, :] - C[ci].double()
-        w[s0:s0 + sub] = _ward_factor(size[r, None], size[ci]) * (diff * diff).sum(-1)
+        w[s0 : s0 + sub] = _ward_factor(size[r, None], size[ci]) * (diff * diff).sum(-1)
         del diff
     return w
 
@@ -178,8 +178,11 @@ def _candidate_search(C, size, query, k, mem_bytes, S):
             low = _lower_bounds(G, rows, nrm32, size32, err)
             hit = low <= w1_up[:, None]
             reach = hit.sum(dim=1)
-            hv, hits = torch.topk(torch.where(hit, -torch.arange(m, device=dev, dtype=torch.float32), -float("inf")),
-                                  min(_REACH_CAP, m), dim=1)
+            hv, hits = torch.topk(
+                torch.where(hit, -torch.arange(m, device=dev, dtype=torch.float32), -float("inf")),
+                min(_REACH_CAP, m),
+                dim=1,
+            )
             hits = torch.where(hv > -float("inf"), hits, -1)
             del low, hit
         nn[lo:hi] = j1
@@ -280,7 +283,7 @@ def ward_linkage(X, device="cuda", k=8, return_stats=False, search_dim=None, ove
     copy_rows = max(1, int(2.5e8 // max(1, d)))
     colsum = torch.zeros(d, dtype=torch.float64, device=device)
     for lo in range(0, n, copy_rows):
-        colsum += C[lo:lo + copy_rows].double().sum(0)
+        colsum += C[lo : lo + copy_rows].double().sum(0)
     C -= (colsum / n).float()
     S = None
     if search_dim is not None and search_dim < d and n > search_dim:
@@ -310,7 +313,10 @@ def ward_linkage(X, device="cuda", k=8, return_stats=False, search_dim=None, ove
         p = a.numel()
         new_ids = torch.arange(next_id, next_id + p, device=device)
         next_id += p
-        child_a.append(pid[a]); child_b.append(pid[b]); delta.append(nnw[a]); counts.append(snew)
+        child_a.append(pid[a])
+        child_b.append(pid[b])
+        delta.append(nnw[a])
+        counts.append(snew)
         rounds.append(torch.full((p,), rnd, device=device))
         # a's slot becomes the merged cluster; b's slot is dropped
         C[a] = cnew

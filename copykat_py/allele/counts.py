@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 from scipy import io, sparse
 
-MIN_POOLED_DEPTH = 8        # heterozygous SNP: pooled UMIs over all cells ...
-MIN_ALLELE_DEPTH = 2        # ... both alleles seen at least this often ...
-MIN_MINOR_FRACTION = 0.1    # ... and the minor allele at least this fraction
+MIN_POOLED_DEPTH = 8  # heterozygous SNP: pooled UMIs over all cells ...
+MIN_ALLELE_DEPTH = 2  # ... both alleles seen at least this often ...
+MIN_MINOR_FRACTION = 0.1  # ... and the minor allele at least this fraction
 
 
 def _mtx(directory, tag):
@@ -27,9 +27,16 @@ def load_counts(directory):
     Returns (snps, AD, DP, cells): snps is a DataFrame with chr (no 'chr' prefix), pos, ref, alt;
     AD (ALT UMIs) and DP (REF+ALT UMIs) are SNP x cell CSR matrices; cells are the barcodes.
     """
-    snps = pd.read_csv(os.path.join(directory, "cellSNP.base.vcf.gz"), sep="\t", comment="#", header=None,
-                       usecols=[0, 1, 3, 4], names=["chr", "pos", "ref", "alt"], dtype={"chr": str},
-                       keep_default_na=False)
+    snps = pd.read_csv(
+        os.path.join(directory, "cellSNP.base.vcf.gz"),
+        sep="\t",
+        comment="#",
+        header=None,
+        usecols=[0, 1, 3, 4],
+        names=["chr", "pos", "ref", "alt"],
+        dtype={"chr": str},
+        keep_default_na=False,
+    )
     snps["chr"] = snps.chr.str.replace("chr", "", regex=False)
     cells = pd.read_csv(os.path.join(directory, "cellSNP.samples.tsv"), header=None)[0].astype(str).to_numpy()
     return snps, _mtx(directory, "AD"), _mtx(directory, "DP"), cells

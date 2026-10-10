@@ -1,6 +1,6 @@
 # Serial 2k–40k repeat benchmarks
 
-Last refreshed: 2026-10-10 11:26:00 UTC.
+Last refreshed: 2026-10-10 12:53:34 UTC.
 
 Currently proposed changes = pinned upstream main `ea1a15c` plus performance PRs [#4](https://github.com/navinlabcode/Copykat_python/pull/4), [#5](https://github.com/navinlabcode/Copykat_python/pull/5), [#6](https://github.com/navinlabcode/Copykat_python/pull/6), [#7](https://github.com/navinlabcode/Copykat_python/pull/7), [#8](https://github.com/navinlabcode/Copykat_python/pull/8) and [#9](https://github.com/navinlabcode/Copykat_python/pull/9). The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep is underway after accuracy completed; current running and queued states appear in the CPU-accounted report. The original five-PR snapshot of PRs #4 and #6–#9 excluded #5; its evidence is retained in the historical archives. The open CLI fix #3 is outside both performance snapshots. CPU experimental (no verification) = `perf/exact-shortcuts` at `ff63f19`, with Arrow output, memory/storage refactors, Ward-engine and repeated-bin changes. This broader experimental integration is distinct from the open-PR snapshots. These benchmark records are pinned to their source snapshots; subsequent Git branch construction is documented in `fork-integration-audit.md`.
 
@@ -20,14 +20,14 @@ Means use only successful runs from this serial phase. Parallel measurements and
 | 25,000 | Upstream main | 2 / 2 | ok, ok | 528.95 ± 5.61 | 695.56 ± 6.76 | 524.99–532.92 |
 | 30,000 | Upstream main | 2 / 2 | ok, ok | 738.17 ± 1.39 | 938.81 ± 1.30 | 737.18–739.16 |
 | 40,000 | Upstream main | 2 / 2 | ok, ok | 1267.71 ± 1.17 | 1537.26 ± 2.53 | 1266.89–1268.54 |
-| 2,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 111.92 (one completed) | 115.40 (one completed) | 111.92–111.92 |
-| 5,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 30.91 (one completed) | 65.19 (one completed) | 30.91–30.91 |
-| 10,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 85.83 (one completed) | 146.25 (one completed) | 85.83–85.83 |
-| 15,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 167.78 (one completed) | 251.70 (one completed) | 167.78–167.78 |
-| 20,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 292.30 (one completed) | 403.01 (one completed) | 292.30–292.30 |
-| 25,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 438.47 (one completed) | 578.09 (one completed) | 438.47–438.47 |
-| 30,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 633.05 (one completed) | 801.72 (one completed) | 633.05–633.05 |
-| 40,000 | Currently proposed changes (6 PRs) | 1 / 2 | ok, queued | 1127.23 (one completed) | 1352.78 (one completed) | 1127.23–1127.23 |
+| 2,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 111.14 ± 1.11 | 114.44 ± 1.35 | 110.35–111.92 |
+| 5,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 30.92 ± 0.02 | 65.14 ± 0.08 | 30.91–30.94 |
+| 10,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 86.32 ± 0.69 | 147.59 ± 1.89 | 85.83–86.80 |
+| 15,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 168.61 ± 1.17 | 253.51 ± 2.55 | 167.78–169.44 |
+| 20,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 296.24 ± 5.57 | 408.96 ± 8.41 | 292.30–300.18 |
+| 25,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 439.16 ± 0.98 | 579.22 ± 1.60 | 438.47–439.85 |
+| 30,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 636.11 ± 4.33 | 806.54 ± 6.80 | 633.05–639.17 |
+| 40,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 1125.95 ± 1.81 | 1352.76 ± 0.03 | 1124.67–1127.23 |
 | 2,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 12.79 ± 0.01 | 19.04 ± 0.08 | 12.79–12.80 |
 | 5,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 11.56 ± 0.07 | 29.73 ± 0.20 | 11.50–11.61 |
 | 10,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 20.55 ± 0.12 | 59.53 ± 0.12 | 20.46–20.63 |
@@ -61,6 +61,14 @@ Error bars show the observed minimum–maximum, not confidence intervals. Only p
 | 25,000 | Upstream main | identical / identical / identical / identical |
 | 30,000 | Upstream main | identical / identical / identical / identical |
 | 40,000 | Upstream main | identical / identical / identical / identical |
+| 2,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
+| 5,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
+| 10,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
+| 15,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
+| 20,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
+| 25,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
+| 30,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
+| 40,000 | Currently proposed changes (6 PRs) | identical / identical / identical / identical |
 | 2,000 | CPU experimental (no verification) | identical / identical / identical / identical |
 | 5,000 | CPU experimental (no verification) | identical / identical / identical / identical |
 | 10,000 | CPU experimental (no verification) | identical / identical / identical / identical |

@@ -6,8 +6,6 @@ one thread block that runs every iteration inside a single kernel launch.
 Only the summation order differs from the CPU version.
 """
 
-import math
-
 import cupy as cp
 import numpy as np
 import torch
@@ -122,9 +120,15 @@ def fit_gmm_3component_batch(X, sigma_init=None, mu_init=(-0.2, 0.0, 0.2), max_i
     b, n = Xt.shape
     if sigma_init is None:
         sigma_init = torch.clamp(0.5 * Xt.std(dim=1, unbiased=False), min=0.05)
-    sig = torch.as_tensor(np.broadcast_to(np.asarray(
-        sigma_init.cpu().numpy() if isinstance(sigma_init, torch.Tensor) else sigma_init, dtype=np.float64), (b,)).copy(),
-        device="cuda")
+    sig = torch.as_tensor(
+        np.broadcast_to(
+            np.asarray(
+                sigma_init.cpu().numpy() if isinstance(sigma_init, torch.Tensor) else sigma_init, dtype=np.float64
+            ),
+            (b,),
+        ).copy(),
+        device="cuda",
+    )
     means = cp.empty((b, 3), dtype=cp.float64)
     weights = cp.empty((b, 3), dtype=cp.float64)
     sigma = cp.empty(b, dtype=cp.float64)
@@ -132,7 +136,23 @@ def fit_gmm_3component_batch(X, sigma_init=None, mu_init=(-0.2, 0.0, 0.2), max_i
     scratch = cp.empty(b * n * 3, dtype=cp.float64)
     sm_count = torch.cuda.get_device_properties(0).multi_processor_count
     nt = 512 if b < 2 * sm_count else 256
-    _get_kernel(nt)((b,), (nt,), (cp.from_dlpack(Xt), np.int64(n), cp.from_dlpack(sig),
-                           np.float64(mu_init[0]), np.float64(mu_init[1]), np.float64(mu_init[2]),
-                           np.int32(max_iter), np.float64(tol), means, weights, sigma, iters, scratch))
+    _get_kernel(nt)(
+        (b,),
+        (nt,),
+        (
+            cp.from_dlpack(Xt),
+            np.int64(n),
+            cp.from_dlpack(sig),
+            np.float64(mu_init[0]),
+            np.float64(mu_init[1]),
+            np.float64(mu_init[2]),
+            np.int32(max_iter),
+            np.float64(tol),
+            means,
+            weights,
+            sigma,
+            iters,
+            scratch,
+        ),
+    )
     return cp.asnumpy(means), cp.asnumpy(weights), cp.asnumpy(sigma)

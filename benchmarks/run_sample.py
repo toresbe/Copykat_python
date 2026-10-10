@@ -13,7 +13,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from datasets import load_sample, score  # noqa: E402
+import contextlib
+
+from datasets import load_sample, score
 
 
 def main():
@@ -23,18 +25,21 @@ def main():
     ap.add_argument("--n-cores", type=int, default=os.cpu_count())
     ap.add_argument("--plot", action="store_true")
     ap.add_argument("--keep-outputs", action="store_true")
-    ap.add_argument("--null-outputs", action="store_true",
-                    help="send the two large CNA text files to /dev/null (still formatted and written)")
-    ap.add_argument("--kw", action="append", default=[], help="extra copykat() kwargs, key=value (value parsed as JSON if possible)")
+    ap.add_argument(
+        "--null-outputs",
+        action="store_true",
+        help="send the two large CNA text files to /dev/null (still formatted and written)",
+    )
+    ap.add_argument(
+        "--kw", action="append", default=[], help="extra copykat() kwargs, key=value (value parsed as JSON if possible)"
+    )
     args = ap.parse_args()
 
     kwargs = {}
     for item in args.kw:
         k, v = item.split("=", 1)
-        try:
+        with contextlib.suppress(json.JSONDecodeError):
             v = json.loads(v)
-        except json.JSONDecodeError:
-            pass
         kwargs[k] = v
 
     rawmat, truth = load_sample(args.sample)
@@ -48,8 +53,9 @@ def main():
             os.symlink(os.devnull, fn)
 
     import numpy as np
-    from copykat_py.copykat import copykat
+
     import copykat_py
+    from copykat_py.copykat import copykat
 
     load_before = os.getloadavg()[0]
     t0 = time.perf_counter()
