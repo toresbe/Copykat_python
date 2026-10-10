@@ -31,6 +31,26 @@ Background: [`benchmark-proposal.md`](../docs/benchmark-proposal.md),
 [`fork-integration-audit.md`](../docs/fork-integration-audit.md) and
 `benchmark-manifest.json`.
 
+## Data
+
+Inputs are not in the repository. `python benchmarks/fetch_data.py check` shows
+what is present under `COPYKAT_BENCH_DATA`. Which benchmarks need what:
+
+| Benchmark | Input | How to get it |
+|---|---|---|
+| Xenium scaling (10k / 30k / 170k cells) | `xenium/cell_feature_matrix.h5` from the [Atera WTA FFPE human breast cancer](https://www.10xgenomics.com/datasets/atera-wta-ffpe-human-breast-cancer) dataset | Copy the download link for the cell-feature matrix (or the outs bundle) from the dataset page, then `python benchmarks/fetch_data.py xenium --url URL` (or `--file` for something already downloaded) |
+| README samples (11 labelled tumours) | `copykat_readme_data/samples/<Study>_<sample>/` in 10x MTX layout plus `metadata.csv` | Download the 11 studies from the [Cancer Cell Atlas (3CA)](https://www.weizmann.ac.il/sites/3CA/) by hand (each cancer-type page has per-study "Download Data" and "Download Meta-data" links), unpack them under one directory, then `python benchmarks/fetch_data.py 3ca THAT_DIR`. The sample list is in `fetch_data.py` and the README table. |
+| Accuracy study (125 samples) | The README samples above, more 3CA studies (`3ca/`), ScPCA libraries (`scpca_3ca/`), Tabula Sapiens h5ad files (`tabula_sapiens/`), `anchor_study/split.json` | Not scripted. `accuracy_data.py` selects whatever it finds under `COPYKAT_BENCH_DATA`, so a smaller selection runs fine, but the exact 125-sample set and `split.json` (a private development/holdout split) cannot be reproduced from this repository. |
+| Mouse T989 comparison | `scratch/T989_mm10.npz` under `COPYKAT_BENCH_ROOT` | Not scripted; see `docs/mm10-order-validation.md`. |
+
+Caveats on what was verified: the sandbox this was written in could not reach
+10x Genomics or Weizmann hosts, so the download commands could not be run
+against the real sites. `fetch_data.py 3ca` assumes the 3CA study layout that
+`accuracy_data.py` already reads (`*UMI*.mtx` as genes x cells, `Cells*.csv`
+with `cell_name`, `cell_type` and `sample`/`patient` columns, `Genes*.txt`), and
+was tested only on synthetic data in that layout. The Atera dataset's direct
+file URL was not confirmed, hence `--url`.
+
 ## Configuration
 
 Nothing is hard-coded to a machine: every location defaults to a path under
