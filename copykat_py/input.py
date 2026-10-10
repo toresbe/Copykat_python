@@ -1,5 +1,6 @@
 """Input loading and filtering for CopyKAT's genes-by-cells matrices."""
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -8,7 +9,31 @@ import pandas as pd
 from scipy import sparse
 from scipy.io import mmread
 
-from copykat_py._types import BoolArray, InputStats, RawMatrix, SparseMatrix
+from copykat_py._types import BoolArray, RawMatrix, SparseMatrix
+
+
+@dataclass(frozen=True, slots=True)
+class InputStats:
+    """Counts and input representation recorded during input filtering."""
+
+    input_type: str
+    filtered_cells: int
+    filtered_gene_rows: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedInput:
+    """Filtered genes-by-cells matrix and its aligned input metadata.
+
+    ``barcodes`` aligns to the filtered matrix columns; ``original_cell_names``
+    retains all input names before cell filtering.
+    """
+
+    matrix: sparse.csr_matrix | npt.NDArray[Any]
+    genes: pd.Index | npt.NDArray[Any]
+    barcodes: list[str]
+    original_cell_names: list[str]
+    stats: InputStats
 
 
 def _load_matrix(rawmat: RawMatrix) -> pd.DataFrame:
@@ -85,7 +110,7 @@ def _prepare_sparse_input(
     barcodes: npt.NDArray[Any],
     min_gene_per_cell: int,
     low_dr: float,
-) -> tuple[sparse.csr_matrix, npt.NDArray[Any], list[str], list[str], InputStats]:
+) -> PreparedInput:
     """Sparse branch of ``_prepare_input_matrix``: filter without densifying."""
     csc, genes = _aggregate_duplicate_genes_sparse(mat.tocsc(copy=False), genes)
     original_cell_names = barcodes.tolist()
@@ -99,23 +124,21 @@ def _prepare_sparse_input(
     detection_rate = np.asarray(csc.getnnz(axis=1)).ravel() / max(csc.shape[1], 1)
     keep_genes = detection_rate > low_dr
     filtered_gene_rows = int((~keep_genes).sum())
-    return (
-        csc[keep_genes, :].tocsr(),
-        genes[keep_genes],
-        barcodes.tolist(),
-        original_cell_names,
-        {
-            "input_type": "sparse_dict",
-            "filtered_cells": filtered_cells,
-            "filtered_gene_rows": filtered_gene_rows,
-        },
+    return PreparedInput(
+        matrix=csc[keep_genes, :].tocsr(),
+        genes=genes[keep_genes],
+        barcodes=barcodes.tolist(),
+        original_cell_names=original_cell_names,
+        stats=InputStats(
+            input_type="sparse_dict",
+            filtered_cells=filtered_cells,
+            filtered_gene_rows=filtered_gene_rows,
+        ),
     )
 
 
-def _prepare_input_matrix(
-    rawmat: RawMatrix, min_gene_per_cell: int, low_dr: float
-) -> tuple[sparse.csr_matrix | npt.NDArray[Any], pd.Index | npt.NDArray[Any], list[str], list[str], InputStats]:
-    """Filter cells and genes; returns (matrix, genes, barcodes, original_cell_names, stats).
+def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: float) -> PreparedInput:
+    """Filter cells and genes, returning a ``PreparedInput`` result.
 
     The matrix is genes x cells, scipy CSR for sparse dict input (so it is
     only densified after annotation and cell filtering) or a numpy array.
@@ -148,16 +171,16 @@ def _prepare_input_matrix(
     filtered_gene_rows = int((~keep_genes).sum())
     if keep_genes.sum() >= 1:
         loaded = loaded.loc[keep_genes]
-    return (
-        loaded.to_numpy(),
-        loaded.index,
-        list(loaded.columns),
-        original_cell_names,
-        {
-            "input_type": "dense",
-            "filtered_cells": filtered_cells,
-            "filtered_gene_rows": filtered_gene_rows,
-        },
+    return PreparedInput(
+        matrix=loaded.to_numpy(),
+        genes=loaded.index,
+        barcodes=list(loaded.columns),
+        original_cell_names=original_cell_names,
+        stats=InputStats(
+            input_type="dense",
+            filtered_cells=filtered_cells,
+            filtered_gene_rows=filtered_gene_rows,
+        ),
     )
 
 

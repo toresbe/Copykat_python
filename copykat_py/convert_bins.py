@@ -6,12 +6,13 @@ Maps gene-level copy number values into 220KB variable genomic bins.
 
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from copykat_py._types import BinConversion, GeneByCell, Genome, ParallelInfo
+from copykat_py._types import BinByCell, GeneByCell, Genome, ParallelInfo
 from copykat_py.data_loader import load_dna_bins, load_full_anno
 
 _LAST_PAR_INFO: ParallelInfo = {
@@ -24,6 +25,18 @@ _LAST_PAR_INFO: ParallelInfo = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class BinConversionResult:
+    """Genomic-bin annotations and the backing copy-number matrix.
+
+    ``values`` is the matrix backing the cell columns of ``rna_table``.
+    """
+
+    dna_annotations: pd.DataFrame
+    rna_table: pd.DataFrame
+    values: BinByCell
+
+
 def get_last_convert_bins_info() -> ParallelInfo:
     return _LAST_PAR_INFO.copy()
 
@@ -34,7 +47,7 @@ def convert_to_bins(
     n_cores: int = 1,
     values: GeneByCell | None = None,
     cell_names: Sequence[str] | None = None,
-) -> BinConversion | None:
+) -> BinConversionResult | None:
     """Convert gene-by-cell CNA results to 220KB genomic bins.
 
     Parameters
@@ -55,10 +68,8 @@ def convert_to_bins(
 
     Returns
     -------
-    dict with keys:
-        'DNA_adj': pd.DataFrame - DNA bin coordinates
-        'RNA_adj': pd.DataFrame - CNA values at genomic bins (chrom, chrompos, abspos, cell1, ...)
-        'RNA_adj_values': np.ndarray - the (n_bins, n_cells) values backing 'RNA_adj'
+    A ``BinConversionResult`` containing DNA bin coordinates, the output table,
+    and the matrix backing the table's cell columns.
     """
     if genome != Genome.HG20:
         # For mm10, return gene-level results (no bin conversion, same as R)
@@ -184,8 +195,4 @@ def convert_to_bins(
     for pos, col in enumerate(["chrom", "chrompos", "abspos"]):
         RNA_adj_df.insert(pos, col, DNA[col].to_numpy())
 
-    return {
-        "DNA_adj": DNA,
-        "RNA_adj": RNA_adj_df,
-        "RNA_adj_values": RNA_adj,
-    }
+    return BinConversionResult(dna_annotations=DNA, rna_table=RNA_adj_df, values=RNA_adj)
