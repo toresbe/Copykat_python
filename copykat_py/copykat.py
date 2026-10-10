@@ -35,6 +35,7 @@ from copykat_py._types import (
     ClusteringResult,
     ClusterLabels,
     CopyKATResult,
+    DistanceMetric,
     FloatArray,
     GeneProfile,
     ParallelInfo,
@@ -136,7 +137,7 @@ def _run_plot_heatmap(
     chrom_info: npt.NDArray[Any],
     predictions: dict[str, str] | None,
     sample_name: str,
-    distance: str,
+    distance: DistanceMetric,
     n_cores: int,
     WNS1: str,
     WNS: str,
@@ -241,7 +242,7 @@ def copykat(
     norm_cell_names: str | list[str] = "",
     KS_cut: float = 0.1,
     sam_name: str = "",
-    distance: str = "euclidean",
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     output_seg: bool = False,
     plot_genes: bool = True,
     genome: str = "hg20",
@@ -281,8 +282,8 @@ def copykat(
         KS test cutoff for breakpoint detection (0 to 1).
     sam_name : str
         Sample name prefix for output files.
-    distance : str
-        Distance metric: "euclidean", "pearson", or "spearman".
+    distance : DistanceMetric
+        Cell-ordering distance metric.
     output_seg : bool
         Whether to output .seg file for IGV.
     plot_genes : bool
@@ -314,6 +315,7 @@ def copykat(
         'CNAmat': pd.DataFrame with CNA results
         'hclustering': linkage matrix or cluster labels
     """
+    distance = DistanceMetric(distance)
     backend.set_backend(backend_name)
     if anchor not in {"sigma", "markers"}:
         raise ValueError("anchor must be 'sigma' or 'markers'")

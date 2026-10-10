@@ -16,7 +16,7 @@ from scipy import sparse as sp
 from scipy.io import mmread
 
 from copykat_py._logging import default_progress_output, log_progress_to, with_default_progress_output
-from copykat_py._types import CopyKATResult, RawInput, RawMatrix, SparseMatrix
+from copykat_py._types import CopyKATResult, DistanceMetric, RawInput, RawMatrix, SparseMatrix
 from copykat_py.genomic_coordinates import split_cna_table
 
 logger = logging.getLogger(__name__)
@@ -102,8 +102,9 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--distance",
-        default="euclidean",
-        choices=["euclidean", "pearson", "spearman"],
+        type=DistanceMetric,
+        default=DistanceMetric.EUCLIDEAN,
+        choices=list(DistanceMetric),
         help="[optional] Distance metric for clustering (default: euclidean)",
     )
     parser.add_argument(
@@ -573,7 +574,7 @@ def copykat_anndata(
     selecting_meta: str | Iterable[str] | None = None,
     row_split: str | None = None,
     sample_name: str = "",
-    distance: str = "euclidean",
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     genome: str = "hg20",
     n_cores: int = 1,
     output_dir: str | os.PathLike[str] = ".",
@@ -593,6 +594,7 @@ def copykat_anndata(
     pca_components: int | None = None,
 ) -> CopyKATResult:
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
+    distance = DistanceMetric(distance)
     _, rawmat, matrix_label = _anndata_to_rawmat(
         adata,
         layer=layer,
@@ -719,8 +721,9 @@ Meta CSV format
     )
     parser.add_argument(
         "--distance",
-        default="euclidean",
-        choices=["euclidean", "pearson", "spearman"],
+        type=DistanceMetric,
+        default=DistanceMetric.EUCLIDEAN,
+        choices=list(DistanceMetric),
         help="[optional] Distance metric for within-group cell clustering (default: euclidean).",
     )
     parser.add_argument(

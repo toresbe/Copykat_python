@@ -9,6 +9,7 @@ document them rather than enforce them):
 """
 
 from collections.abc import Sequence
+from enum import StrEnum
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
 import numpy as np
@@ -41,6 +42,14 @@ LinkageMatrix: TypeAlias = npt.NDArray[np.float64]
 # Sparse count matrices as they reach the pipeline: COO from scipy.io.mmread,
 # CSC from the AnnData wrapper, CSR from callers and after row selection.
 SparseMatrix: TypeAlias = sparse.coo_matrix | sparse.csr_matrix | sparse.csc_matrix
+
+
+class DistanceMetric(StrEnum):
+    """Supported distance metrics for ordering cells in CNA heatmaps."""
+
+    EUCLIDEAN = "euclidean"
+    PEARSON = "pearson"
+    SPEARMAN = "spearman"
 
 
 class RawInput(TypedDict):

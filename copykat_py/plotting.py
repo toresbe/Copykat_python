@@ -27,7 +27,7 @@ from sklearn.decomposition import TruncatedSVD
 from threadpoolctl import threadpool_limits
 
 from copykat_py._logging import with_default_progress_output
-from copykat_py._types import FloatArray, IntArray, LinkageMatrix
+from copykat_py._types import DistanceMetric, FloatArray, IntArray, LinkageMatrix
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
 from copykat_py.genomic_coordinates import chromosome_label
 from copykat_py.metadata_colors import ContinuousAnnotation, continuous_annotation, is_continuous
@@ -84,14 +84,18 @@ def _simple_cell_order(mat: FloatArray, predictions: Mapping[str, str] | None = 
     return np.argsort(cna_magnitude)[::-1]
 
 
-def _compute_distance(mat: FloatArray, distance: str = "euclidean", n_cores: int = 1) -> FloatArray:
+def _compute_distance(
+    mat: FloatArray,
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
+    n_cores: int = 1,
+) -> FloatArray:
     """Compute distance matrix for cells.
 
     Parameters
     ----------
     mat : np.ndarray, shape (n_bins, n_cells)
         CNA matrix.
-    distance : str
+    distance : DistanceMetric
         "euclidean", "pearson", or "spearman".
 
     Returns
@@ -99,13 +103,14 @@ def _compute_distance(mat: FloatArray, distance: str = "euclidean", n_cores: int
     dist : np.ndarray
         Condensed distance matrix.
     """
-    if distance == "euclidean":
+    distance = DistanceMetric(distance)
+    if distance == DistanceMetric.EUCLIDEAN:
         return pdist(mat.T, metric="euclidean")
-    elif distance == "pearson":
+    elif distance == DistanceMetric.PEARSON:
         corr = np.corrcoef(mat.T)
         corr = np.clip(corr, -1, 1)
         return pdist(1 - corr)
-    elif distance == "spearman":
+    elif distance == DistanceMetric.SPEARMAN:
         from scipy.stats import spearmanr
 
         corr, _ = spearmanr(mat, axis=0)
@@ -116,7 +121,11 @@ def _compute_distance(mat: FloatArray, distance: str = "euclidean", n_cores: int
 
 
 def _safe_linkage(
-    mat: FloatArray, distance: str = "euclidean", method: str = "ward", n_cores: int = 1, max_cells: int = 65536
+    mat: FloatArray,
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
+    method: str = "ward",
+    n_cores: int = 1,
+    max_cells: int = 65536,
 ) -> LinkageMatrix:
     """Compute linkage with fastcluster-first execution.
 
@@ -124,7 +133,7 @@ def _safe_linkage(
     regardless of cell count so plotting matches the main clustering path.
     The ``max_cells`` argument is retained for compatibility.
     """
-    if distance == "euclidean" and method.startswith("ward"):
+    if distance == DistanceMetric.EUCLIDEAN and method.startswith("ward"):
         data = mat.T
         collapsed = _collapse_repeated_features(data)
         return _ward_linkage(data if collapsed is None else collapsed, n_cores=n_cores)[0]
@@ -333,7 +342,7 @@ def plot_heatmap(
     chrom_info: npt.NDArray[Any],
     predictions: Mapping[str, str] | None = None,
     sample_name: str = "",
-    distance: str = "euclidean",
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     n_cores: int = 1,
     WNS1: str = "",
     WNS: str = "",
@@ -358,7 +367,7 @@ def plot_heatmap(
         Cell name -> "aneuploid"/"diploid" predictions.
     sample_name : str
         Sample name for title.
-    distance : str
+    distance : DistanceMetric
         Distance metric.
     n_cores : int
         Number of cores.
@@ -369,6 +378,7 @@ def plot_heatmap(
     output_path : str or None
         Path to save figure.
     """
+    distance = DistanceMetric(distance)
     if output_path is None:
         output_path = f"{sample_name}_copykat_heatmap.png"
 
@@ -652,7 +662,11 @@ def _read_meta_csv(path: str) -> pd.DataFrame:
     return df
 
 
-def _order_group(mat_grp: FloatArray, distance: str = "euclidean", n_cores: int = 1) -> IntArray:
+def _order_group(
+    mat_grp: FloatArray,
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
+    n_cores: int = 1,
+) -> IntArray:
     """Return a cell-ordering index array for one CNA sub-matrix.
 
     Uses full Ward linkage for groups ≤ 3 000 cells; K-means block ordering
@@ -689,7 +703,7 @@ def plot_heatmap_annotated(
     meta_csv: str,
     row_split_col: str | None = None,
     sample_name: str = "",
-    distance: str = "euclidean",
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     n_cores: int = 1,
     output_path: str | None = None,
     continuous_meta: Sequence[str] | None = None,
@@ -722,7 +736,7 @@ def plot_heatmap_annotated(
         and clusters all cells together.
     sample_name : str
         Label shown in the figure title and used for the default filename.
-    distance : str
+    distance : DistanceMetric
         Distance metric for within-group clustering
         (``"euclidean"``, ``"pearson"``, or ``"spearman"``).
     n_cores : int
@@ -735,6 +749,7 @@ def plot_heatmap_annotated(
         distinct values. By default numeric measurements are detected; small
         integer-coded categories and the row-split column remain categorical.
     """
+    distance = DistanceMetric(distance)
     if output_path is None:
         output_path = f"{sample_name}_copykat_annotated_heatmap.png"
 
