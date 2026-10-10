@@ -22,6 +22,21 @@ stacks, the experimental CPU/GPU fork) on:
 Timings are evidence for the pinned snapshots they were measured on, not for
 the current commit.
 
+## Quick start
+
+```bash
+benchmarks/run.sh check                  # which inputs are present
+benchmarks/run.sh list                   # samples you can run
+benchmarks/run.sh Bi2021_Kidney_P90      # benchmark the committed HEAD on one sample
+BENCH_REF=main benchmarks/run.sh xenium10000 --plot --null-outputs
+```
+
+`run.sh` exports the chosen git ref (default `HEAD`; uncommitted changes are
+not included) into `$COPYKAT_BENCH_ROOT/snapshots/` and runs `benchmark.py`
+on it; results are written to `$COPYKAT_BENCH_ROOT/results/<name>.json`. Extra
+arguments pass through to `benchmark.py` (`--backend gpu`, `--timeout`, ...).
+Unlike `prepare.py`, it needs no pinned historical commits.
+
 ## Scripts
 
 | Group | Scripts | Report in `docs/` |
