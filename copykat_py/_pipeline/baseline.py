@@ -40,7 +40,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class _BaselineState:
-    """Warning and normal-cell reference selected across baseline strategies."""
+    """Warning and normal-cell reference selected across baseline strategies.
+
+    Attributes
+    ----------
+    warning : BaselineWarning
+        Classification confidence or reference mode, used in runtime reporting,
+        prediction confidence labels, and heatmap warnings.
+    normal_cells : list of str, IntArray, or None
+        Normal-cell names, or zero-based indices into the cell names supplied
+        to baseline selection. ``None`` denotes a synthetic cell-line reference.
+    """
 
     warning: BaselineWarning
     normal_cells: list[str] | IntArray | None
@@ -48,7 +58,27 @@ class _BaselineState:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BaselineOptions:
-    """Strategy and clustering settings for selecting a normal reference."""
+    """Strategy and clustering settings for selecting a normal reference.
+
+    Attributes
+    ----------
+    cell_line : CellLineMode
+        ``YES`` selects a synthetic baseline for pure cell-line data; ``NO``
+        uses supplied normal cells or automatically detects a normal reference.
+    anchor : AnchorStrategy
+        Strategy for automatic reference selection: ``SIGMA`` ranks clusters
+        by their fitted neutral-profile spread; ``MARKERS`` also considers
+        immune and endothelial marker evidence. Supplied normals and synthetic
+        references take precedence over this setting.
+    genome : Genome
+        Reference genome, ``HG20`` or ``MM10``, passed to baseline estimation.
+    n_cores : int
+        Maximum number of CPU workers requested for baseline clustering.
+    pca_components : int
+        Resolved PCA component cap for large clustering steps. This is the
+        effective value selected from the input cell count and genome or from
+        the caller's override, rather than the optional requested value.
+    """
 
     cell_line: CellLineMode
     anchor: AnchorStrategy
@@ -62,6 +92,17 @@ class BaselineSelection:
     """Relative expression, aligned cluster labels, and the selected reference.
 
     The array fields are owned by the caller and are not made read-only.
+
+    Attributes
+    ----------
+    relative_expression : FloatArray
+        Baseline-subtracted expression with shape ``(genes, cells)``, retaining
+        the gene and cell order of the smoothed input.
+    cluster_labels : ClusterLabels
+        One 1-based cluster ID per column of ``relative_expression``. Automatic
+        GMM fallback retains the labels from the original clustering candidate.
+    reference : _BaselineState
+        Selected normal-cell reference and its confidence or mode warning.
     """
 
     relative_expression: FloatArray

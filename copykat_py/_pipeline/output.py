@@ -29,7 +29,24 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _HeatmapOptions:
-    """Small display and execution settings, separate from heatmap data."""
+    """Small display and execution settings, separate from heatmap data.
+
+    Attributes
+    ----------
+    sample_name : str
+        Label shown in the heatmap title. Pipeline callers supply the output
+        prefix ``{sam_name}_copykat_``.
+    distance : DistanceMetric
+        Distance metric used to order cells for the heatmap; supports
+        ``EUCLIDEAN``, ``PEARSON``, and ``SPEARMAN``.
+    n_cores : int
+        Number of CPU workers requested for plotting-time clustering.
+    genome : Genome
+        Reference genome of the plotted values, used to decode chromosome
+        labels, including genome-specific numeric X and Y chromosome codes.
+    output_path : str
+        PNG destination supplied explicitly by the pipeline.
+    """
 
     sample_name: str
     distance: DistanceMetric
@@ -85,7 +102,39 @@ def _run_plot_heatmap(
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OutputOptions:
-    """Small file and plotting settings, shared by both genome paths."""
+    """Small file and plotting settings, shared by both genome paths.
+
+    Attributes
+    ----------
+    sample_name : str
+        Complete prefix for output filenames, constructed by the public
+        function as ``{sam_name}_copykat_``; also used in plot titles.
+    genome : Genome
+        Reference genome of the CNA results. ``HG20`` has bin coordinates;
+        ``MM10`` has gene annotations. Also controls chromosome labels and
+        whether SEG export is available.
+    distance : DistanceMetric
+        Distance metric used to order cells in standard and annotated heatmaps.
+    n_cores : int
+        Number of CPU workers requested for CNA output writing and
+        plotting-time clustering.
+    plot_genes : bool
+        Whether to plot the final CNA heatmap. Despite the public argument's
+        name, ``HG20`` plots genomic bins and ``MM10`` plots genes. Also enables
+        the additional annotated heatmap when ``meta_csv`` is provided.
+    output_seg : bool
+        Whether to export an IGV SEG file. Applied only to ``HG20`` results;
+        the existing ``MM10`` path does not export SEG files.
+    meta_csv : str or None
+        Optional per-cell annotation CSV path. Its first column contains cell
+        names; remaining columns supply annotation sidebars. When plotting is
+        enabled, predictions are appended to a companion CSV and an additional
+        annotated heatmap is written. ``None`` disables that additional plot.
+    row_split_col : str or None
+        Metadata column used to split and label annotated-heatmap rows.
+        ``None`` uses the first metadata column after the cell-name column;
+        an empty string disables row splitting.
+    """
 
     sample_name: str
     genome: Genome

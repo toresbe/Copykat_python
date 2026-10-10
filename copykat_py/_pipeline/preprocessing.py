@@ -20,7 +20,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FilteringOptions:
-    """Requested cell coverage and gene detection thresholds."""
+    """Requested cell coverage and gene detection thresholds.
+
+    Attributes
+    ----------
+    min_gene_per_cell : int
+        Minimum number of detected genes needed to retain an input cell.
+    ngene_chr : int
+        Minimum number of detected genes per represented chromosome for each
+        retained cell, checked before smoothing and again before segmentation.
+    lower_detection_rate : float
+        Requested ``LOW_DR`` threshold, expressed as a fraction of cells.
+        Input gene filtering uses detection rates strictly above this value.
+    upper_detection_rate : float
+        Requested ``UP_DR`` threshold for segmentation, expressed as a fraction
+        of cells. Segmentation retains genes at or above the effective value;
+        when fewer than 7,000 genes survive input filtering, the effective
+        value is replaced with ``lower_detection_rate``. This field retains
+        the original request for reporting.
+    """
 
     min_gene_per_cell: int
     ngene_chr: int

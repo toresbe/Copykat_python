@@ -36,7 +36,28 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PredictionOptions:
-    """Final-call strategy and clustering settings."""
+    """Final-call strategy and clustering settings.
+
+    Attributes
+    ----------
+    genome : Genome
+        Reference genome of the CNA values: ``HG20`` uses genomic bins and
+        ``MM10`` uses gene-level values.
+    cell_line : CellLineMode
+        Pure cell-line mode. For ``HG20``, ``YES`` skips diploid baseline
+        adjustment and returns clustering without predictions. The existing
+        ``MM10`` path still adjusts the baseline and produces predictions.
+    final_call : FinalCallStrategy
+        ``CLUSTERS`` assigns calls from cluster/reference overlap or CNA
+        magnitude. ``ARM_CORRELATION`` uses chromosome-arm correlation calls
+        when at least five normal anchor cells remain; otherwise it falls
+        back to clusters. Arm correlation is supported only for ``HG20``.
+    n_cores : int
+        Maximum number of CPU workers requested for final clustering.
+    pca_components : int
+        Resolved PCA component cap used by large final clustering steps,
+        selected earlier from the input cell count and genome or an override.
+    """
 
     genome: Genome
     cell_line: CellLineMode
@@ -47,7 +68,18 @@ class PredictionOptions:
 
 @dataclass(frozen=True, slots=True)
 class FinalPrediction:
-    """The adjusted input matrix and its final clustering/calls."""
+    """The adjusted input matrix and its final clustering/calls.
+
+    Attributes
+    ----------
+    values : FloatArray
+        CNA values with shape ``(features, cells)`` after baseline adjustment.
+        Features are genomic bins for ``HG20`` and genes for ``MM10``. The
+        array shares the input's backing storage and remains mutable.
+    clustering : WardClusteringResult or FinalCallResult
+        Cluster labels and linkage tree aligned to the matrix columns, plus
+        per-cell predictions when the selected genome and mode produce calls.
+    """
 
     values: FloatArray
     clustering: WardClusteringResult | FinalCallResult

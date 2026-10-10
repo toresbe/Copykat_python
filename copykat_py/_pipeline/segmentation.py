@@ -11,7 +11,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _SegmentationOptions:
-    """Requested segmentation settings; retry cutoffs are derived from these."""
+    """Requested segmentation settings; retry cutoffs are derived from these.
+
+    Attributes
+    ----------
+    window_size : int
+        Number of genes per window for MCMC segmentation; corresponds to the
+        public ``win_size`` argument and the segmenter's ``bins`` argument.
+    ks_cutoff : float
+        Requested KS breakpoint threshold, from 0 to 1; corresponds to
+        ``KS_cut``. If fewer than 25 breakpoints are found, retries use 50%
+        and then 25% of this value without changing the requested setting.
+    ks_method : KSMethod
+        ``MONTE_CARLO`` compares sampled posterior distributions; ``EXACT``
+        computes the posterior-Gamma KS statistic directly.
+    n_cores : int
+        Maximum number of CPU workers requested for segmentation.
+    """
 
     window_size: int
     ks_cutoff: float
