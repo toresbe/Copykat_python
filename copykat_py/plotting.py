@@ -10,10 +10,11 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.collections import LineCollection
 from matplotlib.gridspec import GridSpec
-from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+from scipy.cluster.hierarchy import linkage, dendrogram, fcluster, leaves_list
 from scipy.spatial.distance import pdist
 
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
+from copykat_py import backend
 
 # Try to use fastcluster for faster linkage computation on large datasets
 try:
@@ -270,6 +271,62 @@ def _draw_cluster_dendrogram(ax, centroid_linkage, cluster_sizes):
     ax.set_yticks([])
 
 
+# Above this many image pixels the GPU backend hands matplotlib a raster
+# sampled at most this size per side (see _heatmap_raster).
+RASTER_MAX_SIDE = 4000
+
+
+def _heatmap_raster(mat, cell_order, max_side=RASTER_MAX_SIDE):
+    """(cells x bins) image of ``mat`` in ``cell_order``, nearest-sampled to at
+    most ``max_side`` rows and columns at evenly spaced pixel centres.
+
+    Drawn with ``extent`` covering the full matrix, this is the same
+    nearest-neighbour picture matplotlib would sample from the full image at
+    the figure's resolution (which is below ``max_side``), without building
+    or resampling the full cells x bins array.
+    """
+    n_bins, n_cells = mat.shape
+    rows = np.asarray(cell_order)
+    if n_cells > max_side:
+        rows = rows[((np.arange(max_side) + 0.5) * n_cells / max_side).astype(np.int64)]
+    cols = np.arange(n_bins)
+    if n_bins > max_side:
+        cols = ((np.arange(max_side) + 0.5) * n_bins / max_side).astype(np.int64)
+    return mat[np.ix_(cols, rows)].T
+
+
+def _draw_full_dendrogram(ax, Z, max_links=6000):
+    """Draw a left-oriented dendrogram of ``Z`` without recursion, for any size.
+
+    Leaves sit at scipy's coordinates (5 + 10 * rank in ``leaves_list``), so
+    the axes line up with heatmap rows the same way ``dendrogram`` does. Only
+    the ``max_links`` highest merges are drawn; lower ones are far below
+    pixel resolution for large trees.
+    """
+    n = Z.shape[0] + 1
+    order = leaves_list(Z)
+    y = np.empty(2 * n - 1)
+    y[order] = 5.0 + 10.0 * np.arange(n)
+    h = np.zeros(2 * n - 1)
+    a = Z[:, 0].astype(np.int64)
+    b = Z[:, 1].astype(np.int64)
+    for k in range(n - 1):
+        y[n + k] = 0.5 * (y[a[k]] + y[b[k]])
+    h[n:] = Z[:, 2]
+    keep = np.arange(max(0, n - 1 - max_links), n - 1)
+    ya, yb, yk = y[a[keep]], y[b[keep]], y[n + keep]
+    ha, hb, hk = h[a[keep]], h[b[keep]], h[n + keep]
+    segs = np.stack([
+        np.stack([np.column_stack([ha, ya]), np.column_stack([hk, ya])], axis=1),
+        np.stack([np.column_stack([hk, ya]), np.column_stack([hk, yb])], axis=1),
+        np.stack([np.column_stack([hk, yb]), np.column_stack([hb, yb])], axis=1),
+    ], axis=1).reshape(-1, 2, 2)
+    ax.add_collection(LineCollection(segs, colors="black", linewidths=0.5))
+    top = float(h.max()) if n > 1 else 1.0
+    ax.set_xlim(top * 1.05 if top > 0 else 1.0, 0.0)
+    ax.set_ylim(0, 10.0 * n)
+
+
 def _safe_dendrogram_with_recursion_management(Z, ax, n_cells):
     """Safely plot dendrogram with increased recursion limit.
     
@@ -337,7 +394,7 @@ def _add_chr_labels(ax, chrom_info):
 
 def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
                  distance="euclidean", n_cores=1, WNS1="", WNS="",
-                 output_path=None):
+                 output_path=None, precomputed_linkage=None):
     """Plot CNA heatmap with hierarchical clustering dendrogram.
 
     Layout mirrors R copykat heatmap.3:
@@ -366,6 +423,10 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
         Classification warning.
     output_path : str or None
         Path to save figure.
+    precomputed_linkage : np.ndarray or None
+        Precomputed Ward linkage of the cells of ``mat`` (e.g. the step-8
+        tree). Used instead of recomputing it; with the exact GPU backend the
+        full tree orders and draws the heatmap at any cell count.
     """
     if output_path is None:
         output_path = f"{sample_name}_copykat_heatmap.png"
@@ -386,7 +447,15 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
     skip_dendrogram = False
     cluster_sizes = None
     
-    if n_cells <= max_dendro_cells:
+    full_tree = backend.exact_algorithms() and distance == "euclidean"
+    if precomputed_linkage is None and full_tree and n_cells > max_dendro_cells:
+        from copykat_py.gpu import ops as gpu_ops
+        precomputed_linkage, _ = gpu_ops.ward_cluster(np.asarray(mat).T)
+    if precomputed_linkage is not None and (n_cells <= max_dendro_cells or full_tree):
+        print(f"  Step 10a: Using precomputed Ward tree for {n_cells} cells...")
+        Z = precomputed_linkage
+        cell_order = leaves_list(Z)
+    elif n_cells <= max_dendro_cells:
         # Full hierarchical clustering with dendrogram
         print(f"  Step 10a: Computing dendrogram for {n_cells} cells...")
         try:
@@ -437,7 +506,9 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
         cell_order = np.arange(n_cells)
     
     # Reorder matrix
-    mat_ordered = mat[:, cell_order]
+    # The GPU backend's large heatmaps are drawn from a sampled raster
+    raster = backend.use_gpu() and n_cells * n_bins > RASTER_MAX_SIDE ** 2
+    mat_ordered = None if raster else mat[:, cell_order]
 
     # --- Figure & GridSpec ------------------------------------------------
     h = 10 if n_cells < 3000 else 15
@@ -479,7 +550,11 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
     # downsampling). With nearest-neighbour interpolation both pick the same
     # source values and norm/colormap are per-pixel, so the image is the same,
     # at a fraction of the time and memory.
-    im = ax_heat.imshow(mat_ordered.T, aspect="auto", cmap=cmap, norm=norm,
+    if raster:
+        image, extent = _heatmap_raster(mat, cell_order), (-0.5, n_bins - 0.5, n_cells - 0.5, -0.5)
+    else:
+        image, extent = mat_ordered.T, None
+    im = ax_heat.imshow(image, aspect="auto", cmap=cmap, norm=norm, extent=extent,
                         interpolation="nearest", interpolation_stage="data")
     ax_heat.set_xlabel("Genomic position")
     ax_heat.set_yticks([])
@@ -493,7 +568,10 @@ def plot_heatmap(mat, chrom_info, predictions=None, sample_name="",
 
     # --- Dendrogram (left) ------------------------------------------------
     ax_dendro = fig.add_subplot(gs[1, col_dendro])
-    if Z is not None and not skip_dendrogram:
+    if Z is not None and not skip_dendrogram and n_cells > max_dendro_cells:
+        print(f"  Step 10b: Rendering dendrogram...")
+        _draw_full_dendrogram(ax_dendro, Z)
+    elif Z is not None and not skip_dendrogram:
         print(f"  Step 10b: Rendering dendrogram...")
         _safe_dendrogram_with_recursion_management(Z, ax_dendro, n_cells)
     elif Z_summary is not None and cluster_sizes is not None:

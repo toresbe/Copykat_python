@@ -51,6 +51,7 @@ from copykat_py.baseline import (
 from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
 from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
+from copykat_py import backend
 
 
 _WRITE_CHUNK_BYTES = 512 << 20
@@ -68,7 +69,15 @@ def _frame_with_leading_columns(lead_df, values, value_columns):
 
 
 def _adjust_baseline_inplace(mat, diploid_mask, chunk_elems=1 << 24):
-    """Subtract the diploid baseline and flatten noise around it, overwriting ``mat``."""
+    """Subtract the diploid baseline and flatten noise around it, overwriting ``mat``.
+
+    Same arithmetic as the original out-of-place version: center on the
+    diploid mean, re-center cells, replace values within 0.25 SD of the
+    diploid profile with the cell mean, and re-center cells again.
+    """
+    if backend.use_gpu():
+        from copykat_py.gpu import ops
+        return ops.adjust_baseline(mat, diploid_mask)
     mat -= mat[:, diploid_mask].mean(axis=1, keepdims=True)
     mat -= mat.mean(axis=0, keepdims=True)
     diploid = mat[:, diploid_mask]
@@ -227,7 +236,8 @@ def _meta_with_pred(meta_csv, pred_dict, sample_name):
     return out_path
 
 
-def _run_plot_heatmap(mat_adj, chrom_info, predictions, sample_name, distance, n_cores, WNS1, WNS, output_path):
+def _run_plot_heatmap(mat_adj, chrom_info, predictions, sample_name, distance, n_cores, WNS1, WNS, output_path,
+                      precomputed_linkage=None):
     from copykat_py.plotting import plot_heatmap
 
     plot_heatmap(
@@ -239,6 +249,7 @@ def _run_plot_heatmap(mat_adj, chrom_info, predictions, sample_name, distance, n
         WNS1=WNS1,
         WNS=WNS,
         output_path=output_path,
+        precomputed_linkage=precomputed_linkage,
     )
 
 
@@ -447,7 +458,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             LOW_DR=0.05, UP_DR=0.1, win_size=25, norm_cell_names="",
             KS_cut=0.1, sam_name="", distance="euclidean", output_seg=False,
             plot_genes=True, genome="hg20", n_cores=1, pca_components=None,
-            meta_csv=None, row_split_col=None):
+            meta_csv=None, row_split_col=None, backend_name="cpu"):
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
     
     Parameters
@@ -500,6 +511,10 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     row_split_col : str or None
         Column in ``meta_csv`` used to split and label heatmap rows.
         Defaults to the second column when ``None``.
+    backend_name : str
+        "cpu" (reference), "gpu" (CUDA) or "gpu-compat" (CUDA compatibility
+        name). Both GPU modes retain the CPU PCA and silhouette sampling
+        policies in this execution-only branch. See ``copykat_py.backend``.
 
     Returns
     -------
@@ -510,9 +525,11 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     """
     start_time = time.perf_counter()
     np.random.seed(1234)
+    backend.set_backend(backend_name)
     sample_name = f"{sam_name}_copykat_"
     runtime_info = {
         "sample_name": sam_name,
+        "backend": backend.get_backend(),
         "requested_cores": int(n_cores),
         "available_cores": int(os.cpu_count() or 1),
         "steps": [],
@@ -593,54 +610,84 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     step_start = time.perf_counter()
     expr_values = rawmat[anno_rows]
     del rawmat
-    keep_cells = _keep_cells_by_chr_coverage(expr_values, anno_mat["chromosome_name"].values, ngene_chr)
-    if keep_cells.sum() == 0:
-        raise ValueError("All cells are filtered out")
+    chrom_names = anno_mat["chromosome_name"].values
     cell_cols = list(barcodes)
-    if not np.all(keep_cells):
-        cell_cols = [cell_cols[i] for i in np.where(keep_cells)[0]]
-        expr_values = expr_values[:, keep_cells]
-    # Column-major, as pandas' DataFrame.to_numpy() returned it before: the
-    # per-cell centering below sums down each column, and numpy's summation
-    # order (hence the last bits of every value) depends on the layout. Those
-    # bits can flip near-tie merges in the step-4 clustering on low-confidence
-    # samples, so keep the original layout to reproduce results exactly.
-    if sparse.issparse(expr_values):
-        rawmat3 = expr_values.astype(np.float64).toarray(order="F")
+    if backend.use_gpu() and sparse.issparse(expr_values):
+        # Sparse counts stay sparse on the device through smoothing
+        from copykat_py.gpu import ops as gpu_ops
+        rawmat3 = gpu_ops.DeviceCounts(expr_values)
+        del expr_values
+        keep_cells = rawmat3.keep_cells_by_chr_coverage(chrom_names, ngene_chr)
+        if keep_cells.sum() == 0:
+            raise ValueError("All cells are filtered out")
+        if not np.all(keep_cells):
+            cell_cols = [cell_cols[i] for i in np.where(keep_cells)[0]]
+            rawmat3.select_cells(keep_cells)
+        _record_step(runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": int(len(cell_cols))})
+        DR2 = rawmat3.positive_per_gene() / rawmat3.shape[1]
+        seg_mask = DR2 >= UP_DR
+        keep_cells2 = rawmat3.keep_cells_by_chr_coverage(chrom_names, ngene_chr, row_mask=seg_mask)
     else:
-        rawmat3 = np.asfortranarray(expr_values, dtype=np.float64)
-    del expr_values
-    _record_step(runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": int(len(cell_cols))})
+        keep_cells = _keep_cells_by_chr_coverage(expr_values, chrom_names, ngene_chr)
+        if keep_cells.sum() == 0:
+            raise ValueError("All cells are filtered out")
+        if not np.all(keep_cells):
+            cell_cols = [cell_cols[i] for i in np.where(keep_cells)[0]]
+            expr_values = expr_values[:, keep_cells]
+        # Column-major, as pandas' DataFrame.to_numpy() returned it before: the
+        # per-cell centering below sums down each column, and numpy's summation
+        # order (hence the last bits of every value) depends on the layout. Those
+        # bits can flip near-tie merges in the step-4 clustering on low-confidence
+        # samples, so keep the original layout to reproduce results exactly.
+        if sparse.issparse(expr_values):
+            rawmat3 = expr_values.astype(np.float64).toarray(order="F")
+        else:
+            rawmat3 = np.asfortranarray(expr_values, dtype=np.float64)
+        del expr_values
+        _record_step(runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": int(len(cell_cols))})
 
-    # Gene detection rates and post-UP_DR cell coverage only need the raw
-    # counts; compute them now so rawmat3 can be transformed in place.
-    DR2 = (rawmat3 > 0).sum(axis=1) / rawmat3.shape[1]
-    seg_mask = DR2 >= UP_DR
-    keep_cells2 = _keep_cells_by_chr_coverage((rawmat3 != 0)[seg_mask], anno_mat["chromosome_name"].values[seg_mask], ngene_chr)
+        # Gene detection rates and post-UP_DR cell coverage only need the raw
+        # counts; compute them now so rawmat3 can be transformed in place.
+        DR2 = (rawmat3 > 0).sum(axis=1) / rawmat3.shape[1]
+        seg_mask = DR2 >= UP_DR
+        keep_cells2 = _keep_cells_by_chr_coverage((rawmat3 != 0)[seg_mask], chrom_names[seg_mask], ngene_chr)
     
-    # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1)), in place
-    step_start = time.perf_counter()
-    sqrt_plus_one = rawmat3 + 1
-    np.sqrt(sqrt_plus_one, out=sqrt_plus_one)
-    norm_mat = np.sqrt(rawmat3, out=rawmat3)
-    del rawmat3
-    norm_mat += sqrt_plus_one
-    del sqrt_plus_one
-    np.log(norm_mat, out=norm_mat)
-    # Center each cell
-    norm_mat -= norm_mat.mean(axis=0, keepdims=True)
-    _record_step(runtime_info, "freeman_tukey_transform", step_start, extra={"matrix_shape": list(norm_mat.shape)})
-    
-    print(f"  {norm_mat.shape[0]} genes, {norm_mat.shape[1]} cells after preprocessing")
-    
-    # =========================================================================
-    # Step 3: DLM smoothing
-    # =========================================================================
-    print("step 3: smoothing data with DLM ...")
-    step_start = time.perf_counter()
-    norm_mat_smooth = dlm_smooth(norm_mat, n_cores=n_cores)
-    del norm_mat
-    dlm_info = get_last_dlm_smooth_info()
+    if backend.use_gpu():
+        # Freeman-Tukey, centring and DLM smoothing in one pass on the GPU
+        from copykat_py.gpu import ops as gpu_ops
+        from copykat_py.smoothing import _dlm_gains
+        print(f"  {rawmat3.shape[0]} genes, {rawmat3.shape[1]} cells after preprocessing")
+        print("step 3: smoothing data with DLM ...")
+        step_start = time.perf_counter()
+        K_gain, B_gain = _dlm_gains(rawmat3.shape[0])
+        norm_mat_smooth = gpu_ops.freeman_tukey_smooth(rawmat3, K_gain, B_gain)
+        del rawmat3
+        dlm_info = {"parallel": True, "requested_cores": int(n_cores), "effective_cores": 1,
+                    "tasks": int(norm_mat_smooth.shape[1]), "engine": "gpu.freeman_tukey+dlm"}
+    else:
+        # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1)), in place
+        step_start = time.perf_counter()
+        sqrt_plus_one = rawmat3 + 1
+        np.sqrt(sqrt_plus_one, out=sqrt_plus_one)
+        norm_mat = np.sqrt(rawmat3, out=rawmat3)
+        del rawmat3
+        norm_mat += sqrt_plus_one
+        del sqrt_plus_one
+        np.log(norm_mat, out=norm_mat)
+        # Center each cell
+        norm_mat -= norm_mat.mean(axis=0, keepdims=True)
+        _record_step(runtime_info, "freeman_tukey_transform", step_start, extra={"matrix_shape": list(norm_mat.shape)})
+
+        print(f"  {norm_mat.shape[0]} genes, {norm_mat.shape[1]} cells after preprocessing")
+
+        # =========================================================================
+        # Step 3: DLM smoothing
+        # =========================================================================
+        print("step 3: smoothing data with DLM ...")
+        step_start = time.perf_counter()
+        norm_mat_smooth = dlm_smooth(norm_mat, n_cores=n_cores)
+        del norm_mat
+        dlm_info = get_last_dlm_smooth_info()
     elapsed = _record_step(runtime_info, "dlm_smoothing", step_start, parallel_info=dlm_info)
     print(
         f"  smoothing runtime: {_format_seconds(elapsed)} "
@@ -1040,6 +1087,11 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             print("step 10: plotting heatmap ...")
             plot_step_start = time.perf_counter()
             predictions = pred_dict if cell_line != "yes" else None
+            # The step-8 tree clusters exactly mat_adj's cells with Ward /
+            # Euclidean; reuse it unless it was built on a PCA projection.
+            reuse_linkage = None
+            if distance == "euclidean" and not cluster_info.get("approximate", False):
+                reuse_linkage = Z_final if cell_line != "yes" else Z
             _run_plot_heatmap(
                 mat_adj,
                 chrom_info,
@@ -1050,6 +1102,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
                 WNS1,
                 WNS,
                 f"{sample_name}heatmap.png",
+                precomputed_linkage=reuse_linkage,
             )
             elapsed = _record_step(runtime_info, "plot_heatmap", plot_step_start)
             print(f"  step 10 runtime: {_format_seconds(elapsed)}")

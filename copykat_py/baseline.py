@@ -12,6 +12,8 @@ from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 from joblib import Parallel, delayed
 
+from copykat_py import backend
+
 try:
     import fastcluster
     HAS_FASTCLUSTER = True
@@ -214,6 +216,8 @@ def _hierarchical_cluster(
         "approximate": False,
         "engine": "scipy.linkage",
     })
+    if backend.use_gpu() and metric == "euclidean" and method.startswith("ward"):
+        return _hierarchical_cluster_gpu(data, n_clusters, reduce, pca_components)
     
     if not reduce:
         if metric == "euclidean" and method.startswith("ward") and HAS_FASTCLUSTER:
@@ -272,6 +276,27 @@ def _hierarchical_cluster(
     return labels, Z
 
 
+def _hierarchical_cluster_gpu(data, n_clusters, reduce, pca_components):
+    """Ward clustering on the GPU (see ``copykat_py.gpu.ward``).
+
+    With the exact backend the full feature matrix is clustered; with
+    ``gpu-compat`` the CPU path's PCA rule is kept.
+    """
+    from copykat_py.gpu import ops
+
+    n_samples, n_features = data.shape
+    reduce_to = None
+    if reduce and not backend.exact_algorithms():
+        pca_components_used = min(pca_components, n_samples - 1, n_features)
+        if n_samples > FULL_CLUSTER_MAX_CELLS and n_features > 256 and pca_components_used >= 8:
+            reduce_to = pca_components_used
+    Z, engine = ops.ward_cluster(data, reduce_to=reduce_to)
+    _LAST_CLUSTER_INFO["engine"] = engine
+    _LAST_CLUSTER_INFO["approximate"] = "pca" in engine
+    labels = fcluster(Z, t=n_clusters, criterion="maxclust")
+    return labels, Z
+
+
 def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1e-8):
     """Fit a 3-component Gaussian Mixture Model (gain, neutral, loss).
     
@@ -297,6 +322,12 @@ def _fit_gmm_3component(data, mu_init=None, sigma_init=None, max_iter=500, tol=1
         sigma_init = max(0.05, 0.5 * np.std(data))
     if mu_init is None:
         mu_init = [-0.2, 0.0, 0.2]
+    if backend.use_gpu():
+        from copykat_py.gpu.gmm import fit_gmm_3component_batch
+        means, weights, sigma = fit_gmm_3component_batch(
+            np.asarray(data, dtype=np.float64).ravel()[None, :], [sigma_init],
+            mu_init=mu_init, max_iter=max_iter, tol=tol)
+        return means[0], weights[0], float(sigma[0])
     
     x = np.asarray(data, dtype=np.float64).ravel()
     means = np.asarray(mu_init, dtype=np.float64).copy()
@@ -401,15 +432,23 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     
     # Parallel GMM fitting. Consensus profiles are computed up front and fitted
     # in threads so workers never receive a copy of the full matrix.
-    consensus_profiles = [
-        np.median(norm_mat_smooth[:, labels == cl_id], axis=1) for cl_id in unique_clusters
-    ]
-    results = Parallel(n_jobs=n_cores, prefer="threads")(
-        delayed(fit_gmm_for_consensus)(consensus) for consensus in consensus_profiles
-    )
-    
-    SDM = np.array([r[0] for r in results])
-    SSD = np.array([r[1] for r in results])
+    if backend.use_gpu():
+        from copykat_py.gpu import ops
+        from copykat_py.gpu.gmm import fit_gmm_3component_batch
+        consensus_profiles = ops.cluster_medians(norm_mat_smooth, labels, unique_clusters)
+        SSD = np.array([np.std(c) for c in consensus_profiles])
+        sx = np.array([max(0.05, 0.5 * v) for v in SSD])
+        SDM = fit_gmm_3component_batch(np.vstack(consensus_profiles).astype(np.float64), sx, max_iter=5000)[2]
+    else:
+        consensus_profiles = [
+            np.median(norm_mat_smooth[:, labels == cl_id], axis=1) for cl_id in unique_clusters
+        ]
+        results = Parallel(n_jobs=n_cores, prefer="threads")(
+            delayed(fit_gmm_for_consensus)(consensus) for consensus in consensus_profiles
+        )
+
+        SDM = np.array([r[0] for r in results])
+        SSD = np.array([r[1] for r in results])
     
     # Silhouette width for 2-cluster separation
     if Z is not None:
@@ -428,7 +467,10 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     # Compute silhouette on a stratified subsample for medium/large datasets.
     # Stratify by labels_2 so each cluster (diploid/aneuploid) is proportionally
     # represented; floor at 200 per cluster to protect rare populations.
-    if n_cells > 3000:
+    if backend.exact_algorithms():
+        from copykat_py.gpu import ops
+        wn = ops.silhouette(data_t, labels_2)
+    elif n_cells > 3000:
         rng = np.random.RandomState(1234)
         target = max(3000, min(int(0.20 * n_cells), 20000))
         idx = []
@@ -438,7 +480,14 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
             n_take = min(n_take, len(cl_idx))
             idx.append(rng.choice(cl_idx, size=n_take, replace=False))
         idx = np.concatenate(idx)
-        wn = silhouette_score(data_t[idx], labels_2[idx], metric="euclidean")
+        if backend.use_gpu():
+            from copykat_py.gpu import ops
+            wn = ops.silhouette(data_t[idx], labels_2[idx])
+        else:
+            wn = silhouette_score(data_t[idx], labels_2[idx], metric="euclidean")
+    elif backend.use_gpu():
+        from copykat_py.gpu import ops
+        wn = ops.silhouette(data_t, labels_2)
     else:
         wn = silhouette_score(data_t, labels_2, metric="euclidean")
     
@@ -458,7 +507,11 @@ def baseline_norm_cl(norm_mat_smooth, min_cells=5, n_cores=1, cell_names=None, p
     normal_cluster_id = unique_clusters[min_sigma_idx]
     
     normal_mask = labels == normal_cluster_id
-    basel = np.median(norm_mat_smooth[:, normal_mask], axis=1)
+    if backend.use_gpu():
+        from copykat_py.gpu import ops
+        basel = ops.cluster_medians(norm_mat_smooth, labels, [normal_cluster_id])[0]
+    else:
+        basel = np.median(norm_mat_smooth[:, normal_mask], axis=1)
     preN_indices = np.where(normal_mask)[0]
     if cell_names is not None:
         cell_names = np.asarray(cell_names, dtype=object)
@@ -509,8 +562,14 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
     n_genes, n_cells = CNA_mat.shape
     N_normal = []
     N_normal_labels = []
-    
-    for m in range(n_cells):
+
+    if backend.use_gpu():
+        N_normal = _scan_diploid_cells_gpu(CNA_mat, cell_names, max_normal, mu_cut, Nfraq_cut)
+        n_cells_scan = 0  # replaces the per-cell CPU scan below
+    else:
+        n_cells_scan = n_cells
+
+    for m in range(n_cells_scan):
         sam = CNA_mat[:, m]
         sg = max(0.05, 0.5 * np.std(sam))
         
@@ -569,6 +628,31 @@ def baseline_gmm(CNA_mat, cell_names, max_normal=5, mu_cut=0.05, Nfraq_cut=0.99,
             WNS = "unclassified.prediction"
             return {"basel": np.median(CNA_mat, axis=1), "WNS": WNS, 
                     "preN": N_normal, "cl": labels}
+
+
+def _scan_diploid_cells_gpu(CNA_mat, cell_names, max_normal, mu_cut, Nfraq_cut, batch=1024):
+    """First ``max_normal`` cells (in column order) whose GMM looks diploid.
+
+    Same per-cell test as the CPU loop in ``baseline_gmm``, fitted for a whole
+    batch of cells at once on the GPU; batches stop once enough are found.
+    """
+    from copykat_py.gpu.gmm import fit_gmm_3component_batch
+
+    n_cells = CNA_mat.shape[1]
+    found = []
+    for lo in range(0, n_cells, batch):
+        hi = min(n_cells, lo + batch)
+        X = np.ascontiguousarray(CNA_mat[:, lo:hi].T, dtype=np.float64)
+        sg = np.maximum(0.05, 0.5 * X.std(axis=1))
+        means, weights, _ = fit_gmm_3component_batch(X, sg, max_iter=500)
+        neutral = np.abs(means) <= mu_cut
+        frq = np.where(neutral, weights, 0.0).sum(axis=1)
+        diploid = neutral.any(axis=1) & (frq > Nfraq_cut)
+        for m in np.flatnonzero(diploid):
+            found.append(cell_names[lo + m])
+            if len(found) >= max_normal:
+                return found
+    return found
 
 
 def baseline_synthetic(norm_mat, min_cells=10, n_cores=1, pca_components=None, genome="hg20"):

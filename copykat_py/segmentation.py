@@ -13,10 +13,12 @@ Algorithm:
 """
 
 import numpy as np
+from copykat_py import backend
 import os
-from scipy.stats import ks_2samp, gamma as gamma_dist
+from scipy.stats import ks_2samp
 from joblib import Parallel, delayed
 from numba import jit
+
 
 _LAST_PAR_INFO = {
     "step": "cna_mcmc",
@@ -166,7 +168,7 @@ def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
         Number of parallel workers.
     mc_samples : int or None
         Number of MCMC samples (default: 1000); reduce for speed on small datasets.
-    
+
     Returns
     -------
     dict with keys:
@@ -181,12 +183,16 @@ def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
     
     # Step 1: Compute cluster consensus profiles (median per cluster)
     unique_clusters = sorted(set(clu))
-    CON = []
-    for cl_id in unique_clusters:
-        mask = clu == cl_id
-        consensus = np.median(fttmat[:, mask], axis=1)
-        CON.append(consensus)
-    CON = np.column_stack(CON)
+    if backend.use_gpu():
+        from copykat_py.gpu import ops as gpu_ops
+        CON = np.column_stack(gpu_ops.cluster_medians(fttmat, clu, unique_clusters))
+    else:
+        CON = []
+        for cl_id in unique_clusters:
+            mask = clu == cl_id
+            consensus = np.median(fttmat[:, mask], axis=1)
+            CON.append(consensus)
+        CON = np.column_stack(CON)
     
     # Back-transform: exp()
     norm_mat_sm = np.exp(CON)
@@ -200,9 +206,7 @@ def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
     
     BR = sorted(BR)
     
-    # Step 3: For each cell, compute segment posterior means.
-    # With alpha initialized to the segment mean and beta fixed to 1,
-    # the Poisson-Gamma posterior mean reduces exactly to the segment mean.
+    # Segment accumulation policy remains the CPU implementation here.
     norm_mat_all = np.exp(fttmat)
     cumsum = np.vstack([
         np.zeros((1, n_cells), dtype=norm_mat_all.dtype),
