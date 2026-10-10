@@ -1,19 +1,27 @@
 """Final cell clustering, copy-number calls, and baseline adjustment."""
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import numpy as np
 import numpy.typing as npt
 
 from copykat_py import backend
-from copykat_py._types import BoolArray, ClusteringResult, ClusterLabels, FloatArray, PredictionLabel
+from copykat_py._types import (
+    BoolArray,
+    ClusterLabels,
+    FloatArray,
+    LinkageMatrix,
+    PredictionLabel,
+)
 from copykat_py.baseline import FULL_CLUSTER_MAX_CELLS, _hierarchical_cluster
 
 
-class FinalCallResult(ClusteringResult):
+class FinalCallResult(TypedDict):
     """Ward clustering and the per-cell copy-number calls derived from it."""
 
+    labels: ClusterLabels
+    Z: LinkageMatrix
     predictions: npt.NDArray[np.object_]
 
 
@@ -74,7 +82,7 @@ def cluster_cells(
     *,
     n_cores: int,
     pca_components: int | None,
-) -> ClusteringResult:
+) -> tuple[ClusterLabels, LinkageMatrix]:
     """Ward-cluster the cells in a feature-by-cell matrix.
 
     Args:
@@ -83,9 +91,9 @@ def cluster_cells(
         pca_components: Optional PCA cap used by the large-sample clustering path.
 
     Returns:
-        A mapping with 1-based cluster ``labels`` and the Ward linkage matrix ``Z``.
+        A pair containing 1-based cluster labels and the Ward linkage matrix.
     """
-    labels, linkage = _hierarchical_cluster(
+    return _hierarchical_cluster(
         values.T,
         2,
         method="ward",
@@ -94,7 +102,6 @@ def cluster_cells(
         reduce=values.shape[1] > FULL_CLUSTER_MAX_CELLS,
         pca_components=pca_components,
     )
-    return {"labels": labels, "Z": linkage}
 
 
 def cluster_and_call(
@@ -134,8 +141,7 @@ def cluster_and_call(
     if prediction_override is not None and prediction_override.shape != (values.shape[1],):
         raise ValueError("prediction_override must contain one boolean value per cell")
 
-    clustering = cluster_cells(values, n_cores=n_cores, pca_components=pca_components)
-    labels = clustering["labels"]
+    labels, linkage = cluster_cells(values, n_cores=n_cores, pca_components=pca_components)
 
     if normal_cells is not None and len(normal_cells) > 0:
         normal_names = _normal_cells_to_names(normal_cells, reference_cell_names)
@@ -161,7 +167,7 @@ def cluster_and_call(
             PredictionLabel.ANEUPLOID_LOW_CONFIDENCE,
             predictions,
         )
-    return {**clustering, "predictions": predictions}
+    return {"labels": labels, "Z": linkage, "predictions": predictions}
 
 
 def adjust_baseline_inplace(

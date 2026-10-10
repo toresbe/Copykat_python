@@ -854,13 +854,11 @@ def copykat(
             labels_final, Z_final = final_call_result["labels"], final_call_result["Z"]
             com_preN = final_call_result["predictions"]
         else:
-            clustering = cluster_cells(
+            labels_final, Z_final = cluster_cells(
                 mat_adj,
                 n_cores=n_cores,
                 pca_components=selected_pca_components,
             )
-            labels_final = clustering["labels"]
-            Z_final = clustering["Z"]
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
