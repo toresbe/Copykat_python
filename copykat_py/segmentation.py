@@ -105,6 +105,68 @@ def _mc_poisson_gamma(data, alpha, beta=1.0, mc=1000, rng=None):
     return samples
 
 
+def _gamma_ks_distance(a1, r1, a2, r2, tail=1e-12):
+    """Exact Kolmogorov-Smirnov distance sup_x |F1(x) - F2(x)| between two Gammas.
+
+    (shape, rate) parameterisation. The supremum is attained where the
+    densities cross; with t = log x, log f1 - log f2 =
+    (a1 - a2) t - (r1 - r2) e^t + c is concave or convex in t, so it has at
+    most two roots, one on each side of its extremum. Mass beyond the
+    ``tail`` quantiles of both distributions bounds the error by ``tail``.
+    """
+    if a1 == a2 and r1 == r2:
+        return 0.0
+    c = a1 * np.log(r1) - gammaln(a1) - a2 * np.log(r2) + gammaln(a2)
+
+    def h(t):
+        return (a1 - a2) * t - (r1 - r2) * np.exp(t) + c
+
+    lo = np.log(min(gammaincinv(a1, tail) / r1, gammaincinv(a2, tail) / r2))
+    hi = np.log(max(gammaincinv(a1, 1 - tail) / r1, gammaincinv(a2, 1 - tail) / r2))
+    edges = [lo, hi]
+    if r1 != r2 and (a1 - a2) / (r1 - r2) > 0:
+        t_star = np.log((a1 - a2) / (r1 - r2))
+        if lo < t_star < hi:
+            edges = [lo, t_star, hi]
+    best = 0.0
+    for left, right in zip(edges[:-1], edges[1:]):
+        hl, hr = h(left), h(right)
+        if hl == 0:
+            roots = [left]
+        elif hr == 0:
+            roots = [right]
+        elif hl * hr < 0:
+            roots = [brentq(h, left, right, xtol=1e-14, rtol=1e-14)]
+        else:
+            continue
+        for t in roots:
+            x = np.exp(t)
+            best = max(best, abs(gammainc(a1, r1 * x) - gammainc(a2, r2 * x)))
+    return float(best)
+
+
+def _find_breakpoints_exact(consensus, bins, cut_cor):
+    """Breakpoints from the exact KS distance between adjacent window posteriors.
+
+    Same windows and Poisson-Gamma posteriors as ``_find_breakpoints_for_cluster``
+    (shape alpha + sum(x) with alpha = max(mean(x), 0.001), rate 1 + n), but
+    the KS statistic is computed between the posterior distributions
+    themselves rather than between two 1000-draw Monte Carlo samples, whose
+    sampling noise (~0.04 at that size) is a sizeable fraction of the cutoff.
+    """
+    n = len(consensus)
+    breks = list(range(0, (n // bins - 1) * bins, bins)) + [n - 1]
+    bre = []
+    for i in range(len(breks) - 2):
+        seg1 = consensus[breks[i]:breks[i + 1] + 1]
+        seg2 = consensus[breks[i + 1] + 1:breks[i + 2] + 1]
+        a1 = max(np.mean(seg1), 0.001) + np.sum(seg1)
+        a2 = max(np.mean(seg2), 0.001) + np.sum(seg2)
+        if _gamma_ks_distance(float(a1), 1.0 + len(seg1), float(a2), 1.0 + len(seg2)) > cut_cor:
+            bre.append(breks[i + 1])
+    return bre
+
+
 def _find_breakpoints_for_cluster(consensus, bins, cut_cor, rng_seed=42, mc_samples=1000):
     """Find breakpoints in a cluster consensus profile.
     
@@ -149,7 +211,7 @@ def _find_breakpoints_for_cluster(consensus, bins, cut_cor, rng_seed=42, mc_samp
     return bre
 
 
-def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
+def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None, ks_method="mc"):
     """MCMC segmentation of copy number data.
     
     Parameters
@@ -166,13 +228,18 @@ def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
         Number of parallel workers.
     mc_samples : int or None
         Number of MCMC samples (default: 1000); reduce for speed on small datasets.
-    
+    ks_method : str
+        "mc" compares Monte Carlo posterior samples; "exact" compares the
+        posterior Gamma distributions directly.
+
     Returns
     -------
     dict with keys:
         'logCNA': np.ndarray, shape (n_genes, n_cells) - segmented CNA values
         'breaks': list - breakpoint positions
     """
+    if ks_method not in {"mc", "exact"}:
+        raise ValueError("ks_method must be 'mc' or 'exact'")
     n_genes, n_cells = fttmat.shape
     
     # Adaptive MC sample size: fewer samples for small datasets (speed optimization)
@@ -194,7 +261,10 @@ def cna_mcmc(clu, fttmat, bins=25, cut_cor=0.1, n_cores=1, mc_samples=None):
     # Step 2: Find breakpoints for each cluster consensus
     BR = set()
     for c in range(norm_mat_sm.shape[1]):
-        bre = _find_breakpoints_for_cluster(norm_mat_sm[:, c], bins, cut_cor, rng_seed=42 + c, mc_samples=mc_samples)
+        if ks_method == "exact":
+            bre = _find_breakpoints_exact(norm_mat_sm[:, c], bins, cut_cor)
+        else:
+            bre = _find_breakpoints_for_cluster(norm_mat_sm[:, c], bins, cut_cor, rng_seed=42 + c, mc_samples=mc_samples)
         bre_full = sorted(set([0] + bre + [n_genes - 1]))
         BR.update(bre_full)
     

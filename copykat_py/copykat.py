@@ -285,7 +285,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
             LOW_DR=0.05, UP_DR=0.1, win_size=25, norm_cell_names="",
             KS_cut=0.1, sam_name="", distance="euclidean", output_seg=False,
             plot_genes=True, genome="hg20", n_cores=1, pca_components=None,
-            meta_csv=None, row_split_col=None):
+            meta_csv=None, row_split_col=None, ks_method="mc"):
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
     
     Parameters
@@ -338,6 +338,9 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     row_split_col : str or None
         Column in ``meta_csv`` used to split and label heatmap rows.
         Defaults to the second column when ``None``.
+    ks_method : str
+        "mc" retains the Monte Carlo posterior KS statistic; "exact" uses the
+        distance between the same posterior Gamma distributions.
 
     Returns
     -------
@@ -659,15 +662,17 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     # =========================================================================
     print("step 5: segmentation ...")
     step_start = time.perf_counter()
-    results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores)
+    results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores, ks_method=ks_method)
     
     if len(results["breaks"]) < 25:
         print("  too few breakpoints; decreased KS_cut to 50%")
-        results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.5 * KS_cut, n_cores=n_cores)
+        results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.5 * KS_cut, n_cores=n_cores, ks_method=ks_method)
     
     if len(results["breaks"]) < 25:
         print("  too few breakpoints; decreased KS_cut to 25%")
-        results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.25 * KS_cut, n_cores=n_cores)
+        results = cna_mcmc(
+            CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.25 * KS_cut, n_cores=n_cores, ks_method=ks_method
+        )
     
     if len(results["breaks"]) < 25:
         raise ValueError("Too few segments; try decreasing KS_cut or improving data quality")
