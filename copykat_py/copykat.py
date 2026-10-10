@@ -12,180 +12,54 @@ Faithfully reimplements the R copykat() function workflow:
 9. Output files + heatmap
 """
 
-import json
 import logging
-import os
-import pickle
 import time
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, replace
-from importlib.metadata import PackageNotFoundError, version
-from typing import Any, cast
+from dataclasses import asdict
+from typing import cast
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 from scipy import sparse
-from scipy.cluster.hierarchy import fcluster
 
 from copykat_py import anchor as _anchor
 from copykat_py import backend
 from copykat_py._logging import with_default_progress_output
+from copykat_py._pipeline.baseline import BaselineOptions, select_baseline
+from copykat_py._pipeline.output import OutputOptions, write_results
+from copykat_py._pipeline.prediction import PredictionOptions, adjust_and_call
+from copykat_py._pipeline.preprocessing import FilteringOptions, annotate_genes, transform_counts_inplace
+from copykat_py._pipeline.runtime import _format_seconds, _record_step, new_runtime_info, select_pca_components
+from copykat_py._pipeline.segmentation import _segment_with_retries, _SegmentationOptions
 from copykat_py._types import (
-    AnchorPath,
     AnchorStrategy,
-    BaselineWarning,
     CellLineMode,
-    ClusteringResult,
-    ClusterLabels,
     CopyKATResult,
     DataQualityStatus,
     DistanceMetric,
     ExecutionBackend,
     FinalCallStrategy,
-    FloatArray,
     GeneIdType,
-    GeneProfile,
     Genome,
-    IntArray,
     KSMethod,
-    ParallelInfo,
-    PredictionLabel,
     RawMatrix,
-    ReferenceMode,
-    RuntimeInfo,
     SparseMatrix,
 )
-from copykat_py.annotation import annotate_gene_rows
 from copykat_py.baseline import (
-    AUTO_PCA_CELL_COUNT_CUTOFF,
-    AUTO_PCA_LARGE_SAMPLE,
-    AUTO_PCA_SMALL_SAMPLE,
     FULL_CLUSTER_MAX_CELLS,
-    MOUSE_AUTO_PCA_LARGE_SAMPLE,
-    MOUSE_AUTO_PCA_MEDIUM_CELL_COUNT_CUTOFF,
-    MOUSE_AUTO_PCA_MEDIUM_SAMPLE,
-    MOUSE_AUTO_PCA_SMALL_CELL_COUNT_CUTOFF,
-    MOUSE_AUTO_PCA_SMALL_SAMPLE,
-    _fit_gmm_3component,
     _hierarchical_cluster,
-    baseline_gmm,
-    baseline_norm_cl,
-    baseline_synthetic,
-    get_last_cluster_info,
-    resolve_adaptive_pca_components,
 )
 from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
-from copykat_py.data_loader import load_cyclegenes
-from copykat_py.final_call import (
-    FinalCallResult,
-    WardClusteringResult,
-    cluster_and_call,
-    cluster_cells,
-)
-from copykat_py.final_call import (
-    adjust_baseline_inplace as _adjust_baseline_inplace,
-)
 from copykat_py.input import (
     _keep_cells_by_chr_coverage,
     _prepare_input_matrix,
 )
-from copykat_py.normal_cells import normal_cells_to_names
 from copykat_py.output import (
-    _frame_with_leading_columns,
     _write_cna_csv,
-    _write_seg_file,
 )
-from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
+from copykat_py.segmentation import get_last_cna_mcmc_info
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class _BaselineState:
-    """Warning and normal-cell reference selected across baseline strategies."""
-
-    warning: BaselineWarning
-    normal_cells: list[str] | IntArray | None
-
-
-def _meta_with_pred(meta_csv: str, pred_dict: dict[str, str] | None, sample_name: str) -> str:
-    """Read *meta_csv*, append copykat-py predictions as the last column.
-
-    Returns the path to a new CSV written alongside the original outputs.
-    Cells absent from *pred_dict* receive ``PredictionLabel.NOT_DEFINED``.
-    """
-    import pandas as pd
-
-    meta = pd.read_csv(meta_csv)
-    cell_col = meta.columns[0]
-    meta = meta.set_index(cell_col)
-    if pred_dict is not None:
-        meta["copykat_pred_py"] = meta.index.map(pred_dict).fillna(PredictionLabel.NOT_DEFINED)
-    else:
-        meta["copykat_pred_py"] = PredictionLabel.NOT_DEFINED
-    out_path = f"{sample_name}meta_with_pred.csv"
-    meta.reset_index().to_csv(out_path, index=False)
-    return out_path
-
-
-def _run_plot_heatmap(
-    mat_adj: FloatArray,
-    chrom_info: npt.NDArray[Any],
-    predictions: dict[str, str] | None,
-    sample_name: str,
-    distance: DistanceMetric,
-    n_cores: int,
-    WNS1: DataQualityStatus,
-    WNS: BaselineWarning,
-    output_path: str,
-) -> None:
-    from copykat_py.plotting import plot_heatmap
-
-    plot_heatmap(
-        mat_adj,
-        chrom_info,
-        predictions=predictions,
-        sample_name=sample_name,
-        distance=distance,
-        n_cores=n_cores,
-        WNS1=WNS1,
-        WNS=WNS,
-        output_path=output_path,
-    )
-
-
-def _format_seconds(seconds: float) -> str:
-    if seconds < 60:
-        return f"{seconds:.2f}s"
-    minutes, rem = divmod(seconds, 60)
-    if minutes < 60:
-        return f"{int(minutes)}m {rem:.1f}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{int(hours)}h {int(minutes)}m {rem:.1f}s"
-
-
-def _record_step(
-    runtime_info: RuntimeInfo,
-    step: str,
-    start_time: float,
-    parallel_info: ParallelInfo | None = None,
-    extra: Mapping[str, Any] | None = None,
-) -> float:
-    elapsed = time.perf_counter() - start_time
-    entry = {"step": step, "seconds": round(float(elapsed), 4)}
-    if parallel_info:
-        entry["parallel"] = bool(parallel_info.get("parallel", False))
-        entry["requested_cores"] = int(parallel_info.get("requested_cores", 1))
-        entry["effective_cores"] = int(parallel_info.get("effective_cores", 1))
-        for key in ("tasks", "chunk_size", "mc_samples", "engine", "approximate"):
-            if key in parallel_info:
-                entry[key] = parallel_info[key]
-    if extra:
-        entry.update(extra)
-    runtime_info["steps"].append(entry)
-    return elapsed
 
 
 @with_default_progress_output
@@ -290,12 +164,10 @@ def copykat(
     # Generator would change any random stream that depends on it.
     np.random.seed(1234)  # noqa: NPY002
     sample_name = f"{sam_name}_copykat_"
-    runtime_info: RuntimeInfo = {
-        "sample_name": sam_name,
-        "requested_cores": int(n_cores),
-        "available_cores": int(os.cpu_count() or 1),
-        "steps": [],
-        "parameters": {
+    runtime_info = new_runtime_info(
+        sam_name,
+        n_cores,
+        {
             "id_type": id_type,
             "cell_line": cell_line,
             "genome": genome,
@@ -318,14 +190,7 @@ def copykat(
             "anchor": anchor,
             "final_call": final_call,
         },
-        "versions": {},
-        "warnings": [],
-    }
-    for package in ("copykat-py", "numpy", "scipy", "pandas", "scikit-learn", "fastcluster"):
-        try:
-            runtime_info["versions"][package] = version(package)
-        except PackageNotFoundError:
-            runtime_info["versions"][package] = "unavailable (source checkout or package not installed)"
+    )
 
     logger.info("running copykat-py v1.0.0")
 
@@ -340,29 +205,18 @@ def copykat(
             _anchor.count_markers(rawmat, _anchor.IMMUNE_MARKERS),
             _anchor.count_markers(rawmat, _anchor.ENDOTHELIAL_MARKERS),
         )
-    prepared_input = _prepare_input_matrix(rawmat, min_gene_per_cell, LOW_DR)
+    filtering = FilteringOptions(
+        min_gene_per_cell=min_gene_per_cell,
+        ngene_chr=ngene_chr,
+        lower_detection_rate=LOW_DR,
+        upper_detection_rate=UP_DR,
+    )
+    prepared_input = _prepare_input_matrix(rawmat, filtering.min_gene_per_cell, filtering.lower_detection_rate)
     del rawmat  # release the caller's unfiltered input once preparation is complete
     input_cell_count = len(prepared_input.original_cell_names)
-    selected_pca_components = resolve_adaptive_pca_components(
-        input_cell_count,
-        pca_components=pca_components,
-        genome=genome,
+    selected_pca_components = select_pca_components(
+        input_cell_count, requested=pca_components, genome=genome, runtime_info=runtime_info
     )
-    runtime_info["pca_components"] = int(selected_pca_components)
-    runtime_info["pca_selection_mode"] = "manual" if pca_components is not None else "auto_by_input_cell_count"
-    runtime_info["pca_selection_genome"] = str(genome)
-    runtime_info["pca_selection_input_cells"] = input_cell_count
-    if genome is Genome.MM10:
-        runtime_info["pca_selection_rule"] = (
-            f"<{MOUSE_AUTO_PCA_SMALL_CELL_COUNT_CUTOFF}->{MOUSE_AUTO_PCA_SMALL_SAMPLE},"
-            f"<{MOUSE_AUTO_PCA_MEDIUM_CELL_COUNT_CUTOFF}->{MOUSE_AUTO_PCA_MEDIUM_SAMPLE},"
-            f">={MOUSE_AUTO_PCA_MEDIUM_CELL_COUNT_CUTOFF}->{MOUSE_AUTO_PCA_LARGE_SAMPLE}"
-        )
-    else:
-        runtime_info["pca_selection_rule"] = (
-            f"<{AUTO_PCA_CELL_COUNT_CUTOFF}->{AUTO_PCA_SMALL_SAMPLE},"
-            f">={AUTO_PCA_CELL_COUNT_CUTOFF}->{AUTO_PCA_LARGE_SAMPLE}"
-        )
     logger.info(f"  {prepared_input.matrix.shape[0]} genes, {prepared_input.matrix.shape[1]} cells in raw data")
     logger.info(
         f"  adaptive PCA components: {selected_pca_components} "
@@ -375,47 +229,28 @@ def copykat(
         )
     logger.info(f"  {prepared_input.matrix.shape[0]} genes past LOW_DR filtering")
 
+    effective_detection_rate = filtering.upper_detection_rate
     WNS1 = DataQualityStatus.OK
     if prepared_input.matrix.shape[0] < 7000:
         WNS1 = DataQualityStatus.LOW
-        UP_DR = LOW_DR
+        effective_detection_rate = filtering.lower_detection_rate
         logger.warning("  WARNING: low data quality; assigned LOW_DR to UP_DR...")
         runtime_info["warnings"].append("Low data quality; effective UP_DR was set to LOW_DR")
-    runtime_info["parameters"]["UP_DR_effective"] = UP_DR
+    runtime_info["parameters"]["UP_DR_effective"] = effective_detection_rate
     elapsed = _record_step(runtime_info, "read_and_filter", step_start, extra=asdict(prepared_input.stats))
     logger.info(f"  step 1 runtime: {_format_seconds(elapsed)}")
 
     # =========================================================================
     # Step 2: Annotate gene coordinates
     # =========================================================================
-    logger.info("step 2: annotating gene coordinates ...")
-    step_start = time.perf_counter()
-    anno_mat, anno_rows = annotate_gene_rows(prepared_input.genes, id_type=id_type, genome=genome)
-    runtime_info["parameters"]["gene_order"] = "chromosome,start_position" if genome is Genome.MM10 else "abspos"
-
-    # =========================================================================
-    # Step 3: Remove cell cycle genes and HLA genes (hg20 only)
-    # =========================================================================
-    if genome is Genome.HG20:
-        symbol_col = "hgnc_symbol"
-        cyclegenes = load_cyclegenes()
-        hla_genes = anno_mat[symbol_col][anno_mat[symbol_col].str.startswith("HLA-", na=False)].tolist()
-        genes_to_remove = set(cyclegenes) | set(hla_genes)
-        keep_genes = ~anno_mat[symbol_col].isin(genes_to_remove).to_numpy()
-        anno_mat = anno_mat[keep_genes].reset_index(drop=True)
-        anno_rows = anno_rows[keep_genes]
-    else:
-        symbol_col = "mgi_symbol"
-    elapsed = _record_step(
-        runtime_info, "annotate_genes", step_start, extra={"genes_after_annotation": int(anno_mat.shape[0])}
+    anno_mat, anno_rows, anno_cols = annotate_genes(
+        prepared_input.genes, id_type=id_type, genome=genome, runtime_info=runtime_info
     )
-    logger.info(f"  step 2 runtime: {_format_seconds(elapsed)}")
 
-    # Secondary cell filtering: ensure each cell has genes across chromosomes
-    anno_cols = ["abspos", "chromosome_name", "start_position", "end_position", "ensembl_gene_id", symbol_col, "band"]
+    # Secondary cell filtering: ensure each cell has genes across chromosomes.
     step_start = time.perf_counter()
     expr_values = prepared_input.matrix[anno_rows]
-    keep_cells = _keep_cells_by_chr_coverage(expr_values, anno_mat["chromosome_name"].to_numpy(), ngene_chr)
+    keep_cells = _keep_cells_by_chr_coverage(expr_values, anno_mat["chromosome_name"].to_numpy(), filtering.ngene_chr)
     if keep_cells.sum() == 0:
         raise ValueError("All cells are filtered out")
     cell_cols = list(prepared_input.barcodes)
@@ -436,26 +271,14 @@ def copykat(
     del expr_values
     _record_step(runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": len(cell_cols)})
 
-    # Gene detection rates and post-UP_DR cell coverage only need the raw
-    # counts; compute them now so rawmat3 can be transformed in place.
-    DR2 = (rawmat3 > 0).sum(axis=1) / rawmat3.shape[1]
-    seg_mask = DR2 >= UP_DR
-    keep_cells2 = _keep_cells_by_chr_coverage(
-        (rawmat3 != 0)[seg_mask], anno_mat["chromosome_name"].to_numpy()[seg_mask], ngene_chr
+    norm_mat, seg_mask, keep_cells2 = transform_counts_inplace(
+        rawmat3,
+        anno_mat["chromosome_name"].to_numpy(),
+        detection_rate=effective_detection_rate,
+        ngene_chr=filtering.ngene_chr,
+        runtime_info=runtime_info,
     )
-
-    # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1)), in place
-    step_start = time.perf_counter()
-    sqrt_plus_one = rawmat3 + 1
-    np.sqrt(sqrt_plus_one, out=sqrt_plus_one)
-    norm_mat = np.sqrt(rawmat3, out=rawmat3)
-    del rawmat3
-    norm_mat += sqrt_plus_one
-    del sqrt_plus_one
-    np.log(norm_mat, out=norm_mat)
-    # Center each cell
-    norm_mat -= norm_mat.mean(axis=0, keepdims=True)
-    _record_step(runtime_info, "freeman_tukey_transform", step_start, extra={"matrix_shape": list(norm_mat.shape)})
+    del rawmat3  # transform_counts_inplace returned this same backing array
 
     logger.info(f"  {norm_mat.shape[0]} genes, {norm_mat.shape[1]} cells after preprocessing")
 
@@ -476,203 +299,26 @@ def copykat(
     # =========================================================================
     # Step 4: Measure baselines
     # =========================================================================
-    logger.info("step 4: measuring baselines ...")
-    step_start = time.perf_counter()
-
     cell_name_list = cell_cols
-
-    if cell_line is CellLineMode.YES:
-        logger.info("  running pure cell line mode")
-        relt = baseline_synthetic(
-            norm_mat_smooth,
-            min_cells=10,
-            n_cores=n_cores,
-            pca_components=selected_pca_components,
+    baseline_selection = select_baseline(
+        norm_mat_smooth,
+        cell_name_list,
+        norm_cell_names,
+        marker_counts,
+        WNS1,
+        options=BaselineOptions(
+            cell_line=cell_line,
+            anchor=anchor,
             genome=genome,
-        )
-        norm_mat_relat = relt.relative_expression
-        CL = relt.cluster_labels
-        baseline_state = _BaselineState(BaselineWarning.CELL_LINE, None)
-    elif isinstance(norm_cell_names, list) and len(norm_cell_names) > 1:
-        # Known normal cells provided
-        norm_cell_set = set(norm_cell_names)
-        known_normal_mask = np.array([c in norm_cell_set for c in cell_name_list], dtype=bool)
-        NNN = known_normal_mask.sum()
-        logger.info(f"  {NNN} known normal cells found in dataset")
-
-        if NNN == 0:
-            raise ValueError("Known normal cells provided but none found in dataset")
-
-        logger.info("  run with known normal...")
-        basel = np.median(norm_mat_smooth[:, known_normal_mask], axis=1)
-
-        # Cluster all cells
-        data_t = norm_mat_smooth.T
-        step4_reduce = data_t.shape[0] > FULL_CLUSTER_MAX_CELLS
-        km = 6
-        CL, Z = _hierarchical_cluster(
-            data_t,
-            km,
-            method="ward",
-            metric="euclidean",
             n_cores=n_cores,
-            reduce=step4_reduce,
             pca_components=selected_pca_components,
-        )
-
-        while not all(np.bincount(CL)[np.bincount(CL) > 0] > 5):
-            km -= 1
-            if Z is not None:
-                CL = fcluster(Z, t=km, criterion="maxclust")
-            else:
-                CL, Z = _hierarchical_cluster(
-                    data_t,
-                    km,
-                    method="ward",
-                    metric="euclidean",
-                    n_cores=n_cores,
-                    reduce=step4_reduce,
-                    pca_components=selected_pca_components,
-                )
-            if km == 2:
-                break
-
-        baseline_state = _BaselineState(
-            BaselineWarning.KNOWN_NORMAL,
-            np.asarray(cell_name_list, dtype=object)[known_normal_mask].tolist(),
-        )
-        norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
-    else:
-        # Auto-detect normal cells
-        anchor_selector = None
-        if anchor is AnchorStrategy.MARKERS and marker_counts is not None:
-            immune_counts = marker_counts[0].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
-            endothelial_counts = marker_counts[1].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
-
-            def anchor_selector(labels: ClusterLabels, sigma_cluster: int) -> tuple[int, AnchorPath]:
-                selected, path = _anchor.choose_anchor_cluster(labels, immune_counts, endothelial_counts, sigma_cluster)
-                return int(selected), path
-
-        basa = baseline_norm_cl(
-            norm_mat_smooth,
-            min_cells=5,
-            n_cores=n_cores,
-            cell_names=cell_name_list,
-            pca_components=selected_pca_components,
-            genome=genome,
-            anchor_selector=anchor_selector,
-        )
-        assert basa.cluster_labels is not None  # baseline_norm_cl always clusters
-        CL = basa.cluster_labels
-        runtime_info["anchor_path"] = basa.anchor_path
-        if anchor is AnchorStrategy.MARKERS:
-            basa = replace(
-                basa,
-                warning=(
-                    BaselineWarning.NONE
-                    if basa.anchor_path in {AnchorPath.IMMUNE, AnchorPath.ENDOTHELIAL}
-                    else BaselineWarning.UNCLASSIFIED
-                ),
-            )
-            logger.info(
-                f"  normal reference from markers: path={runtime_info['anchor_path']}, cells={len(basa.normal_cells)}"
-            )
-
-        if basa.warning is BaselineWarning.UNCLASSIFIED and anchor is not AnchorStrategy.MARKERS:
-            cluster_preN = list(basa.normal_cells)
-            keep_cluster_anchor = WNS1 is DataQualityStatus.LOW and len(cluster_preN) >= max(
-                50, int(0.05 * len(cell_name_list))
-            )
-            if keep_cluster_anchor:
-                logger.info("  low-data-quality mode: keeping cluster-based normal anchor")
-            else:
-                basa_cluster = basa
-                basa_gmm = baseline_gmm(
-                    norm_mat_smooth,
-                    cell_name_list,
-                    max_normal=5,
-                    mu_cut=0.05,
-                    Nfraq_cut=0.99,
-                    RE_before=basa_cluster,
-                    n_cores=n_cores,
-                    pca_components=selected_pca_components,
-                    genome=genome,
-                    cluster=False,  # only basel/preN are used; CL stays from clustering
-                )
-
-                # baseline_gmm anchors on a handful of individually-scanned
-                # cells (it stops at the first `max_normal` hits in raw cell
-                # order) and can be far noisier than the clustering candidate
-                # it is meant to replace -- a contaminated anchor set here
-                # silently inverts the final diploid/aneuploid call downstream,
-                # since cluster identity is decided purely by preN overlap.
-                # Only adopt the fallback when its baseline profile is a
-                # tighter, more confidently-neutral fit than the candidate it
-                # would discard; otherwise keep the clustering answer even
-                # though confidence is flagged low.
-                #
-                # Compare the two candidates with the same 3-component GMM
-                # sigma that baseline_norm_cl already uses to rank its own
-                # six clusters against each other, rather than a raw
-                # mean(|basel|) magnitude. Magnitude is fit over genes for
-                # both candidates, so it isn't literally biased by the
-                # cell-count each basel was averaged over -- but a bigger,
-                # more heterogeneous candidate can still land on a smaller
-                # mean(|basel|) via cross-subpopulation cancellation rather
-                # than genuine uniform neutrality, without that cancellation
-                # showing up as a tighter (lower-sigma) GMM fit. Sigma
-                # measures how cleanly the profile separates into
-                # loss/neutral/gain, which is what "confidently neutral"
-                # actually means here, so it is the more consistent yardstick
-                # to reuse for this cross-candidate comparison.
-                def _basel_sigma(basel_vec: GeneProfile) -> float:
-                    sigma_init = max(0.05, 0.5 * float(np.std(basel_vec)))
-                    return _fit_gmm_3component(basel_vec, sigma_init=sigma_init, max_iter=5000)[2]
-
-                clustering_sigma = float(_basel_sigma(basa_cluster.baseline))
-                gmm_sigma = float(_basel_sigma(basa_gmm.baseline))
-                if gmm_sigma < clustering_sigma:
-                    basa = basa_gmm
-                else:
-                    logger.info(
-                        f"  GMM fallback baseline (sigma={gmm_sigma:.4f}) is not tighter/more confidently "
-                        f"neutral than the clustering candidate (sigma={clustering_sigma:.4f}); "
-                        "keeping cluster-based normal anchor"
-                    )
-                basa = replace(basa, warning=BaselineWarning.UNCLASSIFIED)
-
-        norm_mat_relat = norm_mat_smooth - basa.baseline[:, np.newaxis]
-        baseline_state = _BaselineState(basa.warning, basa.normal_cells)
-    del norm_mat_smooth
-    baseline_cluster_info = get_last_cluster_info()
-    if cell_line is CellLineMode.YES:
-        reference_mode = ReferenceMode.SYNTHETIC
-    elif baseline_state.warning is BaselineWarning.KNOWN_NORMAL:
-        reference_mode = ReferenceMode.KNOWN_NORMAL
-    else:
-        reference_mode = ReferenceMode.AUTOMATIC
-    runtime_info["reference"] = {
-        "mode": reference_mode,
-        "supplied_count": len(set(norm_cell_names)) if isinstance(norm_cell_names, list) else 0,
-        "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
-        if isinstance(norm_cell_names, list)
-        else 0,
-        "baseline_anchor_count": len(
-            normal_cells_to_names(baseline_state.normal_cells, cell_name_list).intersection(cell_name_list)
         ),
-    }
-    elapsed = _record_step(
-        runtime_info,
-        "baseline_estimation",
-        step_start,
-        parallel_info=baseline_cluster_info,
-        extra={"warning": baseline_state.warning},
+        runtime_info=runtime_info,
     )
-    logger.info(
-        f"  baseline runtime: {_format_seconds(elapsed)} "
-        f"(parallel={baseline_cluster_info['parallel']}, cores={baseline_cluster_info['effective_cores']}, "
-        f"engine={baseline_cluster_info.get('engine', 'n/a')})"
-    )
+    norm_mat_relat = baseline_selection.relative_expression
+    CL = baseline_selection.cluster_labels
+    baseline_state = baseline_selection.reference
+    del baseline_selection, norm_mat_smooth
 
     # =========================================================================
     # Apply stricter gene filtering for segmentation
@@ -718,32 +364,16 @@ def copykat(
     # =========================================================================
     logger.info("step 5: segmentation ...")
     step_start = time.perf_counter()
-    results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores, ks_method=ks_method)
-
-    if len(results.breakpoints) < 25:
-        logger.info("  too few breakpoints; decreased KS_cut to 50%")
-        results = cna_mcmc(
-            CL_filtered,
-            norm_mat_relat,
-            bins=win_size,
-            cut_cor=0.5 * KS_cut,
-            n_cores=n_cores,
+    results = _segment_with_retries(
+        CL_filtered,
+        norm_mat_relat,
+        options=_SegmentationOptions(
+            window_size=win_size,
+            ks_cutoff=KS_cut,
             ks_method=ks_method,
-        )
-
-    if len(results.breakpoints) < 25:
-        logger.info("  too few breakpoints; decreased KS_cut to 25%")
-        results = cna_mcmc(
-            CL_filtered,
-            norm_mat_relat,
-            bins=win_size,
-            cut_cor=0.25 * KS_cut,
             n_cores=n_cores,
-            ks_method=ks_method,
-        )
-
-    if len(results.breakpoints) < 25:
-        raise ValueError("Too few segments; try decreasing KS_cut or improving data quality")
+        ),
+    )
     seg_info = get_last_cna_mcmc_info()
     elapsed = _record_step(
         runtime_info,
@@ -805,353 +435,51 @@ def copykat(
         chrom_info = Aj.dna_annotations["chrom"].to_numpy()
         del Aj
 
-        logger.info("step 7: adjust baseline ...")
-        step_start = time.perf_counter()
-
-        if cell_line is CellLineMode.YES:
-            mat_adj = uber_mat_adj
-        else:
-            arm_calls = None
-            if (
-                final_call is FinalCallStrategy.ARM_CORRELATION
-                and baseline_state.normal_cells is not None
-                and len(baseline_state.normal_cells) > 0
-            ):
-                normal_cell_names = normal_cells_to_names(baseline_state.normal_cells, cell_name_list)
-                anchor_mask = np.array([cell in normal_cell_names for cell in cell_cols_seg], dtype=bool)
-                if anchor_mask.sum() >= 5:
-                    arm_calls = _anchor.arm_correlation_calls(
-                        uber_mat_adj,
-                        bin_coords["chrom"].to_numpy(),
-                        bin_coords["chrompos"].to_numpy(),
-                        anchor_mask,
-                    )
-                    runtime_info["final_call_path"] = FinalCallStrategy.ARM_CORRELATION
-                else:
-                    runtime_info["final_call_path"] = "clusters_insufficient_anchor"
-            initial_call = cluster_and_call(
-                uber_mat_adj,
-                cell_cols_seg,
-                cell_name_list,
-                baseline_state.normal_cells,
-                n_cores=n_cores,
-                pca_components=selected_pca_components,
-                prediction_override=arm_calls,
-            )
-            # Baseline adjustment: subtract diploid mean, then denoise
-            diploid_mask = initial_call.predictions == PredictionLabel.DIPLOID
-            if diploid_mask.sum() > 0:
-                mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
-            else:
-                mat_adj = uber_mat_adj
-        del uber_mat_adj
-        cluster_info = get_last_cluster_info()
-        elapsed = _record_step(
-            runtime_info,
-            "baseline_adjustment",
-            step_start,
-            parallel_info=cluster_info,
-            extra={"warning": baseline_state.warning},
-        )
-        logger.info(
-            f"  step 7 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
-            f"engine={cluster_info.get('engine', 'n/a')})"
-        )
-
-        # =========================================================================
-        # Step 8: Final prediction
-        # =========================================================================
-        logger.info("step 8: final prediction ...")
-        step_start = time.perf_counter()
-        clustering_result: WardClusteringResult | FinalCallResult
-        if cell_line is not CellLineMode.YES:
-            clustering_result = cluster_and_call(
-                mat_adj,
-                cell_cols_seg,
-                cell_name_list,
-                baseline_state.normal_cells,
-                n_cores=n_cores,
-                pca_components=selected_pca_components,
-                prediction_override=arm_calls,
-                low_confidence=baseline_state.warning is BaselineWarning.UNCLASSIFIED,
-            )
-        else:
-            clustering_result = cluster_cells(
-                mat_adj,
-                n_cores=n_cores,
-                pca_components=selected_pca_components,
-            )
-        cluster_info = get_last_cluster_info()
-        elapsed = _record_step(
-            runtime_info,
-            "final_prediction",
-            step_start,
-            parallel_info=cluster_info,
-            extra={"warning": baseline_state.warning},
-        )
-        logger.info(
-            f"  step 8 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
-            f"engine={cluster_info.get('engine', 'n/a')})"
-        )
-
-        # =========================================================================
-        # Step 9: Save results
-        # =========================================================================
-        pred_dict = None
-        res = None
-        if cell_line is not CellLineMode.YES:
-            assert isinstance(clustering_result, FinalCallResult)
-            pred_dict = {cell_cols_seg[i]: clustering_result.predictions[i] for i in range(len(cell_cols_seg))}
-            for cell in original_cell_names:
-                if cell not in pred_dict:
-                    pred_dict[cell] = PredictionLabel.NOT_DEFINED
-            res = pd.DataFrame(
-                {
-                    "cell.names": list(pred_dict.keys()),
-                    "copykat.pred": list(pred_dict.values()),
-                }
-            )
-
-        logger.info("step 9: saving results ...")
-        step_start = time.perf_counter()
-
-        if res is not None:
-            res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
-
-        # Save CNA results
-        cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
-        _write_cna_csv(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg, n_cores=n_cores)
-
-        # Save clustering
-        clustering_data: ClusteringResult = {
-            "labels": clustering_result.labels,
-            "Z": clustering_result.linkage,
-        }
-        with open(f"{sample_name}clustering_results.pkl", "wb") as f:
-            pickle.dump(clustering_data, f)
-        elapsed = _record_step(
-            runtime_info,
-            "write_final_outputs",
-            step_start,
-            extra={"bins": int(cna_out.shape[0]), "cells": int(cna_out.shape[1] - 3)},
-        )
-        logger.info(f"  step 9 runtime: {_format_seconds(elapsed)}")
-
-        # =========================================================================
-        # Step 10: Plot heatmap
-        # =========================================================================
-        if plot_genes:
-            logger.info("step 10: plotting heatmap ...")
-            plot_step_start = time.perf_counter()
-            predictions = pred_dict if cell_line is not CellLineMode.YES else None
-            _run_plot_heatmap(
-                mat_adj,
-                chrom_info,
-                predictions,
-                sample_name,
-                distance,
-                n_cores,
-                WNS1,
-                baseline_state.warning,
-                f"{sample_name}heatmap.png",
-            )
-            elapsed = _record_step(runtime_info, "plot_heatmap", plot_step_start)
-            logger.info(f"  step 10 runtime: {_format_seconds(elapsed)}")
-
-        if plot_genes and meta_csv is not None:
-            logger.info("step 10b: plotting annotated heatmap ...")
-            step_ann = time.perf_counter()
-            from copykat_py.plotting import AnnotatedHeatmapOptions, plot_heatmap_annotated
-
-            meta_pred_path = _meta_with_pred(meta_csv, pred_dict, sample_name)
-            plot_heatmap_annotated(
-                mat=mat_adj,
-                cell_names=cna_out.columns[3:].tolist(),
-                chrom_info=chrom_info,
-                meta_csv=meta_pred_path,
-                options=AnnotatedHeatmapOptions(
-                    row_split_col=row_split_col,
-                    sample_name=sample_name,
-                    distance=distance,
-                    n_cores=n_cores,
-                    output_path=f"{sample_name}annotated_heatmap.png",
-                ),
-            )
-            elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
-            logger.info(f"  step 10b runtime: {_format_seconds(elapsed)}")
-
-        # =========================================================================
-        # Output SEG file
-        # =========================================================================
-        if output_seg:
-            logger.info("  generating seg files for IGV viewer")
-            _write_seg_file(bin_coords, mat_adj, cell_cols_seg, sample_name)
-        runtime_info["total_seconds"] = round(time.perf_counter() - start_time, 4)
-        with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as report:
-            json.dump(runtime_info, report, indent=2)
-        logger.info(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
-        logger.info(f"Runtime report saved to: {sample_name}runtime.json")
-
-        if res is None:  # cell-line mode makes no predictions
-            return {
-                "CNAmat": cna_out,
-                "hclustering": clustering_data,
-                "runtime": runtime_info,
-            }
-        return {
-            "prediction": res,
-            "CNAmat": cna_out,
-            "hclustering": clustering_data,
-            "runtime": runtime_info,
-        }
-
     else:
-        # mm10: no bin conversion, use gene-level results directly
-        uber_mat_adj = results_com  # adjusted in place below; results_com is not used again
+        # mm10 uses gene-level results and retains its existing final-call path.
+        uber_mat_adj = results_com
         del results_com
-        chrom_info = anno_mat2["chromosome_name"].to_numpy()
+        bin_coords = gene_anno
+        chrom_info = pd.to_numeric(anno_mat2["chromosome_name"], errors="coerce").fillna(0).to_numpy()
 
-        logger.info("step 7: adjust baseline ...")
-        step_start = time.perf_counter()
-        initial_call = cluster_and_call(
-            uber_mat_adj,
-            cell_cols_seg,
-            cell_name_list,
-            baseline_state.normal_cells,
+    final_prediction = adjust_and_call(
+        uber_mat_adj,
+        bin_coords,
+        cell_cols_seg,
+        cell_name_list,
+        baseline_state,
+        options=PredictionOptions(
+            genome=genome,
+            cell_line=cell_line,
+            final_call=final_call,
             n_cores=n_cores,
             pca_components=selected_pca_components,
-        )
-        # Baseline adjustment
-        diploid_mask = initial_call.predictions == PredictionLabel.DIPLOID
-        if diploid_mask.sum() > 0:
-            mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
-        else:
-            mat_adj = uber_mat_adj
-        del uber_mat_adj
-        cluster_info = get_last_cluster_info()
-        elapsed = _record_step(
-            runtime_info,
-            "baseline_adjustment",
-            step_start,
-            parallel_info=cluster_info,
-            extra={"warning": baseline_state.warning},
-        )
-        logger.info(
-            f"  step 7 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
-            f"engine={cluster_info.get('engine', 'n/a')})"
-        )
+        ),
+        runtime_info=runtime_info,
+    )
+    mat_adj = final_prediction.values
+    clustering_result = final_prediction.clustering
+    del final_prediction, uber_mat_adj
 
-        # Final prediction
-        logger.info("step 8: final prediction ...")
-        step_start = time.perf_counter()
-        final_call_result = cluster_and_call(
-            mat_adj,
-            cell_cols_seg,
-            cell_name_list,
-            baseline_state.normal_cells,
+    return write_results(
+        mat_adj,
+        bin_coords,
+        chrom_info,
+        cell_cols_seg,
+        original_cell_names,
+        clustering_result,
+        WNS1,
+        baseline_state.warning,
+        options=OutputOptions(
+            sample_name=sample_name,
+            genome=genome,
+            distance=distance,
             n_cores=n_cores,
-            pca_components=selected_pca_components,
-            low_confidence=baseline_state.warning is BaselineWarning.UNCLASSIFIED,
-        )
-        cluster_info = get_last_cluster_info()
-        elapsed = _record_step(
-            runtime_info,
-            "final_prediction",
-            step_start,
-            parallel_info=cluster_info,
-            extra={"warning": baseline_state.warning},
-        )
-        logger.info(
-            f"  step 8 runtime: {_format_seconds(elapsed)} "
-            f"(parallel={cluster_info['parallel']}, cores={cluster_info['effective_cores']}, "
-            f"engine={cluster_info.get('engine', 'n/a')})"
-        )
-
-        # Save
-        logger.info("step 9: saving results ...")
-        step_start = time.perf_counter()
-        pred_dict = {cell_cols_seg[i]: final_call_result.predictions[i] for i in range(len(cell_cols_seg))}
-        for cell in original_cell_names:
-            if cell not in pred_dict:
-                pred_dict[cell] = PredictionLabel.NOT_DEFINED
-
-        res = pd.DataFrame(
-            {
-                "cell.names": list(pred_dict.keys()),
-                "copykat.pred": list(pred_dict.values()),
-            }
-        )
-        res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
-
-        cna_out = _frame_with_leading_columns(gene_anno, mat_adj, cell_cols_seg)
-        _write_cna_csv(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg, n_cores=n_cores)
-
-        clustering_data = {"labels": final_call_result.labels, "Z": final_call_result.linkage}
-        with open(f"{sample_name}clustering_results.pkl", "wb") as f:
-            pickle.dump(clustering_data, f)
-        elapsed = _record_step(
-            runtime_info,
-            "write_final_outputs",
-            step_start,
-            extra={"bins": int(cna_out.shape[0]), "cells": len(cell_cols_seg)},
-        )
-        logger.info(f"  step 9 runtime: {_format_seconds(elapsed)}")
-
-        chrom_numeric = pd.to_numeric(anno_mat2["chromosome_name"], errors="coerce").fillna(0).values
-        if plot_genes:
-            logger.info("step 10: plotting heatmap ...")
-            step_start = time.perf_counter()
-            from copykat_py.plotting import plot_heatmap
-
-            plot_heatmap(
-                mat_adj,
-                chrom_numeric,
-                predictions=pred_dict,
-                sample_name=sample_name,
-                distance=distance,
-                n_cores=n_cores,
-                WNS1=WNS1,
-                WNS=baseline_state.warning,
-                output_path=f"{sample_name}heatmap.png",
-                genome=genome,
-            )
-            elapsed = _record_step(runtime_info, "plot_heatmap", step_start)
-            logger.info(f"  step 10 runtime: {_format_seconds(elapsed)}")
-
-        if plot_genes and meta_csv is not None:
-            logger.info("step 10b: plotting annotated heatmap ...")
-            step_ann = time.perf_counter()
-            from copykat_py.plotting import AnnotatedHeatmapOptions, plot_heatmap_annotated
-
-            meta_pred_path = _meta_with_pred(meta_csv, pred_dict, sample_name)
-            plot_heatmap_annotated(
-                mat=mat_adj,
-                cell_names=cna_out.columns[7:].tolist(),
-                chrom_info=chrom_numeric,
-                meta_csv=meta_pred_path,
-                options=AnnotatedHeatmapOptions(
-                    row_split_col=row_split_col,
-                    sample_name=sample_name,
-                    distance=distance,
-                    n_cores=n_cores,
-                    output_path=f"{sample_name}annotated_heatmap.png",
-                    genome=genome,
-                ),
-            )
-            elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
-            logger.info(f"  step 10b runtime: {_format_seconds(elapsed)}")
-        runtime_info["total_seconds"] = round(time.perf_counter() - start_time, 4)
-        with open(f"{sample_name}runtime.json", "w", encoding="utf-8") as report:
-            json.dump(runtime_info, report, indent=2)
-        logger.info(f"Done. Elapsed time: {_format_seconds(runtime_info['total_seconds'])}")
-        logger.info(f"Runtime report saved to: {sample_name}runtime.json")
-
-        return {
-            "prediction": res,
-            "CNAmat": cna_out,
-            "hclustering": clustering_data,
-            "runtime": runtime_info,
-        }
+            plot_genes=plot_genes,
+            output_seg=output_seg,
+            meta_csv=meta_csv,
+            row_split_col=row_split_col,
+        ),
+        runtime_info=runtime_info,
+        start_time=start_time,
+    )

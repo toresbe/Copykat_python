@@ -64,7 +64,6 @@ class AnnotatedHeatmapOptions:
         n_cores: Parallel threads passed to the clustering backend.
         output_path: PNG destination, or ``None`` to use the default filename.
         continuous_meta: Metadata columns to color as continuous values.
-        genome: Genome build used for chromosome labels.
     """
 
     row_split_col: str | None = None
@@ -73,11 +72,9 @@ class AnnotatedHeatmapOptions:
     n_cores: int = 1
     output_path: str | None = None
     continuous_meta: Sequence[str] | None = None
-    genome: Genome = Genome.HG20
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "distance", DistanceMetric(self.distance))
-        object.__setattr__(self, "genome", Genome(self.genome))
         if self.continuous_meta is not None:
             object.__setattr__(self, "continuous_meta", tuple(self.continuous_meta))
 
@@ -767,6 +764,8 @@ def plot_heatmap_annotated(
     chrom_info: npt.NDArray[Any],
     meta_csv: str,
     options: AnnotatedHeatmapOptions,
+    *,
+    genome: Genome = Genome.HG20,
 ) -> None:
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
@@ -791,7 +790,10 @@ def plot_heatmap_annotated(
         Cells present in *mat* but absent from the CSV are labelled "unknown".
     options : AnnotatedHeatmapOptions
         Display and clustering configuration for the plot.
+    genome : Genome
+        Genome build of the CNA data, used for chromosome labels.
     """
+    genome = Genome(genome)
     t0 = time.perf_counter()
     n_bins, n_cells = mat.shape
     logger.info(f"  plot_heatmap_annotated: {n_cells} cells × {n_bins} bins")
@@ -900,7 +902,7 @@ def plot_heatmap_annotated(
     )
     ax_chr.set_xticks([])
     ax_chr.set_yticks([])
-    _add_chr_labels(ax_chr, chrom_info, below=True, genome=options.genome)
+    _add_chr_labels(ax_chr, chrom_info, below=True, genome=genome)
     ax_chr.set_xlabel("Genomic position", fontsize=13, labelpad=22)
 
     # ── 7. Annotation sidebars ────────────────────────────────────────────
