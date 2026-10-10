@@ -12,30 +12,24 @@ Faithfully reimplements the R copykat() function workflow:
 9. Output files + heatmap
 """
 
-import io
 import json
 import logging
 import os
 import pickle
 import time
-from collections import deque
-from collections.abc import Iterator, Mapping, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-import pyarrow as pa
-import pyarrow.csv as pa_csv
 from scipy import sparse
 from scipy.cluster.hierarchy import fcluster
-from scipy.io import mmread
 
-from copykat_py._logging import with_default_progress_output
-from copykat_py import backend
 from copykat_py import anchor as _anchor
+from copykat_py import backend
+from copykat_py._logging import with_default_progress_output
 from copykat_py._types import (
     BoolArray,
     ClusteringResult,
@@ -43,7 +37,6 @@ from copykat_py._types import (
     CopyKATResult,
     FloatArray,
     GeneProfile,
-    InputStats,
     ParallelInfo,
     RawMatrix,
     RuntimeInfo,
@@ -60,7 +53,6 @@ from copykat_py.baseline import (
     MOUSE_AUTO_PCA_MEDIUM_SAMPLE,
     MOUSE_AUTO_PCA_SMALL_CELL_COUNT_CUTOFF,
     MOUSE_AUTO_PCA_SMALL_SAMPLE,
-    _effective_threads,
     _fit_gmm_3component,
     _hierarchical_cluster,
     baseline_gmm,
@@ -71,188 +63,19 @@ from copykat_py.baseline import (
 )
 from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
+from copykat_py.input import (
+    _keep_cells_by_chr_coverage,
+    _prepare_input_matrix,
+)
+from copykat_py.output import (
+    _frame_with_leading_columns,
+    _write_cna_csv,
+    _write_seg_file,
+)
 from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 
 logger = logging.getLogger(__name__)
-
-_WRITE_CHUNK_BYTES = 512 << 20
-# Parallel formatting keeps several chunks (plus their rounded copies and
-# text) in flight, so it gets a smaller total budget. Below the minimum rows
-# per chunk, per-column pyarrow overhead outweighs the gain from parallelism,
-# so very wide matrices stay serial.
-_PARALLEL_WRITE_BYTES = 128 << 20
-_PARALLEL_WRITE_MIN_ROWS = 128
-
-
-def _row_run_starts(values: FloatArray, block_elems: int = 1 << 26) -> npt.NDArray[np.intp]:
-    """Find value rows that differ in representation, including signed zero."""
-    n_rows, n_cols = values.shape
-    if n_rows < 2:
-        return np.arange(n_rows, dtype=np.intp)
-    change = np.empty(n_rows - 1, dtype=bool)
-    step = max(1, block_elems // max(1, n_cols))
-    for lo in range(0, n_rows - 1, step):
-        hi = min(n_rows - 1, lo + step)
-        block = np.ascontiguousarray(values[lo:hi + 1])
-        if block.dtype.kind in "fc":
-            row_dtype = np.dtype((np.void, block.dtype.itemsize * n_cols))
-            row_bytes = block.view(row_dtype).reshape(-1)
-            change[lo:hi] = row_bytes[1:] != row_bytes[:-1]
-        else:
-            change[lo:hi] = np.any(block[1:] != block[:-1], axis=1)
-    return np.concatenate(([0], np.flatnonzero(change) + 1)).astype(np.intp, copy=False)
-
-
-def _csv_lines(table: Any, write_kwargs: dict[str, Any], include_header: bool = False) -> list[bytes]:
-    buffer = io.BytesIO()
-    options = pa_csv.WriteOptions(include_header=include_header, **write_kwargs)
-    pa_csv.write_csv(table, buffer, write_options=options)
-    return buffer.getvalue().split(b"\n")[:-1]
-
-
-def _write_csv_repeated_rows(
-    path: str, lead_table: Any, schema: Any, values: FloatArray, run_starts: npt.NDArray[np.intp],
-    round_floats: bool, write_kwargs: dict[str, Any], value_type: Any,
-) -> bool:
-    """Format each repeated value row once, retaining per-row annotations."""
-    n_rows = values.shape[0]
-    unique = values[run_starts]
-    if round_floats and np.issubdtype(unique.dtype, np.floating):
-        unique = np.round(unique, 6)
-    unique = np.asfortranarray(unique)
-    value_schema = pa.schema(list(schema)[lead_table.num_columns:])
-    value_table = pa.Table.from_arrays(
-        [pa.array(unique[:, j], type=value_type, from_pandas=True) for j in range(unique.shape[1])],
-        schema=value_schema,
-    )
-    value_lines = _csv_lines(value_table, write_kwargs)
-    lead_lines = _csv_lines(lead_table, write_kwargs)
-    header = _csv_lines(schema.empty_table(), write_kwargs, include_header=True)
-    if len(value_lines) != len(run_starts) or len(lead_lines) != n_rows or len(header) != 1:
-        return False
-    run_of_row = np.repeat(np.arange(len(run_starts)), np.diff(np.concatenate([run_starts, [n_rows]])))
-    with open(path, "wb") as handle:
-        handle.write(header[0] + b"\n")
-        batch = []
-        for i in range(n_rows):
-            batch.extend((lead_lines[i], b"\t", value_lines[run_of_row[i]], b"\n"))
-            if len(batch) >= 4096:
-                handle.write(b"".join(batch))
-                batch.clear()
-        handle.write(b"".join(batch))
-    return True
-
-
-def _write_cna_csv(
-    path: str,
-    lead_df: pd.DataFrame,
-    values: FloatArray,
-    value_columns: Sequence[str],
-    round_floats: bool = True,
-    quote_strings: bool = True,
-    n_cores: int = 1,
-) -> None:
-    """Write ``lead_df`` columns followed by ``values`` columns as TSV, in row chunks.
-
-    Equivalent to writing ``pd.concat([lead_df, pd.DataFrame(values, columns=value_columns)], axis=1)``
-    but never materializes that frame (or a rounded copy of it); only one chunk
-    of rows is converted at a time. Uses pyarrow (fast) with 6 d.p. float
-    precision. With ``round_floats=False`` floats keep their shortest
-    round-trip repr, and with ``quote_strings=False`` strings and the header
-    are left unquoted; both together match pandas ``.to_csv(sep="\\t", index=False)``
-    output.
-
-    With ``n_cores > 1``, up to ``n_cores`` chunks are formatted
-    concurrently and written in order, producing the same bytes; the total
-    in-flight chunk size stays within ``_PARALLEL_WRITE_BYTES``.
-    """
-    lead_df = lead_df.reset_index(drop=True)
-    if round_floats:
-        lead_float_cols = [c for c in lead_df.columns if pd.api.types.is_float_dtype(lead_df[c])]
-        if lead_float_cols:
-            lead_df = lead_df.copy()
-            lead_df[lead_float_cols] = lead_df[lead_float_cols].round(6)
-    value_columns = list(value_columns)
-    n_rows = values.shape[0]
-    row_bytes = max(1, len(value_columns) * values.itemsize)
-    chunk_rows = max(1, _WRITE_CHUNK_BYTES // row_bytes)
-
-    def _value_chunks() -> Iterator[tuple[int, int, FloatArray]]:
-        for start in range(0, n_rows, chunk_rows):
-            stop = min(start + chunk_rows, n_rows)
-            block = values[start:stop]
-            if round_floats and np.issubdtype(block.dtype, np.floating):
-                block = np.round(block, 6)
-            yield start, stop, block
-
-    write_kwargs = {"delimiter": "\t"}
-    if not quote_strings:
-        write_kwargs["quoting_style"] = "none"
-        write_kwargs["quoting_header"] = "none"
-    write_options = pa_csv.WriteOptions(**write_kwargs)
-
-    lead_table = pa.Table.from_pandas(lead_df, preserve_index=False).replace_schema_metadata(None)
-    value_type = pa.from_numpy_dtype(values.dtype)
-    schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
-
-    if n_rows > 0 and values.shape[1] > 0:
-        run_starts = _row_run_starts(values)
-        if 2 * len(run_starts) <= n_rows and _write_csv_repeated_rows(
-            path, lead_table, schema, values, run_starts, round_floats, write_kwargs, value_type
-        ):
-            release_unused = getattr(pa.default_memory_pool(), "release_unused", None)
-            if release_unused is not None:
-                release_unused()
-            return
-
-    def _chunk_table(start: int, stop: int, block: FloatArray) -> Any:
-        block = np.asfortranarray(block)  # contiguous columns
-        arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
-        arrays += [pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1])]
-        return pa.Table.from_arrays(arrays, schema=schema)
-
-    n_threads = _effective_threads(n_cores)
-    parallel_rows = _PARALLEL_WRITE_BYTES // (n_threads * row_bytes)
-    if n_threads > 1 and parallel_rows >= _PARALLEL_WRITE_MIN_ROWS and n_rows > parallel_rows:
-        chunk_rows = parallel_rows
-
-        def _format(start: int) -> bytes:
-            stop = min(start + chunk_rows, n_rows)
-            block = values[start:stop]
-            if round_floats and np.issubdtype(block.dtype, np.floating):
-                block = np.round(block, 6)
-            buf = io.BytesIO()
-            options = pa_csv.WriteOptions(include_header=(start == 0), **write_kwargs)
-            pa_csv.write_csv(_chunk_table(start, stop, block), buf, write_options=options)
-            return buf.getvalue()
-
-        pending: deque[Future[bytes]] = deque()
-        with open(path, "wb") as f, ThreadPoolExecutor(n_threads) as executor:
-            for start in range(0, n_rows, chunk_rows):
-                pending.append(executor.submit(_format, start))
-                if len(pending) >= n_threads:
-                    f.write(pending.popleft().result())
-            while pending:
-                f.write(pending.popleft().result())
-    else:
-        with open(path, "wb") as f, pa_csv.CSVWriter(f, schema, write_options=write_options) as writer:
-            for start, stop, block in _value_chunks():
-                writer.write_table(_chunk_table(start, stop, block))
-    # Arrow's allocator keeps freed chunk buffers cached; hand them back
-    # so they don't inflate the peak of the steps that follow.
-    pa.default_memory_pool().release_unused()
-
-
-def _frame_with_leading_columns(
-    lead_df: pd.DataFrame, values: FloatArray, value_columns: Sequence[str]
-) -> pd.DataFrame:
-    """DataFrame of ``lead_df`` columns followed by ``values``, without copying ``values``."""
-    frame = pd.DataFrame(values, columns=list(value_columns), copy=False)
-    lead_df = lead_df.reset_index(drop=True)
-    for pos, col in enumerate(lead_df.columns):
-        frame.insert(pos, col, lead_df[col].to_numpy())
-    return frame
 
 
 def _adjust_baseline_inplace(mat: FloatArray, diploid_mask: BoolArray, chunk_elems: int = 1 << 24) -> FloatArray:
@@ -334,51 +157,6 @@ def _run_plot_heatmap(
     )
 
 
-def _load_matrix(rawmat: RawMatrix) -> pd.DataFrame:
-    """Load raw matrix from various input formats.
-
-    Supports: pd.DataFrame, scipy sparse, numpy array, dict (matrix/genes/barcodes), or file path (mtx/csv/tsv).
-    """
-    if isinstance(rawmat, dict):
-        # Dict format from CLI with sparse matrix + gene/barcode names
-        mat = rawmat.get("matrix")
-        genes = rawmat.get("genes")
-        barcodes = rawmat.get("barcodes")
-
-        if mat is None:
-            raise ValueError("Dict input must contain 'matrix' key")
-
-        # Convert to dense if sparse
-        if hasattr(mat, "toarray"):
-            mat = mat.toarray()
-
-        df = pd.DataFrame(
-            mat,
-            index=None if genes is None else pd.Index(genes),
-            columns=None if barcodes is None else pd.Index(barcodes),
-        )
-        return df
-    elif isinstance(rawmat, pd.DataFrame):
-        return rawmat
-    elif isinstance(rawmat, np.ndarray):
-        return pd.DataFrame(rawmat)
-    elif hasattr(rawmat, "toarray"):
-        # scipy sparse
-        return pd.DataFrame(rawmat.toarray())
-    elif isinstance(rawmat, str):
-        if rawmat.endswith(".mtx") or rawmat.endswith(".mtx.gz"):
-            mat = mmread(rawmat)
-            return pd.DataFrame(mat.toarray() if hasattr(mat, "toarray") else mat)
-        elif rawmat.endswith(".csv"):
-            return pd.read_csv(rawmat, index_col=0)
-        elif rawmat.endswith(".tsv") or rawmat.endswith(".txt"):
-            return pd.read_csv(rawmat, sep="\t", index_col=0)
-        else:
-            return pd.read_csv(rawmat, sep="\t", index_col=0)
-    else:
-        raise ValueError(f"Unsupported rawmat type: {type(rawmat)}")
-
-
 def _format_seconds(seconds: float) -> str:
     if seconds < 60:
         return f"{seconds:.2f}s"
@@ -448,129 +226,6 @@ def _assign_binary_labels(
     for cluster_val in cluster_vals[score_arr == min_score]:
         labels[cluster_labels == cluster_val] = low_label
     return labels
-
-
-def _aggregate_duplicate_genes_sparse(
-    mat: sparse.csc_matrix, genes: npt.NDArray[Any]
-) -> tuple[sparse.csc_matrix, npt.NDArray[Any]]:
-    genes = np.asarray(genes, dtype=object)
-    unique_genes, inverse = np.unique(genes.astype(str), return_inverse=True)
-    if len(unique_genes) == len(genes):
-        return mat, genes
-
-    row_map = sparse.csr_matrix(
-        (np.ones(len(genes), dtype=np.float64), (inverse, np.arange(len(genes)))),
-        shape=(len(unique_genes), len(genes)),
-    )
-    return (row_map @ mat).tocsc(), unique_genes.astype(object)
-
-
-def _aggregate_duplicate_genes_frame(df: pd.DataFrame) -> pd.DataFrame:
-    if not df.index.has_duplicates:
-        return df
-
-    # Match R rowsum(..., reorder=TRUE): sum duplicate symbols and sort groups.
-    return df.groupby(level=0, sort=True).sum()
-
-
-def _prepare_sparse_input(
-    mat: SparseMatrix,
-    genes: npt.NDArray[Any],
-    barcodes: npt.NDArray[Any],
-    min_gene_per_cell: int,
-    low_dr: float,
-) -> tuple[sparse.csr_matrix, npt.NDArray[Any], list[str], list[str], InputStats]:
-    """Sparse branch of ``_prepare_input_matrix``: filter without densifying."""
-    csc, genes = _aggregate_duplicate_genes_sparse(mat.tocsc(copy=False), genes)
-    original_cell_names = barcodes.tolist()
-    genes_per_cell = np.asarray(csc.getnnz(axis=0)).ravel()
-    if (genes_per_cell > min_gene_per_cell).sum() == 0:
-        raise ValueError("No cells have more than min_gene_per_cell genes")
-    keep_cells = genes_per_cell >= min_gene_per_cell
-    filtered_cells = int((~keep_cells).sum())
-    csc = csc[:, keep_cells]
-    barcodes = barcodes[keep_cells]
-    detection_rate = np.asarray(csc.getnnz(axis=1)).ravel() / max(csc.shape[1], 1)
-    keep_genes = detection_rate > low_dr
-    filtered_gene_rows = int((~keep_genes).sum())
-    return (
-        csc[keep_genes, :].tocsr(),
-        genes[keep_genes],
-        barcodes.tolist(),
-        original_cell_names,
-        {
-            "input_type": "sparse_dict",
-            "filtered_cells": filtered_cells,
-            "filtered_gene_rows": filtered_gene_rows,
-        },
-    )
-
-
-def _prepare_input_matrix(
-    rawmat: RawMatrix, min_gene_per_cell: int, low_dr: float
-) -> tuple[sparse.csr_matrix | npt.NDArray[Any], pd.Index | npt.NDArray[Any], list[str], list[str], InputStats]:
-    """Filter cells and genes; returns (matrix, genes, barcodes, original_cell_names, stats).
-
-    The matrix is genes x cells, scipy CSR for sparse dict input (so it is
-    only densified after annotation and cell filtering) or a numpy array.
-    """
-    if isinstance(rawmat, dict):
-        mat = rawmat.get("matrix")
-        if mat is None:
-            raise ValueError("Dict input must contain 'matrix' key")
-        if sparse.issparse(mat):
-            return _prepare_sparse_input(
-                mat,
-                np.asarray(rawmat.get("genes")),
-                np.asarray(rawmat.get("barcodes")),
-                min_gene_per_cell,
-                low_dr,
-            )
-
-    loaded = _load_matrix(rawmat)
-    loaded = _aggregate_duplicate_genes_frame(loaded)
-    original_cell_names = list(loaded.columns)
-    genes_per_cell = (loaded > 0).sum(axis=0)
-    if (genes_per_cell > min_gene_per_cell).sum() == 0:
-        raise ValueError("No cells have more than min_gene_per_cell genes")
-    low_gene_cells = genes_per_cell < min_gene_per_cell
-    filtered_cells = int(low_gene_cells.sum())
-    if filtered_cells > 0:
-        loaded = loaded.loc[:, ~low_gene_cells]
-    detection_rate = (loaded > 0).sum(axis=1) / loaded.shape[1]
-    keep_genes = detection_rate > low_dr
-    filtered_gene_rows = int((~keep_genes).sum())
-    if keep_genes.sum() >= 1:
-        loaded = loaded.loc[keep_genes]
-    return (
-        loaded.to_numpy(),
-        loaded.index,
-        list(loaded.columns),
-        original_cell_names,
-        {
-            "input_type": "dense",
-            "filtered_cells": filtered_cells,
-            "filtered_gene_rows": filtered_gene_rows,
-        },
-    )
-
-
-def _keep_cells_by_chr_coverage(
-    values: SparseMatrix | npt.NDArray[Any], chroms: npt.NDArray[Any], ngene_chr: int
-) -> BoolArray:
-    chrom_codes, unique_chroms = pd.factorize(chroms, sort=False)
-    if sparse.issparse(values):
-        # Per-chromosome nonzero counts as (chromosome indicator) @ (nonzero pattern)
-        indicator = sparse.csr_matrix(
-            (np.ones(len(chrom_codes), dtype=np.int64), (chrom_codes, np.arange(len(chrom_codes)))),
-            shape=(len(unique_chroms), len(chrom_codes)),
-        )
-        counts = (indicator @ values.astype(bool).astype(np.int64)).toarray()
-    else:
-        nonzero = values != 0
-        counts = np.vstack([nonzero[chrom_codes == chrom_idx].sum(axis=0) for chrom_idx in range(len(unique_chroms))])
-    keep = (counts.sum(axis=0) >= 5) & (counts > 0).all(axis=0) & (counts.min(axis=0) >= ngene_chr)
-    return keep
 
 
 @with_default_progress_output
@@ -677,12 +332,23 @@ def copykat(
         "available_cores": int(os.cpu_count() or 1),
         "steps": [],
         "parameters": {
-            "id_type": id_type, "cell_line": cell_line, "genome": genome,
-            "ngene_chr": ngene_chr, "min_gene_per_cell": min_gene_per_cell,
-            "LOW_DR": LOW_DR, "UP_DR": UP_DR, "win_size": win_size, "KS_cut": KS_cut,
-            "distance": distance, "n_cores": n_cores, "pca_components_requested": pca_components,
-            "output_seg": output_seg, "plot_genes": plot_genes, "random_seed": 1234,
-            "meta_csv": meta_csv, "row_split_col": row_split_col,
+            "id_type": id_type,
+            "cell_line": cell_line,
+            "genome": genome,
+            "ngene_chr": ngene_chr,
+            "min_gene_per_cell": min_gene_per_cell,
+            "LOW_DR": LOW_DR,
+            "UP_DR": UP_DR,
+            "win_size": win_size,
+            "KS_cut": KS_cut,
+            "distance": distance,
+            "n_cores": n_cores,
+            "pca_components_requested": pca_components,
+            "output_seg": output_seg,
+            "plot_genes": plot_genes,
+            "random_seed": 1234,
+            "meta_csv": meta_csv,
+            "row_split_col": row_split_col,
             "backend": backend.get_backend(),
             "ks_method": ks_method,
             "anchor": anchor,
@@ -919,9 +585,7 @@ def copykat(
             endothelial_counts = marker_counts[1].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
 
             def anchor_selector(labels: ClusterLabels, sigma_cluster: int) -> tuple[int, str]:
-                selected, path = _anchor.choose_anchor_cluster(
-                    labels, immune_counts, endothelial_counts, sigma_cluster
-                )
+                selected, path = _anchor.choose_anchor_cluster(labels, immune_counts, endothelial_counts, sigma_cluster)
                 return int(selected), path
 
         basa = baseline_norm_cl(
@@ -1018,7 +682,8 @@ def copykat(
         ),
         "supplied_count": len(set(norm_cell_names)) if isinstance(norm_cell_names, list) else 0,
         "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
-        if isinstance(norm_cell_names, list) else 0,
+        if isinstance(norm_cell_names, list)
+        else 0,
         "baseline_anchor_count": len(_preN_to_names(preN, cell_name_list).intersection(cell_name_list)),
     }
     elapsed = _record_step(
@@ -1074,21 +739,27 @@ def copykat(
     # =========================================================================
     logger.info("step 5: segmentation ...")
     step_start = time.perf_counter()
-    results = cna_mcmc(
-        CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores, ks_method=ks_method
-    )
+    results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores, ks_method=ks_method)
 
     if len(results["breaks"]) < 25:
         logger.info("  too few breakpoints; decreased KS_cut to 50%")
         results = cna_mcmc(
-            CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.5 * KS_cut, n_cores=n_cores,
+            CL_filtered,
+            norm_mat_relat,
+            bins=win_size,
+            cut_cor=0.5 * KS_cut,
+            n_cores=n_cores,
             ks_method=ks_method,
         )
 
     if len(results["breaks"]) < 25:
         logger.info("  too few breakpoints; decreased KS_cut to 25%")
         results = cna_mcmc(
-            CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.25 * KS_cut, n_cores=n_cores,
+            CL_filtered,
+            norm_mat_relat,
+            bins=win_size,
+            cut_cor=0.25 * KS_cut,
+            n_cores=n_cores,
             ks_method=ks_method,
         )
 
@@ -1577,41 +1248,3 @@ def copykat(
             "hclustering": clustering_data,
             "runtime": runtime_info,
         }
-
-
-def _write_seg_file(RNA_adj_df: pd.DataFrame, mat_adj: FloatArray, cell_cols: Sequence[str], sample_name: str) -> None:
-    """Write .seg file for IGV visualization."""
-    rows = []
-    chroms = RNA_adj_df["chrom"].to_numpy()
-    chrompos = RNA_adj_df["chrompos"].values
-    unique_chroms = np.unique(chroms)
-
-    for ci, cell in enumerate(cell_cols):
-        vals = mat_adj[:, ci]
-        for chrom_val in unique_chroms:
-            mask = chroms == chrom_val
-            sub_vals = vals[mask]
-            sub_pos = chrompos[mask]
-
-            # RLE encoding
-            if len(sub_vals) == 0:
-                continue
-
-            changes = np.where(np.diff(sub_vals) != 0)[0] + 1
-            starts = np.concatenate([[0], changes])
-            ends = np.concatenate([changes, [len(sub_vals)]])
-
-            for s, e in zip(starts, ends, strict=True):
-                rows.append(
-                    {
-                        "ID": cell,
-                        "chrom": chrom_val,
-                        "loc.start": sub_pos[s],
-                        "loc.end": sub_pos[e - 1],
-                        "num.mark": e - s,
-                        "seg.mean": sub_vals[s],
-                    }
-                )
-
-    seg_df = pd.DataFrame(rows)
-    seg_df.to_csv(f"{sample_name}CNA_results.seg", sep="\t", index=False)
