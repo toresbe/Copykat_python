@@ -540,13 +540,13 @@ def _run_copykat_analysis(
                 cell_names=cna_data.cell_names,
                 chrom_info=cna_data.chromosome_info,
                 meta_csv=post_plot_meta,
+                genome=cna_data.genome,
                 options=AnnotatedHeatmapOptions(
                     row_split_col=args.row_split,
                     sample_name=args.sample_name,
                     distance=args.distance,
                     n_cores=args.n_cores,
                     output_path=ann_output,
-                    genome=cna_data.genome,
                 ),
             )
         return result
@@ -791,6 +791,7 @@ Meta CSV format
         cell_names=cna_data.cell_names,
         chrom_info=cna_data.chromosome_info,
         meta_csv=args.meta,
+        genome=cna_data.genome,
         options=AnnotatedHeatmapOptions(
             row_split_col="" if args.no_row_split else args.row_split,
             sample_name=args.sample_name,
@@ -798,7 +799,6 @@ Meta CSV format
             n_cores=args.n_cores,
             output_path=args.output,
             continuous_meta=args.continuous_meta,
-            genome=cna_data.genome,
         ),
     )
 
