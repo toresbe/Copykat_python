@@ -95,9 +95,11 @@ the repository.
 
 Validated locally: Python compilation of the modified CPU/GPU modules; CPU
 Ward smoke; exact-Gamma KS symmetry/equality/breakpoint checks; CLI parsing;
-and byte equality of the repeated-row writer with full Arrow formatting on a
-signed-zero fixture. `pytest` is not installed in the configured environment,
-so the added pytest module was exercised with equivalent direct assertions.
+marker counting/reference-selection checks; mocked GPU dispatch through Ward,
+GMM, and baseline adjustment; and byte equality of the repeated-row writer
+with full Arrow formatting on a signed-zero fixture. `pytest` is not installed
+in the configured environment, so the added pytest modules were exercised with
+equivalent direct assertions.
 The environment has neither Torch nor CuPy. The optional GPU path therefore
 has only static validation and a clear dependency guard here; no assembled
 CPU/GPU inference comparison is claimed. Historical GPU timings, labels,

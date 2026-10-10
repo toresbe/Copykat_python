@@ -248,8 +248,9 @@
       "38fa1325655786616a851c883ca23913ff3ad576",
       "220b5468fe4e5d50ad0a38075c0f6c44b3e06e5a"
     ],
-    "working_tree": "clean after audit package commit; local main will be advanced fast-forward to assembly/main before push",
-    "audit_package_commit": "8683dcdcb74ad2d0bfd6cf7b5b82c6690b0a8132"
+    "working_tree": "source and audit package committed; final manifest update is pending",
+    "audit_package_commit": "8683dcdcb74ad2d0bfd6cf7b5b82c6690b0a8132",
+    "manifest_refinement_commit": "fca499cf964f9e426cef950ed0a7a62a8e438832"
   },
   "fresh_integration_comparison": {
     "dataset": "T989 mouse tumor raw scRNA counts",
@@ -328,7 +329,8 @@
       "exact-Gamma KS identical/symmetric and deterministic breakpoint checks",
       "CLI backend/KS/anchor/final-call option parse; allele CLI entry-point help",
       "signed-zero repeated-row output byte matched full Arrow formatting",
-      "fresh paired T989 CPU-default comparison and tree/call diagnostics"
+      "fresh paired T989 CPU-default comparison and tree/call diagnostics",
+      "mocked GPU dispatch through Ward, selected GMM, and baseline adjustment"
     ],
     "not_run": [
       "pytest: pytest is not installed in configured environment; added regression modules were run through equivalent direct assertions",
