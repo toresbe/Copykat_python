@@ -77,6 +77,7 @@ from copykat_py.convert_bins import convert_to_bins, get_last_convert_bins_info
 from copykat_py.data_loader import load_cyclegenes
 from copykat_py.final_call import (
     FinalCallResult,
+    WardClusteringResult,
     cluster_and_call,
     cluster_cells,
 )
@@ -838,8 +839,9 @@ def copykat(
         # =========================================================================
         logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
+        clustering_result: WardClusteringResult | FinalCallResult
         if cell_line is not CellLineMode.YES:
-            final_call_result: FinalCallResult = cluster_and_call(
+            clustering_result = cluster_and_call(
                 mat_adj,
                 cell_cols_seg,
                 cell_name_list,
@@ -849,15 +851,12 @@ def copykat(
                 prediction_override=arm_calls,
                 low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
             )
-            labels_final, Z_final = final_call_result.labels, final_call_result.linkage
-            com_preN = final_call_result.predictions
         else:
             clustering_result = cluster_cells(
                 mat_adj,
                 n_cores=n_cores,
                 pca_components=selected_pca_components,
             )
-            labels_final, Z_final = clustering_result.labels, clustering_result.linkage
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
@@ -874,7 +873,8 @@ def copykat(
         pred_dict = None
         res = None
         if cell_line is not CellLineMode.YES:
-            pred_dict = {cell_cols_seg[i]: com_preN[i] for i in range(len(cell_cols_seg))}
+            assert isinstance(clustering_result, FinalCallResult)
+            pred_dict = {cell_cols_seg[i]: clustering_result.predictions[i] for i in range(len(cell_cols_seg))}
             for cell in original_cell_names:
                 if cell not in pred_dict:
                     pred_dict[cell] = PredictionLabel.NOT_DEFINED
@@ -897,8 +897,8 @@ def copykat(
 
         # Save clustering
         clustering_data: ClusteringResult = {
-            "labels": labels_final,
-            "Z": Z_final,
+            "labels": clustering_result.labels,
+            "Z": clustering_result.linkage,
         }
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:
             pickle.dump(clustering_data, f)
@@ -1021,8 +1021,6 @@ def copykat(
             pca_components=selected_pca_components,
             low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
         )
-        labels_final, Z_final = final_call_result.labels, final_call_result.linkage
-        com_preN = final_call_result.predictions
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
@@ -1036,7 +1034,7 @@ def copykat(
         # Save
         logger.info("step 9: saving results ...")
         step_start = time.perf_counter()
-        pred_dict = {cell_cols_seg[i]: com_preN[i] for i in range(len(cell_cols_seg))}
+        pred_dict = {cell_cols_seg[i]: final_call_result.predictions[i] for i in range(len(cell_cols_seg))}
         for cell in original_cell_names:
             if cell not in pred_dict:
                 pred_dict[cell] = PredictionLabel.NOT_DEFINED
@@ -1052,7 +1050,7 @@ def copykat(
         cna_out = _frame_with_leading_columns(gene_anno, mat_adj, cell_cols_seg)
         _write_cna_csv(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg, n_cores=n_cores)
 
-        clustering_data = {"labels": labels_final, "Z": Z_final}
+        clustering_data = {"labels": final_call_result.labels, "Z": final_call_result.linkage}
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:
             pickle.dump(clustering_data, f)
         elapsed = _record_step(
