@@ -308,7 +308,7 @@ automatically and displays chromosome codes 20/21 as X/Y.
 
 ```python
 import pandas as pd
-from copykat_py.plotting import plot_heatmap_annotated
+from copykat_py.plotting import AnnotatedHeatmapOptions, plot_heatmap_annotated
 
 cna = pd.read_csv("sample_copykat_CNA_results.txt", sep="\t")
 plot_heatmap_annotated(
@@ -316,10 +316,12 @@ plot_heatmap_annotated(
     cell_names    = cna.columns[3:].tolist(),
     chrom_info    = cna.iloc[:, 0].values,
     meta_csv      = "xenium_ft_full_meta_celltype_leiden.csv",
-    row_split_col = "inferred_CellType",
-    sample_name   = "xenium_all_cells",
-    n_cores       = 40,
-    output_path   = "xenium_annotated_heatmap.png",
+    options=AnnotatedHeatmapOptions(
+        row_split_col="inferred_CellType",
+        sample_name="xenium_all_cells",
+        n_cores=40,
+        output_path="xenium_annotated_heatmap.png",
+    ),
 )
 ```
 

@@ -530,7 +530,7 @@ def _run_copykat_analysis(
 
         if post_plot_meta and args.plot_genes and "CNAmat" in result:
             logger.info("\nGenerating annotated heatmap...")
-            from copykat_py.plotting import plot_heatmap_annotated
+            from copykat_py.plotting import AnnotatedHeatmapOptions, plot_heatmap_annotated
 
             cna_df = result["CNAmat"]
             cna_data = split_cna_table(cna_df)
@@ -540,12 +540,14 @@ def _run_copykat_analysis(
                 cell_names=cna_data.cell_names,
                 chrom_info=cna_data.chromosome_info,
                 meta_csv=post_plot_meta,
-                row_split_col=args.row_split,
-                sample_name=args.sample_name,
-                distance=args.distance,
-                n_cores=args.n_cores,
-                output_path=ann_output,
                 genome=cna_data.genome,
+                options=AnnotatedHeatmapOptions(
+                    row_split_col=args.row_split,
+                    sample_name=args.sample_name,
+                    distance=args.distance,
+                    n_cores=args.n_cores,
+                    output_path=ann_output,
+                ),
             )
         return result
     finally:
@@ -782,20 +784,22 @@ Meta CSV format
     cna_data = split_cna_table(cna_df)
     logger.info(f"  {cna_data.matrix.shape[1]} cells x {cna_data.matrix.shape[0]} bins")
 
-    from copykat_py.plotting import plot_heatmap_annotated
+    from copykat_py.plotting import AnnotatedHeatmapOptions, plot_heatmap_annotated
 
     plot_heatmap_annotated(
         mat=cna_data.matrix,
         cell_names=cna_data.cell_names,
         chrom_info=cna_data.chromosome_info,
         meta_csv=args.meta,
-        row_split_col="" if args.no_row_split else args.row_split,
-        sample_name=args.sample_name,
-        distance=args.distance,
-        n_cores=args.n_cores,
-        output_path=args.output,
-        continuous_meta=args.continuous_meta,
         genome=cna_data.genome,
+        options=AnnotatedHeatmapOptions(
+            row_split_col="" if args.no_row_split else args.row_split,
+            sample_name=args.sample_name,
+            distance=args.distance,
+            n_cores=args.n_cores,
+            output_path=args.output,
+            continuous_meta=args.continuous_meta,
+        ),
     )
 
 
