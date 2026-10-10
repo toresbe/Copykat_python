@@ -533,19 +533,19 @@ def _run_copykat_analysis(
             from copykat_py.plotting import plot_heatmap_annotated
 
             cna_df = result["CNAmat"]
-            ann_mat, ann_cell_names, ann_chrom_info, ann_genome = split_cna_table(cna_df)
+            cna_data = split_cna_table(cna_df)
             ann_output = f"{args.sample_name}_copykat_annotated_heatmap.png"
             plot_heatmap_annotated(
-                mat=ann_mat,
-                cell_names=ann_cell_names,
-                chrom_info=ann_chrom_info,
+                mat=cna_data.matrix,
+                cell_names=cna_data.cell_names,
+                chrom_info=cna_data.chromosome_info,
                 meta_csv=post_plot_meta,
                 row_split_col=args.row_split,
                 sample_name=args.sample_name,
                 distance=args.distance,
                 n_cores=args.n_cores,
                 output_path=ann_output,
-                genome=ann_genome,
+                genome=cna_data.genome,
             )
         return result
     finally:
@@ -779,15 +779,15 @@ Meta CSV format
 
     logger.info(f"Loading CNA results: {args.cna}")
     cna_df = pd.read_csv(args.cna, sep="\t", index_col=False)
-    mat, cell_names, chrom_info, genome = split_cna_table(cna_df)
-    logger.info(f"  {mat.shape[1]} cells x {mat.shape[0]} bins")
+    cna_data = split_cna_table(cna_df)
+    logger.info(f"  {cna_data.matrix.shape[1]} cells x {cna_data.matrix.shape[0]} bins")
 
     from copykat_py.plotting import plot_heatmap_annotated
 
     plot_heatmap_annotated(
-        mat=mat,
-        cell_names=cell_names,
-        chrom_info=chrom_info,
+        mat=cna_data.matrix,
+        cell_names=cna_data.cell_names,
+        chrom_info=cna_data.chromosome_info,
         meta_csv=args.meta,
         row_split_col="" if args.no_row_split else args.row_split,
         sample_name=args.sample_name,
@@ -795,7 +795,7 @@ Meta CSV format
         n_cores=args.n_cores,
         output_path=args.output,
         continuous_meta=args.continuous_meta,
-        genome=genome,
+        genome=cna_data.genome,
     )
 
 

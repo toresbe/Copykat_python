@@ -1,5 +1,6 @@
 """Genomic ordering and chromosome labels shared by inference and plotting."""
 
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -7,6 +8,16 @@ import numpy.typing as npt
 import pandas as pd
 
 from copykat_py._types import Genome
+
+
+@dataclass(frozen=True, slots=True)
+class CnaTableData:
+    """Cell matrix, names, chromosome labels, and genome from a saved CNA table."""
+
+    matrix: npt.NDArray[np.float32]
+    cell_names: list[str]
+    chromosome_info: npt.NDArray[Any]
+    genome: Genome
 
 
 def annotation_order(annotation: pd.DataFrame, genome: Genome) -> npt.NDArray[np.intp]:
@@ -37,7 +48,7 @@ def chromosome_label(chromosome: Any, genome: Genome) -> str:
         return str(chromosome)
 
 
-def split_cna_table(frame: pd.DataFrame) -> tuple[npt.NDArray[np.float32], list[str], npt.NDArray[Any], Genome]:
+def split_cna_table(frame: pd.DataFrame) -> CnaTableData:
     """Split saved human-bin or mouse-gene CNA results without treating annotation as cells."""
     if "mgi_symbol" in frame.columns and "chromosome_name" in frame.columns:
         leading, genome, chromosome = 7, Genome.MM10, "chromosome_name"
@@ -45,9 +56,9 @@ def split_cna_table(frame: pd.DataFrame) -> tuple[npt.NDArray[np.float32], list[
         leading, genome, chromosome = 3, Genome.HG20, "chrom"
     else:
         raise ValueError("Unrecognized CNA annotation columns; expected hg20 bins or mm10 gene results")
-    return (
-        frame.iloc[:, leading:].to_numpy(dtype=np.float32),
-        frame.columns[leading:].tolist(),
-        pd.to_numeric(frame[chromosome], errors="raise").to_numpy(),
-        genome,
+    return CnaTableData(
+        matrix=frame.iloc[:, leading:].to_numpy(dtype=np.float32),
+        cell_names=frame.columns[leading:].tolist(),
+        chromosome_info=pd.to_numeric(frame[chromosome], errors="raise").to_numpy(),
+        genome=genome,
     )

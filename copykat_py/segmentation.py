@@ -13,6 +13,7 @@ Algorithm:
 """
 
 import itertools
+from dataclasses import dataclass
 
 import numpy as np
 from numba import jit
@@ -20,7 +21,7 @@ from scipy.optimize import brentq
 from scipy.special import gammainc, gammaincinv, gammaln
 from scipy.stats import ks_2samp
 
-from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, KSMethod, ParallelInfo, SegmentationResult
+from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, KSMethod, ParallelInfo
 
 _LAST_PAR_INFO: ParallelInfo = {
     "step": "cna_mcmc",
@@ -32,6 +33,14 @@ _LAST_PAR_INFO: ParallelInfo = {
     "mc_samples": 1000,
     "engine": "posterior_sampling",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentationResult:
+    """Segmented CNA values and their gene-index boundaries."""
+
+    log_cna: GeneByCell
+    breakpoints: list[int]
 
 
 def get_last_cna_mcmc_info() -> ParallelInfo:
@@ -204,9 +213,8 @@ def cna_mcmc(
 
     Returns
     -------
-    dict with keys:
-        'logCNA': np.ndarray, shape (n_genes, n_cells) - segmented CNA values
-        'breaks': list - breakpoint positions
+    A ``SegmentationResult`` containing the segmented CNA matrix and
+    breakpoint positions, including the first and last gene indices.
     """
     n_genes, n_cells = fttmat.shape
     ks_method = KSMethod(ks_method)
@@ -265,4 +273,4 @@ def cna_mcmc(
         seg_mean = np.maximum(seg_sum / seg_len, 1e-300)
         logCNA[left : right + 1, :] = np.log(seg_mean).astype(np.float32, copy=False)
 
-    return {"logCNA": logCNA, "breaks": BR}
+    return SegmentationResult(log_cna=logCNA, breakpoints=BR)
