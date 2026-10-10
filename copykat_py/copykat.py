@@ -963,7 +963,7 @@ def copykat(
         if plot_genes and meta_csv is not None:
             logger.info("step 10b: plotting annotated heatmap ...")
             step_ann = time.perf_counter()
-            from copykat_py.plotting import plot_heatmap_annotated
+            from copykat_py.plotting import AnnotatedHeatmapOptions, plot_heatmap_annotated
 
             meta_pred_path = _meta_with_pred(meta_csv, pred_dict, sample_name)
             plot_heatmap_annotated(
@@ -971,11 +971,13 @@ def copykat(
                 cell_names=cna_out.columns[3:].tolist(),
                 chrom_info=chrom_info,
                 meta_csv=meta_pred_path,
-                row_split_col=row_split_col,
-                sample_name=sample_name,
-                distance=distance,
-                n_cores=n_cores,
-                output_path=f"{sample_name}annotated_heatmap.png",
+                options=AnnotatedHeatmapOptions(
+                    row_split_col=row_split_col,
+                    sample_name=sample_name,
+                    distance=distance,
+                    n_cores=n_cores,
+                    output_path=f"{sample_name}annotated_heatmap.png",
+                ),
             )
             elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
             logger.info(f"  step 10b runtime: {_format_seconds(elapsed)}")
@@ -1122,7 +1124,7 @@ def copykat(
         if plot_genes and meta_csv is not None:
             logger.info("step 10b: plotting annotated heatmap ...")
             step_ann = time.perf_counter()
-            from copykat_py.plotting import plot_heatmap_annotated
+            from copykat_py.plotting import AnnotatedHeatmapOptions, plot_heatmap_annotated
 
             meta_pred_path = _meta_with_pred(meta_csv, pred_dict, sample_name)
             plot_heatmap_annotated(
@@ -1130,12 +1132,14 @@ def copykat(
                 cell_names=cna_out.columns[7:].tolist(),
                 chrom_info=chrom_numeric,
                 meta_csv=meta_pred_path,
-                row_split_col=row_split_col,
-                sample_name=sample_name,
-                distance=distance,
-                n_cores=n_cores,
-                output_path=f"{sample_name}annotated_heatmap.png",
-                genome=genome,
+                options=AnnotatedHeatmapOptions(
+                    row_split_col=row_split_col,
+                    sample_name=sample_name,
+                    distance=distance,
+                    n_cores=n_cores,
+                    output_path=f"{sample_name}annotated_heatmap.png",
+                    genome=genome,
+                ),
             )
             elapsed = _record_step(runtime_info, "plot_annotated_heatmap", step_ann)
             logger.info(f"  step 10b runtime: {_format_seconds(elapsed)}")

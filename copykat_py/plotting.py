@@ -6,6 +6,7 @@ import sys
 import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
 import matplotlib
@@ -45,6 +46,40 @@ from copykat_py.metadata_layout import annotation_layout
 from copykat_py.metadata_legend import draw_metadata_legends
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class AnnotatedHeatmapOptions:
+    """Display and clustering options for an annotated CNA heatmap.
+
+    ``row_split_col=None`` uses the first metadata column, while an empty
+    string disables row splitting. Continuous metadata columns are inferred
+    unless explicitly named in ``continuous_meta``. When ``output_path`` is
+    omitted, a filename is derived from ``sample_name``.
+
+    Attributes:
+        row_split_col: Metadata column used to group cells.
+        sample_name: Label shown in the figure title and default filename.
+        distance: Metric used to order cells within each group.
+        n_cores: Parallel threads passed to the clustering backend.
+        output_path: PNG destination, or ``None`` to use the default filename.
+        continuous_meta: Metadata columns to color as continuous values.
+        genome: Genome build used for chromosome labels.
+    """
+
+    row_split_col: str | None = None
+    sample_name: str = ""
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN
+    n_cores: int = 1
+    output_path: str | None = None
+    continuous_meta: Sequence[str] | None = None
+    genome: Genome = Genome.HG20
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "distance", DistanceMetric(self.distance))
+        object.__setattr__(self, "genome", Genome(self.genome))
+        if self.continuous_meta is not None:
+            object.__setattr__(self, "continuous_meta", tuple(self.continuous_meta))
 
 
 @contextmanager
@@ -731,22 +766,16 @@ def plot_heatmap_annotated(
     cell_names: Sequence[str],
     chrom_info: npt.NDArray[Any],
     meta_csv: str,
-    row_split_col: str | None = None,
-    sample_name: str = "",
-    distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
-    n_cores: int = 1,
-    output_path: str | None = None,
-    continuous_meta: Sequence[str] | None = None,
-    genome: Genome = Genome.HG20,
+    options: AnnotatedHeatmapOptions,
 ) -> None:
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
     Reads a CSV where the first column is the cell name and every remaining
     column is drawn as a narrow coloured sidebar. CopyKAT predictions precede
     continuous numeric measurements on the right; other categories stay left.
-    Rows are split into labelled groups according to *row_split_col*; within
-    each group cells are ordered by hierarchical or K-means clustering so the
-    intra-group CNA structure is preserved.
+    Rows are split into labelled groups according to the configured row-split
+    column; within each group cells are ordered by hierarchical or K-means
+    clustering so the intra-group CNA structure is preserved.
 
     Parameters
     ----------
@@ -760,30 +789,9 @@ def plot_heatmap_annotated(
         Annotation CSV path.  First column = cell name; remaining columns
         become annotation sidebars.  Header row is auto-detected.
         Cells present in *mat* but absent from the CSV are labelled "unknown".
-    row_split_col : str or None
-        Column name used to split rows into labelled groups.  When *None* the
-        second column of the CSV is used. An empty string disables row splitting
-        and clusters all cells together.
-    sample_name : str
-        Label shown in the figure title and used for the default filename.
-    distance : DistanceMetric
-        Distance metric for within-group clustering
-        (``"euclidean"``, ``"pearson"``, or ``"spearman"``).
-    n_cores : int
-        Parallel threads passed to the clustering backend.
-    output_path : str or None
-        PNG save path.  Defaults to
-        ``"{sample_name}_copykat_annotated_heatmap.png"``.
-    continuous_meta : sequence of str or None
-        Explicit continuous columns, useful for integer measurements with few
-        distinct values. By default numeric measurements are detected; small
-        integer-coded categories and the row-split column remain categorical.
+    options : AnnotatedHeatmapOptions
+        Display and clustering configuration for the plot.
     """
-    genome = Genome(genome)
-    distance = DistanceMetric(distance)
-    if output_path is None:
-        output_path = f"{sample_name}_copykat_annotated_heatmap.png"
-
     t0 = time.perf_counter()
     n_bins, n_cells = mat.shape
     logger.info(f"  plot_heatmap_annotated: {n_cells} cells × {n_bins} bins")
@@ -792,11 +800,10 @@ def plot_heatmap_annotated(
     meta_df = _read_meta_csv(meta_csv)
     ann_cols = meta_df.columns.tolist()
 
-    if row_split_col is None:
-        row_split_col = ann_cols[0]
+    row_split_col = options.row_split_col if options.row_split_col is not None else ann_cols[0]
     if row_split_col and row_split_col not in ann_cols:
         raise ValueError(f"row_split_col '{row_split_col}' not found; available: {ann_cols}")
-    forced_continuous = set(continuous_meta or [])
+    forced_continuous = set(options.continuous_meta or [])
     if forced_continuous - set(ann_cols):
         raise ValueError(f"Continuous metadata columns not found: {sorted(forced_continuous - set(ann_cols))}")
     if row_split_col in forced_continuous:
@@ -818,7 +825,7 @@ def plot_heatmap_annotated(
 
     for grp in group_names:
         grp_idx = np.where(split_vals == grp)[0]
-        local_order = _order_group(mat[:, grp_idx], distance, n_cores)
+        local_order = _order_group(mat[:, grp_idx], options.distance, options.n_cores)
         ordered_indices.extend(grp_idx[local_order].tolist())
         group_boundaries.append(len(ordered_indices))
         logger.info(f"    '{grp}': {len(grp_idx)} cells ordered")
@@ -893,7 +900,7 @@ def plot_heatmap_annotated(
     )
     ax_chr.set_xticks([])
     ax_chr.set_yticks([])
-    _add_chr_labels(ax_chr, chrom_info, below=True, genome=genome)
+    _add_chr_labels(ax_chr, chrom_info, below=True, genome=options.genome)
     ax_chr.set_xlabel("Genomic position", fontsize=13, labelpad=22)
 
     # ── 7. Annotation sidebars ────────────────────────────────────────────
@@ -993,8 +1000,11 @@ def plot_heatmap_annotated(
         for spine in ax.spines.values():
             spine.set_linewidth(0.5)
             spine.set_edgecolor("#999999")
-    fig.suptitle(f"{sample_name}  ·  {n_cells:,} cells", fontsize=15, fontweight="bold", y=0.99)
+    fig.suptitle(f"{options.sample_name}  ·  {n_cells:,} cells", fontsize=15, fontweight="bold", y=0.99)
 
+    output_path = options.output_path
+    if output_path is None:
+        output_path = f"{options.sample_name}_copykat_annotated_heatmap.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info(f"  Saved → {output_path}  ({time.perf_counter() - t0:.2f}s)")
