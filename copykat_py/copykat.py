@@ -18,7 +18,7 @@ import os
 import pickle
 import time
 from collections.abc import Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, cast
 
@@ -47,6 +47,7 @@ from copykat_py._types import (
     GeneIdType,
     GeneProfile,
     Genome,
+    IntArray,
     KSMethod,
     ParallelInfo,
     PredictionLabel,
@@ -99,6 +100,14 @@ from copykat_py.segmentation import cna_mcmc, get_last_cna_mcmc_info
 from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _BaselineState:
+    """Warning and normal-cell reference selected across baseline strategies."""
+
+    warning: BaselineWarning
+    normal_cells: list[str] | IntArray | None
 
 
 def _meta_with_pred(meta_csv: str, pred_dict: dict[str, str] | None, sample_name: str) -> str:
@@ -483,8 +492,7 @@ def copykat(
         )
         norm_mat_relat = relt.relative_expression
         CL = relt.cluster_labels
-        WNS = BaselineWarning.CELL_LINE
-        preN = None
+        baseline_state = _BaselineState(BaselineWarning.CELL_LINE, None)
     elif isinstance(norm_cell_names, list) and len(norm_cell_names) > 1:
         # Known normal cells provided
         norm_cell_set = set(norm_cell_names)
@@ -529,8 +537,10 @@ def copykat(
             if km == 2:
                 break
 
-        WNS = BaselineWarning.KNOWN_NORMAL
-        preN = np.asarray(cell_name_list, dtype=object)[known_normal_mask].tolist()
+        baseline_state = _BaselineState(
+            BaselineWarning.KNOWN_NORMAL,
+            np.asarray(cell_name_list, dtype=object)[known_normal_mask].tolist(),
+        )
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     else:
         # Auto-detect normal cells
@@ -632,13 +642,12 @@ def copykat(
                 basa = replace(basa, warning=BaselineWarning.UNCLASSIFIED)
 
         norm_mat_relat = norm_mat_smooth - basa.baseline[:, np.newaxis]
-        WNS = basa.warning
-        preN = basa.normal_cells
+        baseline_state = _BaselineState(basa.warning, basa.normal_cells)
     del norm_mat_smooth
     baseline_cluster_info = get_last_cluster_info()
     if cell_line is CellLineMode.YES:
         reference_mode = ReferenceMode.SYNTHETIC
-    elif WNS is BaselineWarning.KNOWN_NORMAL:
+    elif baseline_state.warning is BaselineWarning.KNOWN_NORMAL:
         reference_mode = ReferenceMode.KNOWN_NORMAL
     else:
         reference_mode = ReferenceMode.AUTOMATIC
@@ -648,10 +657,16 @@ def copykat(
         "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
         if isinstance(norm_cell_names, list)
         else 0,
-        "baseline_anchor_count": len(normal_cells_to_names(preN, cell_name_list).intersection(cell_name_list)),
+        "baseline_anchor_count": len(
+            normal_cells_to_names(baseline_state.normal_cells, cell_name_list).intersection(cell_name_list)
+        ),
     }
     elapsed = _record_step(
-        runtime_info, "baseline_estimation", step_start, parallel_info=baseline_cluster_info, extra={"warning": WNS}
+        runtime_info,
+        "baseline_estimation",
+        step_start,
+        parallel_info=baseline_cluster_info,
+        extra={"warning": baseline_state.warning},
     )
     logger.info(
         f"  baseline runtime: {_format_seconds(elapsed)} "
@@ -797,9 +812,13 @@ def copykat(
             mat_adj = uber_mat_adj
         else:
             arm_calls = None
-            if final_call is FinalCallStrategy.ARM_CORRELATION and preN is not None and len(preN) > 0:
-                preN_names = normal_cells_to_names(preN, cell_name_list)
-                anchor_mask = np.array([cell in preN_names for cell in cell_cols_seg], dtype=bool)
+            if (
+                final_call is FinalCallStrategy.ARM_CORRELATION
+                and baseline_state.normal_cells is not None
+                and len(baseline_state.normal_cells) > 0
+            ):
+                normal_cell_names = normal_cells_to_names(baseline_state.normal_cells, cell_name_list)
+                anchor_mask = np.array([cell in normal_cell_names for cell in cell_cols_seg], dtype=bool)
                 if anchor_mask.sum() >= 5:
                     arm_calls = _anchor.arm_correlation_calls(
                         uber_mat_adj,
@@ -814,7 +833,7 @@ def copykat(
                 uber_mat_adj,
                 cell_cols_seg,
                 cell_name_list,
-                preN,
+                baseline_state.normal_cells,
                 n_cores=n_cores,
                 pca_components=selected_pca_components,
                 prediction_override=arm_calls,
@@ -828,7 +847,11 @@ def copykat(
         del uber_mat_adj
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
-            runtime_info, "baseline_adjustment", step_start, parallel_info=cluster_info, extra={"warning": WNS}
+            runtime_info,
+            "baseline_adjustment",
+            step_start,
+            parallel_info=cluster_info,
+            extra={"warning": baseline_state.warning},
         )
         logger.info(
             f"  step 7 runtime: {_format_seconds(elapsed)} "
@@ -847,11 +870,11 @@ def copykat(
                 mat_adj,
                 cell_cols_seg,
                 cell_name_list,
-                preN,
+                baseline_state.normal_cells,
                 n_cores=n_cores,
                 pca_components=selected_pca_components,
                 prediction_override=arm_calls,
-                low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
+                low_confidence=baseline_state.warning is BaselineWarning.UNCLASSIFIED,
             )
         else:
             clustering_result = cluster_cells(
@@ -861,7 +884,11 @@ def copykat(
             )
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
-            runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
+            runtime_info,
+            "final_prediction",
+            step_start,
+            parallel_info=cluster_info,
+            extra={"warning": baseline_state.warning},
         )
         logger.info(
             f"  step 8 runtime: {_format_seconds(elapsed)} "
@@ -927,7 +954,7 @@ def copykat(
                 distance,
                 n_cores,
                 WNS1,
-                WNS,
+                baseline_state.warning,
                 f"{sample_name}heatmap.png",
             )
             elapsed = _record_step(runtime_info, "plot_heatmap", plot_step_start)
@@ -990,7 +1017,7 @@ def copykat(
             uber_mat_adj,
             cell_cols_seg,
             cell_name_list,
-            preN,
+            baseline_state.normal_cells,
             n_cores=n_cores,
             pca_components=selected_pca_components,
         )
@@ -1003,7 +1030,11 @@ def copykat(
         del uber_mat_adj
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
-            runtime_info, "baseline_adjustment", step_start, parallel_info=cluster_info, extra={"warning": WNS}
+            runtime_info,
+            "baseline_adjustment",
+            step_start,
+            parallel_info=cluster_info,
+            extra={"warning": baseline_state.warning},
         )
         logger.info(
             f"  step 7 runtime: {_format_seconds(elapsed)} "
@@ -1018,14 +1049,18 @@ def copykat(
             mat_adj,
             cell_cols_seg,
             cell_name_list,
-            preN,
+            baseline_state.normal_cells,
             n_cores=n_cores,
             pca_components=selected_pca_components,
-            low_confidence=WNS is BaselineWarning.UNCLASSIFIED,
+            low_confidence=baseline_state.warning is BaselineWarning.UNCLASSIFIED,
         )
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
-            runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
+            runtime_info,
+            "final_prediction",
+            step_start,
+            parallel_info=cluster_info,
+            extra={"warning": baseline_state.warning},
         )
         logger.info(
             f"  step 8 runtime: {_format_seconds(elapsed)} "
@@ -1077,7 +1112,7 @@ def copykat(
                 distance=distance,
                 n_cores=n_cores,
                 WNS1=WNS1,
-                WNS=WNS,
+                WNS=baseline_state.warning,
                 output_path=f"{sample_name}heatmap.png",
                 genome=genome,
             )
