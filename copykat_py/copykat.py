@@ -97,6 +97,17 @@ def _write_cna_columns(path, lead_df, values, value_columns, round_floats=True, 
     value_type = pa.from_numpy_dtype(values.dtype)
     schema = pa.schema(list(lead_table.schema) + [pa.field(str(c), value_type) for c in value_columns])
     options = pa_csv.WriteOptions(delimiter="\t", quoting_style="none", quoting_header="none")
+    write_kwargs = {"delimiter": "\t", "quoting_style": "none", "quoting_header": "none"}
+
+    if values.shape[0] > 0 and values.shape[1] > 0:
+        run_starts = _row_run_starts(values)
+        if 2 * len(run_starts) <= values.shape[0] and _write_csv_repeated_rows(
+            path, lead_table, schema, values, run_starts, round_floats, write_kwargs, value_type
+        ):
+            release_unused = getattr(pa.default_memory_pool(), "release_unused", None)
+            if release_unused is not None:
+                release_unused()
+            return
     def chunk_table(start, stop, block):
         block = np.asfortranarray(block)
         arrays = [col.combine_chunks() for col in lead_table.slice(start, stop - start).columns]
@@ -140,6 +151,62 @@ def _write_cna_columns(path, lead_df, values, value_columns, round_floats=True, 
     release_unused = getattr(pa.default_memory_pool(), "release_unused", None)
     if release_unused is not None:
         release_unused()
+
+
+def _row_run_starts(values, block_elems=1 << 26):
+    """Find value rows that differ in representation, including signed zero."""
+    n_rows, n_cols = values.shape
+    if n_rows < 2:
+        return np.arange(n_rows)
+    change = np.empty(n_rows - 1, dtype=bool)
+    step = max(1, block_elems // max(1, n_cols))
+    for lo in range(0, n_rows - 1, step):
+        hi = min(n_rows - 1, lo + step)
+        block = np.ascontiguousarray(values[lo:hi + 1])
+        if block.dtype.kind in "fc":
+            row_dtype = np.dtype((np.void, block.dtype.itemsize * n_cols))
+            row_bytes = block.view(row_dtype).reshape(-1)
+            change[lo:hi] = row_bytes[1:] != row_bytes[:-1]
+        else:
+            change[lo:hi] = np.any(block[1:] != block[:-1], axis=1)
+    return np.concatenate([[0], np.flatnonzero(change) + 1])
+
+
+def _csv_lines(table, write_kwargs, include_header=False):
+    buffer = io.BytesIO()
+    options = pa_csv.WriteOptions(include_header=include_header, **write_kwargs)
+    pa_csv.write_csv(table, buffer, write_options=options)
+    return buffer.getvalue().split(b"\n")[:-1]
+
+
+def _write_csv_repeated_rows(path, lead_table, schema, values, run_starts, round_floats, write_kwargs, value_type):
+    """Format each identical value run once while retaining each annotation row."""
+    n_rows = values.shape[0]
+    unique = values[run_starts]
+    if round_floats and np.issubdtype(unique.dtype, np.floating):
+        unique = np.round(unique, 6)
+    unique = np.asfortranarray(unique)
+    value_schema = pa.schema(list(schema)[lead_table.num_columns:])
+    value_table = pa.Table.from_arrays(
+        [pa.array(unique[:, j], type=value_type, from_pandas=True) for j in range(unique.shape[1])],
+        schema=value_schema,
+    )
+    value_lines = _csv_lines(value_table, write_kwargs)
+    lead_lines = _csv_lines(lead_table, write_kwargs)
+    header = _csv_lines(schema.empty_table(), write_kwargs, include_header=True)
+    if len(value_lines) != len(run_starts) or len(lead_lines) != n_rows or len(header) != 1:
+        return False
+    run_of_row = np.repeat(np.arange(len(run_starts)), np.diff(np.concatenate([run_starts, [n_rows]])))
+    with open(path, "wb") as handle:
+        handle.write(header[0] + b"\n")
+        batch = []
+        for i in range(n_rows):
+            batch.extend((lead_lines[i], b"\t", value_lines[run_of_row[i]], b"\n"))
+            if len(batch) >= 4096:
+                handle.write(b"".join(batch))
+                batch.clear()
+        handle.write(b"".join(batch))
+    return True
 
 
 def _meta_with_pred(meta_csv, pred_dict, sample_name):
