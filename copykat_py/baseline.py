@@ -7,6 +7,7 @@ import logging
 import os
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any, cast
 
 import fastcluster
@@ -20,7 +21,6 @@ from sklearn.metrics import silhouette_score
 from copykat_py import backend
 from copykat_py._types import (
     AnchorPath,
-    BaselineResult,
     BaselineWarning,
     CellByFeature,
     ClusterLabels,
@@ -32,10 +32,34 @@ from copykat_py._types import (
     LinkageMatrix,
     ParallelInfo,
     PredictionLabel,
-    SyntheticBaselineResult,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineResult:
+    """Normal-cell reference and baseline profile estimated from the input.
+
+    ``normal_cells`` contains cell names when available, or zero-based column
+    indices otherwise. Cluster labels are absent only when baseline clustering
+    was explicitly skipped.
+    """
+
+    baseline: GeneProfile
+    warning: BaselineWarning
+    normal_cells: list[str] | IntArray
+    cluster_labels: ClusterLabels | None
+    anchor_path: AnchorPath = AnchorPath.SIGMA
+
+
+@dataclass(frozen=True, slots=True)
+class SyntheticBaselineResult:
+    """Synthetic-normal-adjusted expression and its cluster labels."""
+
+    relative_expression: GeneByCell
+    cluster_labels: ClusterLabels
+
 
 _LAST_CLUSTER_INFO: ParallelInfo = {
     "step": "hierarchical_cluster",
@@ -426,7 +450,8 @@ def baseline_norm_cl(
 
     Returns
     -------
-    dict with keys: 'basel', 'WNS', 'preN', 'cl'
+    A ``BaselineResult`` containing the estimated baseline profile, warning,
+    normal-cell reference, cluster labels, and anchor path.
     """
     n_genes, n_cells = norm_mat_smooth.shape
     selected_pca_components = resolve_adaptive_pca_components(
@@ -543,13 +568,13 @@ def baseline_norm_cl(
     else:
         preN = preN_indices
 
-    return {
-        "basel": basel,
-        "WNS": WNS,
-        "preN": preN,
-        "cl": labels,
-        "anchor_path": anchor_path,
-    }
+    return BaselineResult(
+        baseline=basel,
+        warning=WNS,
+        normal_cells=preN,
+        cluster_labels=labels,
+        anchor_path=anchor_path,
+    )
 
 
 def baseline_gmm(
@@ -580,18 +605,20 @@ def baseline_gmm(
         Threshold for neutral mean.
     Nfraq_cut : float
         Min fraction of genes in neutral state.
-    RE_before : dict or None
+    RE_before : BaselineResult or None
         Previous baseline result to fall back on.
     n_cores : int
         Number of cores.
     cluster : bool
-        Whether to hierarchically cluster all cells for the returned 'cl'.
-        Callers that only need 'basel'/'preN' can pass False to skip it, in
-        which case 'cl' is None (unless RE_before is returned).
+        Whether to hierarchically cluster all cells for the returned
+        ``cluster_labels``. Callers that only need the baseline and normal-cell
+        reference can pass False to skip it; ``cluster_labels`` is then None
+        (unless ``RE_before`` is returned).
 
     Returns
     -------
-    dict with keys: 'basel', 'WNS', 'preN', 'cl'
+    A ``BaselineResult`` containing the estimated baseline profile, warning,
+    normal-cell reference, and optional cluster labels.
     """
     n_cells = CNA_mat.shape[1]
     N_normal = []
@@ -644,14 +671,19 @@ def baseline_gmm(
         preN = N_normal
         normal_mask = np.isin(np.asarray(cell_names, dtype=object), np.asarray(preN, dtype=object))
         basel = np.mean(CNA_mat[:, normal_mask], axis=1)
-        return {"basel": basel, "WNS": WNS, "preN": preN, "cl": labels}
+        return BaselineResult(baseline=basel, warning=WNS, normal_cells=preN, cluster_labels=labels)
     else:
         if RE_before is not None:
             return RE_before
         else:
             # Fallback: use the full dataset median as baseline
             WNS = BaselineWarning.UNCLASSIFIED
-            return {"basel": np.median(CNA_mat, axis=1), "WNS": WNS, "preN": N_normal, "cl": labels}
+            return BaselineResult(
+                baseline=np.median(CNA_mat, axis=1),
+                warning=WNS,
+                normal_cells=N_normal,
+                cluster_labels=labels,
+            )
 
 
 def baseline_synthetic(
@@ -676,7 +708,8 @@ def baseline_synthetic(
 
     Returns
     -------
-    dict with keys: 'expr_relat', 'cl'
+    A ``SyntheticBaselineResult`` containing relative expression values and
+    their cluster labels.
     """
     n_cells = norm_mat.shape[1]
     selected_pca_components = resolve_adaptive_pca_components(
@@ -731,4 +764,4 @@ def baseline_synthetic(
     inv_perm = np.argsort(cluster_order)
     expr_relat = expr_relat[:, inv_perm]
 
-    return {"expr_relat": expr_relat, "cl": labels}
+    return SyntheticBaselineResult(relative_expression=expr_relat, cluster_labels=labels)

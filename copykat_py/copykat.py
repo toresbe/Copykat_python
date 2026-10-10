@@ -18,6 +18,7 @@ import os
 import pickle
 import time
 from collections.abc import Mapping
+from dataclasses import asdict, replace
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, cast
 
@@ -330,10 +331,9 @@ def copykat(
             _anchor.count_markers(rawmat, _anchor.IMMUNE_MARKERS),
             _anchor.count_markers(rawmat, _anchor.ENDOTHELIAL_MARKERS),
         )
-    rawmat, gene_names, barcodes, original_cell_names, prep_stats = _prepare_input_matrix(
-        rawmat, min_gene_per_cell, LOW_DR
-    )
-    input_cell_count = len(original_cell_names)
+    prepared_input = _prepare_input_matrix(rawmat, min_gene_per_cell, LOW_DR)
+    del rawmat  # release the caller's unfiltered input once preparation is complete
+    input_cell_count = len(prepared_input.original_cell_names)
     selected_pca_components = resolve_adaptive_pca_components(
         input_cell_count,
         pca_components=pca_components,
@@ -354,26 +354,26 @@ def copykat(
             f"<{AUTO_PCA_CELL_COUNT_CUTOFF}->{AUTO_PCA_SMALL_SAMPLE},"
             f">={AUTO_PCA_CELL_COUNT_CUTOFF}->{AUTO_PCA_LARGE_SAMPLE}"
         )
-    logger.info(f"  {rawmat.shape[0]} genes, {rawmat.shape[1]} cells in raw data")
+    logger.info(f"  {prepared_input.matrix.shape[0]} genes, {prepared_input.matrix.shape[1]} cells in raw data")
     logger.info(
         f"  adaptive PCA components: {selected_pca_components} "
         f"({'manual override' if pca_components is not None else f'auto from input cell count {input_cell_count}'})"
     )
-    if prep_stats["filtered_cells"] > 0:
+    if prepared_input.stats.filtered_cells > 0:
         logger.info(
-            f"  filtered out {prep_stats['filtered_cells']} cells with <= {min_gene_per_cell} genes; "
-            f"remaining {rawmat.shape[1]} cells"
+            f"  filtered out {prepared_input.stats.filtered_cells} cells with <= {min_gene_per_cell} genes; "
+            f"remaining {prepared_input.matrix.shape[1]} cells"
         )
-    logger.info(f"  {rawmat.shape[0]} genes past LOW_DR filtering")
+    logger.info(f"  {prepared_input.matrix.shape[0]} genes past LOW_DR filtering")
 
     WNS1 = DataQualityStatus.OK
-    if rawmat.shape[0] < 7000:
+    if prepared_input.matrix.shape[0] < 7000:
         WNS1 = DataQualityStatus.LOW
         UP_DR = LOW_DR
         logger.warning("  WARNING: low data quality; assigned LOW_DR to UP_DR...")
         runtime_info["warnings"].append("Low data quality; effective UP_DR was set to LOW_DR")
     runtime_info["parameters"]["UP_DR_effective"] = UP_DR
-    elapsed = _record_step(runtime_info, "read_and_filter", step_start, extra=prep_stats)
+    elapsed = _record_step(runtime_info, "read_and_filter", step_start, extra=asdict(prepared_input.stats))
     logger.info(f"  step 1 runtime: {_format_seconds(elapsed)}")
 
     # =========================================================================
@@ -381,7 +381,7 @@ def copykat(
     # =========================================================================
     logger.info("step 2: annotating gene coordinates ...")
     step_start = time.perf_counter()
-    anno_mat, anno_rows = annotate_gene_rows(gene_names, id_type=id_type, genome=genome)
+    anno_mat, anno_rows = annotate_gene_rows(prepared_input.genes, id_type=id_type, genome=genome)
     runtime_info["parameters"]["gene_order"] = "chromosome,start_position" if genome is Genome.MM10 else "abspos"
 
     # =========================================================================
@@ -405,12 +405,13 @@ def copykat(
     # Secondary cell filtering: ensure each cell has genes across chromosomes
     anno_cols = ["abspos", "chromosome_name", "start_position", "end_position", "ensembl_gene_id", symbol_col, "band"]
     step_start = time.perf_counter()
-    expr_values = rawmat[anno_rows]
-    del rawmat
+    expr_values = prepared_input.matrix[anno_rows]
     keep_cells = _keep_cells_by_chr_coverage(expr_values, anno_mat["chromosome_name"].to_numpy(), ngene_chr)
     if keep_cells.sum() == 0:
         raise ValueError("All cells are filtered out")
-    cell_cols = list(barcodes)
+    cell_cols = list(prepared_input.barcodes)
+    original_cell_names = prepared_input.original_cell_names
+    del prepared_input  # release the filtered input matrix while retaining original names for output
     if not np.all(keep_cells):
         cell_cols = [cell_cols[i] for i in np.where(keep_cells)[0]]
         expr_values = expr_values[:, keep_cells]
@@ -480,8 +481,8 @@ def copykat(
             pca_components=selected_pca_components,
             genome=genome,
         )
-        norm_mat_relat = relt["expr_relat"]
-        CL = relt["cl"]
+        norm_mat_relat = relt.relative_expression
+        CL = relt.cluster_labels
         WNS = BaselineWarning.CELL_LINE
         preN = None
     elif isinstance(norm_cell_names, list) and len(norm_cell_names) > 1:
@@ -551,23 +552,24 @@ def copykat(
             genome=genome,
             anchor_selector=anchor_selector,
         )
-        basel = basa["basel"]
-        WNS = basa["WNS"]
-        preN = basa["preN"]
-        clustered = basa["cl"]
-        assert clustered is not None  # baseline_norm_cl always clusters
-        CL = clustered
-        runtime_info["anchor_path"] = basa.get("anchor_path", AnchorPath.SIGMA)
+        assert basa.cluster_labels is not None  # baseline_norm_cl always clusters
+        CL = basa.cluster_labels
+        runtime_info["anchor_path"] = basa.anchor_path
         if anchor is AnchorStrategy.MARKERS:
-            WNS = (
-                BaselineWarning.NONE
-                if runtime_info["anchor_path"] in {AnchorPath.IMMUNE, AnchorPath.ENDOTHELIAL}
-                else BaselineWarning.UNCLASSIFIED
+            basa = replace(
+                basa,
+                warning=(
+                    BaselineWarning.NONE
+                    if basa.anchor_path in {AnchorPath.IMMUNE, AnchorPath.ENDOTHELIAL}
+                    else BaselineWarning.UNCLASSIFIED
+                ),
             )
-            logger.info(f"  normal reference from markers: path={runtime_info['anchor_path']}, cells={len(preN)}")
+            logger.info(
+                f"  normal reference from markers: path={runtime_info['anchor_path']}, cells={len(basa.normal_cells)}"
+            )
 
-        if WNS is BaselineWarning.UNCLASSIFIED and anchor is not AnchorStrategy.MARKERS:
-            cluster_preN = list(preN) if preN is not None else []
+        if basa.warning is BaselineWarning.UNCLASSIFIED and anchor is not AnchorStrategy.MARKERS:
+            cluster_preN = list(basa.normal_cells)
             keep_cluster_anchor = WNS1 is DataQualityStatus.LOW and len(cluster_preN) >= max(
                 50, int(0.05 * len(cell_name_list))
             )
@@ -617,8 +619,8 @@ def copykat(
                     sigma_init = max(0.05, 0.5 * float(np.std(basel_vec)))
                     return _fit_gmm_3component(basel_vec, sigma_init=sigma_init, max_iter=5000)[2]
 
-                clustering_sigma = float(_basel_sigma(basa_cluster["basel"]))
-                gmm_sigma = float(_basel_sigma(basa_gmm["basel"]))
+                clustering_sigma = float(_basel_sigma(basa_cluster.baseline))
+                gmm_sigma = float(_basel_sigma(basa_gmm.baseline))
                 if gmm_sigma < clustering_sigma:
                     basa = basa_gmm
                 else:
@@ -627,11 +629,11 @@ def copykat(
                         f"neutral than the clustering candidate (sigma={clustering_sigma:.4f}); "
                         "keeping cluster-based normal anchor"
                     )
-                basel = basa["basel"]
-                preN = basa["preN"]
-                WNS = BaselineWarning.UNCLASSIFIED
+                basa = replace(basa, warning=BaselineWarning.UNCLASSIFIED)
 
-        norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
+        norm_mat_relat = norm_mat_smooth - basa.baseline[:, np.newaxis]
+        WNS = basa.warning
+        preN = basa.normal_cells
     del norm_mat_smooth
     baseline_cluster_info = get_last_cluster_info()
     if cell_line is CellLineMode.YES:
@@ -703,7 +705,7 @@ def copykat(
     step_start = time.perf_counter()
     results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores, ks_method=ks_method)
 
-    if len(results["breaks"]) < 25:
+    if len(results.breakpoints) < 25:
         logger.info("  too few breakpoints; decreased KS_cut to 50%")
         results = cna_mcmc(
             CL_filtered,
@@ -714,7 +716,7 @@ def copykat(
             ks_method=ks_method,
         )
 
-    if len(results["breaks"]) < 25:
+    if len(results.breakpoints) < 25:
         logger.info("  too few breakpoints; decreased KS_cut to 25%")
         results = cna_mcmc(
             CL_filtered,
@@ -725,7 +727,7 @@ def copykat(
             ks_method=ks_method,
         )
 
-    if len(results["breaks"]) < 25:
+    if len(results.breakpoints) < 25:
         raise ValueError("Too few segments; try decreasing KS_cut or improving data quality")
     seg_info = get_last_cna_mcmc_info()
     elapsed = _record_step(
@@ -733,7 +735,7 @@ def copykat(
         "segmentation",
         step_start,
         parallel_info=seg_info,
-        extra={"breakpoints": len(results["breaks"])},
+        extra={"breakpoints": len(results.breakpoints)},
     )
     logger.info(
         f"  segmentation runtime: {_format_seconds(elapsed)} "
@@ -741,7 +743,7 @@ def copykat(
         f"engine={seg_info.get('engine', 'n/a')})"
     )
 
-    results_com = results["logCNA"]
+    results_com = results.log_cna
     del results, norm_mat_relat
     # Center each cell
     results_com -= results_com.mean(axis=0, keepdims=True)
@@ -783,9 +785,9 @@ def copykat(
 
         assert Aj is not None  # convert_to_bins only returns None for non-hg20 genomes
         # uber_mat_adj is adjusted in place below, so drop the DataFrame view of it
-        uber_mat_adj = Aj["RNA_adj_values"]
-        bin_coords = Aj["RNA_adj"][["chrom", "chrompos", "abspos"]].copy()
-        chrom_info = Aj["DNA_adj"]["chrom"].to_numpy()
+        uber_mat_adj = Aj.values
+        bin_coords = Aj.rna_table[["chrom", "chrompos", "abspos"]].copy()
+        chrom_info = Aj.dna_annotations["chrom"].to_numpy()
         del Aj
 
         logger.info("step 7: adjust baseline ...")

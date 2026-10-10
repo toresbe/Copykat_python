@@ -176,39 +176,6 @@ RawMatrix: TypeAlias = pd.DataFrame | npt.NDArray[Any] | SparseMatrix | RawInput
 """Inputs accepted by ``copykat()``: genes x cells, or a path to a .mtx/.csv/.tsv file."""
 
 
-class BaselineResult(TypedDict):
-    """Reference normal cells and the baseline profile derived from them."""
-
-    basel: GeneProfile
-    WNS: BaselineWarning
-    preN: list[str] | IntArray
-    """Reference normal cells: names when cell names are known, otherwise column indices."""
-    cl: ClusterLabels | None
-    anchor_path: NotRequired[AnchorPath]
-
-
-class SyntheticBaselineResult(TypedDict):
-    """Cell-line mode: expression relative to a synthetic normal per cluster."""
-
-    expr_relat: GeneByCell
-    cl: ClusterLabels
-
-
-class SegmentationResult(TypedDict):
-    logCNA: GeneByCell
-    breaks: list[int]
-    """Segment boundaries as gene indices, including the first and last gene."""
-
-
-class BinConversion(TypedDict):
-    DNA_adj: pd.DataFrame
-    """Genomic bins (chrom, chrompos, abspos), chromosome Y removed."""
-    RNA_adj: pd.DataFrame
-    """chrom, chrompos, abspos, then one column per cell."""
-    RNA_adj_values: BinByCell
-    """The values backing ``RNA_adj``'s cell columns (column-major)."""
-
-
 class ClusteringResult(TypedDict):
     labels: ClusterLabels
     Z: LinkageMatrix | None
@@ -226,12 +193,6 @@ class ParallelInfo(TypedDict, total=False):
     mc_samples: int
     engine: str
     approximate: bool
-
-
-class InputStats(TypedDict):
-    input_type: str
-    filtered_cells: int
-    filtered_gene_rows: int
 
 
 class RuntimeInfo(TypedDict):

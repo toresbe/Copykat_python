@@ -57,18 +57,18 @@ class GenomicCoordinateTests(unittest.TestCase):
                 "cell2": [-0.3],
             }
         )
-        values, names, chrom, genome = split_cna_table(frame)
-        self.assertEqual(names, ["cell1", "cell2"])
-        self.assertEqual(genome, "mm10")
-        self.assertEqual(values.dtype, np.float32)
-        np.testing.assert_allclose(values, [[0.2, -0.3]])
-        np.testing.assert_array_equal(chrom, [20])
+        cna_data = split_cna_table(frame)
+        self.assertEqual(cna_data.cell_names, ["cell1", "cell2"])
+        self.assertEqual(cna_data.genome, "mm10")
+        self.assertEqual(cna_data.matrix.dtype, np.float32)
+        np.testing.assert_allclose(cna_data.matrix, [[0.2, -0.3]])
+        np.testing.assert_array_equal(cna_data.chromosome_info, [20])
 
     def test_human_table_and_unrecognized_layout(self):
         frame = pd.DataFrame({"chrom": [1], "chrompos": [50], "abspos": [50], "cell1": [0.1]})
-        values, names, _, genome = split_cna_table(frame)
-        self.assertEqual(values.shape, (1, 1))
-        self.assertEqual(names, ["cell1"])
-        self.assertEqual(genome, "hg20")
+        cna_data = split_cna_table(frame)
+        self.assertEqual(cna_data.matrix.shape, (1, 1))
+        self.assertEqual(cna_data.cell_names, ["cell1"])
+        self.assertEqual(cna_data.genome, "hg20")
         with self.assertRaisesRegex(ValueError, "Unrecognized"):
             split_cna_table(pd.DataFrame({"cell1": [1]}))
