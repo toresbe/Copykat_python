@@ -30,6 +30,7 @@ from copykat_py._types import (
     ParallelInfo,
     SyntheticBaselineResult,
 )
+from copykat_py import backend
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,20 @@ def _hierarchical_cluster(
         }
     )
 
+    if backend.use_gpu() and metric == "euclidean" and method.startswith("ward"):
+        from copykat_py.gpu import ops
+
+        reduce_to = None
+        if reduce and not backend.exact_algorithms():
+            pca_components_used = min(pca_components, n_samples - 1, n_features)
+            if n_samples > FULL_CLUSTER_MAX_CELLS and n_features > 256 and pca_components_used >= 8:
+                reduce_to = pca_components_used
+        Z, engine = ops.ward_cluster(data, reduce_to=reduce_to)
+        _LAST_CLUSTER_INFO["engine"] = engine
+        _LAST_CLUSTER_INFO["approximate"] = "pca" in engine
+        labels = fcluster(Z, t=n_clusters, criterion="maxclust")
+        return labels, Z
+
     if not reduce:
         if metric == "euclidean" and method.startswith("ward"):
             collapsed = _collapse_repeated_features(data)
@@ -334,6 +349,18 @@ def _fit_gmm_3component(
         sigma_init = max(0.05, 0.5 * float(np.std(data)))
     if mu_init is None:
         mu_init = [-0.2, 0.0, 0.2]
+
+    if backend.use_gpu():
+        from copykat_py.gpu.gmm import fit_gmm_3component_batch
+
+        means, weights, sigma = fit_gmm_3component_batch(
+            np.asarray(data, dtype=np.float64).ravel()[None, :],
+            [sigma_init],
+            mu_init=mu_init,
+            max_iter=max_iter,
+            tol=tol,
+        )
+        return means[0], weights[0], float(sigma[0])
 
     x = np.asarray(data, dtype=np.float64).ravel()
     means = np.asarray(mu_init, dtype=np.float64).copy()

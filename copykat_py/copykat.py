@@ -34,6 +34,7 @@ from scipy.cluster.hierarchy import fcluster
 from scipy.io import mmread
 
 from copykat_py._logging import with_default_progress_output
+from copykat_py import backend
 from copykat_py._types import (
     BoolArray,
     ClusteringResult,
@@ -260,6 +261,10 @@ def _adjust_baseline_inplace(mat: FloatArray, diploid_mask: BoolArray, chunk_ele
     diploid mean, re-center cells, replace values within 0.25 SD of the
     diploid profile with the cell mean, and re-center cells again.
     """
+    if backend.use_gpu():
+        from copykat_py.gpu import ops
+
+        return cast(FloatArray, ops.adjust_baseline(mat, diploid_mask))
     mat -= mat[:, diploid_mask].mean(axis=1, keepdims=True)
     mat -= mat.mean(axis=0, keepdims=True)
 
@@ -588,6 +593,8 @@ def copykat(
     pca_components: int | None = None,
     meta_csv: str | None = None,
     row_split_col: str | None = None,
+    backend_name: str = "cpu",
+    ks_method: str = "mc",
 ) -> CopyKATResult:
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
 
@@ -649,6 +656,7 @@ def copykat(
         'CNAmat': pd.DataFrame with CNA results
         'hclustering': linkage matrix or cluster labels
     """
+    backend.set_backend(backend_name)
     start_time = time.perf_counter()
     # Global seed kept for reproducibility with earlier versions; moving to a
     # Generator would change any random stream that depends on it.
@@ -666,6 +674,8 @@ def copykat(
             "distance": distance, "n_cores": n_cores, "pca_components_requested": pca_components,
             "output_seg": output_seg, "plot_genes": plot_genes, "random_seed": 1234,
             "meta_csv": meta_csv, "row_split_col": row_split_col,
+            "backend": backend.get_backend(),
+            "ks_method": ks_method,
         },
         "versions": {},
         "warnings": [],
@@ -1031,15 +1041,23 @@ def copykat(
     # =========================================================================
     logger.info("step 5: segmentation ...")
     step_start = time.perf_counter()
-    results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores)
+    results = cna_mcmc(
+        CL_filtered, norm_mat_relat, bins=win_size, cut_cor=KS_cut, n_cores=n_cores, ks_method=ks_method
+    )
 
     if len(results["breaks"]) < 25:
         logger.info("  too few breakpoints; decreased KS_cut to 50%")
-        results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.5 * KS_cut, n_cores=n_cores)
+        results = cna_mcmc(
+            CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.5 * KS_cut, n_cores=n_cores,
+            ks_method=ks_method,
+        )
 
     if len(results["breaks"]) < 25:
         logger.info("  too few breakpoints; decreased KS_cut to 25%")
-        results = cna_mcmc(CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.25 * KS_cut, n_cores=n_cores)
+        results = cna_mcmc(
+            CL_filtered, norm_mat_relat, bins=win_size, cut_cor=0.25 * KS_cut, n_cores=n_cores,
+            ks_method=ks_method,
+        )
 
     if len(results["breaks"]) < 25:
         raise ValueError("Too few segments; try decreasing KS_cut or improving data quality")

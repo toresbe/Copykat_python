@@ -143,6 +143,18 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
         help="[optional] Adaptive PCA component cap for large clustering steps (default: automatic by cell count)",
     )
     parser.add_argument(
+        "--backend",
+        default="cpu",
+        choices=["cpu", "gpu-compat", "gpu"],
+        help="[experimental] Execution backend; GPU modes require CUDA-enabled torch and CuPy.",
+    )
+    parser.add_argument(
+        "--ks-method",
+        default="mc",
+        choices=["mc", "exact"],
+        help="Breakpoint statistic: Monte Carlo posterior KS (default) or exact posterior-Gamma KS.",
+    )
+    parser.add_argument(
         "--output-dir",
         "-o",
         default=".",
@@ -438,6 +450,8 @@ def _run_copykat_analysis(
             genome=args.genome,
             n_cores=args.n_cores,
             pca_components=args.pca_components,
+            backend_name=args.backend,
+            ks_method=args.ks_method,
             meta_csv=meta_csv,
             row_split_col=row_split_col,
         )

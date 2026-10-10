@@ -16,6 +16,8 @@ import itertools
 
 import numpy as np
 from numba import jit
+from scipy.optimize import brentq
+from scipy.special import gammainc, gammaincinv, gammaln
 from scipy.stats import ks_2samp
 
 from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, ParallelInfo, SegmentationResult
@@ -120,6 +122,60 @@ def _find_breakpoints_for_cluster(
     return bre
 
 
+def _gamma_ks_distance(a1: float, r1: float, a2: float, r2: float, tail: float = 1e-12) -> float:
+    """Supremum CDF distance between Gamma(shape, rate) posteriors.
+
+    The CDF difference is extremal where the densities cross. In log-x space
+    the log-density ratio has at most two roots; tail quantiles bound omitted
+    probability mass by ``tail``.
+    """
+    if a1 == a2 and r1 == r2:
+        return 0.0
+    c = a1 * np.log(r1) - gammaln(a1) - a2 * np.log(r2) + gammaln(a2)
+
+    def log_density_ratio(t: float) -> float:
+        return (a1 - a2) * t - (r1 - r2) * np.exp(t) + c
+
+    lo = np.log(min(gammaincinv(a1, tail) / r1, gammaincinv(a2, tail) / r2))
+    hi = np.log(max(gammaincinv(a1, 1 - tail) / r1, gammaincinv(a2, 1 - tail) / r2))
+    edges = [lo, hi]
+    if r1 != r2 and (a1 - a2) / (r1 - r2) > 0:
+        turning_point = np.log((a1 - a2) / (r1 - r2))
+        if lo < turning_point < hi:
+            edges = [lo, turning_point, hi]
+
+    distance = 0.0
+    for left, right in zip(edges[:-1], edges[1:]):
+        f_left, f_right = log_density_ratio(left), log_density_ratio(right)
+        if f_left == 0:
+            root = left
+        elif f_right == 0:
+            root = right
+        elif f_left * f_right < 0:
+            root = brentq(log_density_ratio, left, right, xtol=1e-14, rtol=1e-14)
+        else:
+            continue
+        x = np.exp(root)
+        distance = max(distance, abs(gammainc(a1, r1 * x) - gammainc(a2, r2 * x)))
+    return float(distance)
+
+
+def _find_breakpoints_exact(consensus: FloatArray, bins: int, cut_cor: float) -> list[int]:
+    """Find breakpoints with the exact posterior-Gamma KS statistic."""
+    n = len(consensus)
+    boundaries = [*range(0, (n // bins - 1) * bins, bins), n - 1]
+    breaks = []
+    for i in range(len(boundaries) - 2):
+        left = consensus[boundaries[i] : boundaries[i + 1] + 1]
+        right = consensus[boundaries[i + 1] + 1 : boundaries[i + 2] + 1]
+        shape_left = max(float(np.mean(left)), 0.001) + float(np.sum(left))
+        shape_right = max(float(np.mean(right)), 0.001) + float(np.sum(right))
+        distance = _gamma_ks_distance(shape_left, 1.0 + len(left), shape_right, 1.0 + len(right))
+        if distance > cut_cor:
+            breaks.append(boundaries[i + 1])
+    return breaks
+
+
 def cna_mcmc(
     clu: ClusterLabels,
     fttmat: GeneByCell,
@@ -127,6 +183,7 @@ def cna_mcmc(
     cut_cor: float = 0.1,
     n_cores: int = 1,
     mc_samples: int | None = None,
+    ks_method: str = "mc",
 ) -> SegmentationResult:
     """MCMC segmentation of copy number data.
 
@@ -152,6 +209,8 @@ def cna_mcmc(
         'breaks': list - breakpoint positions
     """
     n_genes, n_cells = fttmat.shape
+    if ks_method not in {"mc", "exact"}:
+        raise ValueError("ks_method must be 'mc' or 'exact'")
 
     # Adaptive MC sample size: fewer samples for small datasets (speed optimization)
     if mc_samples is None:
@@ -167,7 +226,12 @@ def cna_mcmc(
     # Step 2: Find breakpoints for each cluster consensus
     breakpoints: set[int] = set()
     for c in range(norm_mat_sm.shape[1]):
-        bre = _find_breakpoints_for_cluster(norm_mat_sm[:, c], bins, cut_cor, rng_seed=42 + c, mc_samples=mc_samples)
+        if ks_method == "exact":
+            bre = _find_breakpoints_exact(norm_mat_sm[:, c], bins, cut_cor)
+        else:
+            bre = _find_breakpoints_for_cluster(
+                norm_mat_sm[:, c], bins, cut_cor, rng_seed=42 + c, mc_samples=mc_samples
+            )
         breakpoints.update({0, *bre, n_genes - 1})
 
     BR = sorted(breakpoints)
@@ -191,7 +255,7 @@ def cna_mcmc(
             "tasks": int(len(BR) - 1),
             "chunk_size": 0,
             "mc_samples": int(mc_samples),
-            "engine": "closed_form_segment_mean",
+            "engine": f"{ks_method}_ks+closed_form_segment_mean",
         }
     )
 
