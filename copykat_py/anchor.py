@@ -53,7 +53,11 @@ def count_markers(rawmat, markers):
     if isinstance(rawmat, pd.DataFrame):
         sub = rawmat.loc[rawmat.index.isin(markers)]
         return (sub > 0).sum(axis=0)
-    raise TypeError("anchor='markers' needs dict or DataFrame input with gene symbols")
+    if isinstance(rawmat, str):
+        sep = "\t" if rawmat.endswith((".tsv", ".txt")) else ","
+        frame = pd.read_csv(rawmat, index_col=0, sep=sep)
+        return (frame.loc[frame.index.isin(markers)] > 0).sum(axis=0)
+    raise TypeError("anchor='markers' needs dict, DataFrame, or CSV/TSV input with gene symbols")
 
 
 def _largest_population(labels, marked, n_cells):
