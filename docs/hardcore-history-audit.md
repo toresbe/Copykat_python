@@ -4,7 +4,7 @@ This preserves the historical repository inventory from before proposal and
 semantic branches were built. For the executed branch construction, current
 dependencies, integration decisions, and updated measurements, see
 [`fork-integration-audit.md`](fork-integration-audit.md) and
-[`navin-review-manifest.json`](navin-review-manifest.json).
+[`benchmark-manifest.json`](benchmark-manifest.json).
 
 Inspected 2026-10-09 using local commit objects, branch refs, diffs, and
 stable patch IDs. No remote fetch, history rewrite, or branch creation was

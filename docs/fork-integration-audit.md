@@ -13,7 +13,7 @@ explicit `--no-ff` merges of PRs #4, #6, #7, #8, and #9. `with-proposed-changes`
 contains explicit `--no-ff` merges of all six performance PRs, #4 through #9,
 including #5. The merge commits preserve each original PR head as a second
 parent; the exact SHAs and merge commits are in
-[`navin-review-manifest.json`](navin-review-manifest.json).
+[`benchmark-manifest.json`](benchmark-manifest.json).
 
 PR #5 is deliberately visible as a text-output and dependency-policy change:
 it uses Arrow to write the gene-level CNA table, requires PyArrow, and changes
@@ -34,14 +34,14 @@ ordering work.
 | Branch | Declared dependency | Original source and rationale | Evidence and qualification |
 |---|---|---|---|
 | `experiment/storage-output` | PR #5 Arrow writer | `6a43d8c`, `769aed3`, repeated-row hunks from `a0eaacf`; bounded memory/parallel formatting and reuse of repeated CNA rows. | Signed-zero run detection now compares floating row bytes. The assembled writer passed a byte comparison against full Arrow formatting for `-0.0`/`+0.0`; broad table and full-pipeline comparisons remain pending. |
-| `experiment/ward` | storage/output | `350c1c0`, `44c15db`; condensed Euclidean distances plus Ward linkage, with threaded row blocks. Distances are mathematically unchanged; finite-precision ties and merge heights are still observable. | T989 collapse replay had unchanged rooted clades and calls but different final CNA hashes and merge heights; see `navin-review-benchmarks.md`. Current CPU route smoke checked on a small matrix. |
+| `experiment/ward` | storage/output | `350c1c0`, `44c15db`; condensed Euclidean distances plus Ward linkage, with threaded row blocks. Distances are mathematically unchanged; finite-precision ties and merge heights are still observable. | T989 collapse replay had unchanged rooted clades and calls but different final CNA hashes and merge heights; see `benchmark-scaling.md`. Current CPU route smoke checked on a small matrix. |
 | `experiment/repeated-bin-collapse` | Ward | `5768793`; a run of `m` identical feature columns becomes one column scaled by `sqrt(m)`, preserving squared Euclidean distance algebraically. | Historical T989 comparison: 0 rooted clades replaced, ARI 1 at k=2/6/50, but CNA hashes differ and max sorted-height deviation was `5.27907e-05`. |
 | `experiment/pca-bypass` | repeated-bin collapse | `5768793`; bypass float32 PCA when the collapsed representation is within the retained component rank. This avoids PCA truncation error but changes floating-point calculations. | Historical diagnostic replay attributes changed linkage heights to float32 PCA; not a claim of byte-identical heights. |
 | `experiment/gpu-execution` | PCA bypass | GPU execution hunks from `a0eaacf` and `0460d50`; GPU Ward uses reciprocal-nearest-neighbour rounds and exact candidate certification/fallbacks. | Original GPU benchmark reports are pinned historical evidence. The assembly exposes GPU Ward, selected GMM fits, and baseline adjustment; remaining stages run on CPU. CUDA execution was not available in this environment. |
 | `experiment/numerical-precision` | GPU execution | `a0eaacf`; separates `gpu-compat` from a full-feature `gpu` Ward geometry policy. | Historical full-policy comparisons show CNA/tree deviations. The assembled GPU path currently wires the Ward geometry policy only; FP64 segment sums, all-cell silhouette, and full-tree rendering are not ported here. |
 | `experiment/gpu-ward-refinement` | numerical precision | `0460d50`; optional Triton candidate search and certified exact fallback for Ward. | Static syntax/import boundary checked; no CUDA/Triton runtime available. Device arithmetic, ties, and memory behavior need a fresh device run. |
 | `experiment/statistical-decisions` | proposal CPU foundation; no GPU dependency | `a0eaacf`, `0460d50`; computes the supremum CDF difference of the adjacent Gamma posteriors at density crossings, avoiding Monte Carlo KS sampling noise. | Added direct checks for identical distributions, symmetry, deterministic breakpoint calls, and CLI wiring. The existing cutoff has not been recalibrated; exact KS remains opt-in. |
-| `experiment/marker-anchor` | pipeline foundation | `d3f3831`; marker-enriched immune/endothelial cells choose the normal reference, with enrichment and sigma fallbacks. | Historical 43-study comparison: mean balanced-accuracy gain `+0.047` (`[+0.024,+0.078]`), inverted calls 29 to 5; annotation circularity and selection limits are documented in `navin-accuracy-results.md`. |
+| `experiment/marker-anchor` | pipeline foundation | `d3f3831`; marker-enriched immune/endothelial cells choose the normal reference, with enrichment and sigma fallbacks. | Historical 43-study comparison: mean balanced-accuracy gain `+0.047` (`[+0.024,+0.078]`), inverted calls 29 to 5; annotation circularity and selection limits are documented in `accuracy-results.md`. |
 | `experiment/allele-orientation` | marker/arm source branch and pipeline foundation | `de8a6e3`; phased B-allele imbalance is an orthogonal check on tumor/normal orientation. | Historical read-backed subset is documented in `docs/allele_orientation.md`; evidence is not independent of all prior cohorts. The assembled command is opt-in and has not been rerun against this merge. |
 
 The DX stack (`dx/dependencies` → `dx/ruff` → `dx/typing` → `dx/logging`)
@@ -57,18 +57,18 @@ input hashes, settings, and limitations are in
 
 Reproduction and evidence files are committed in this package:
 
-- Benchmark drivers and utilities (in `benchmarks/navin_review/`): `navin_review_benchmark.py`,
-  `navin_review_serial.py`, `navin_review_writer_edges.py`,
-  `navin_review_parallel.py`, `navin_review_gpu_memory.py`, and the other
-  `navin_review_*.py` scripts listed in the manifest.
-- Scaling and CPU-accounted results: `navin-review-benchmarks.md`,
-  `navin-review-cpu-benchmarks.md`, and
-  `navin-review-serial-benchmarks.md`.
+- Benchmark drivers and utilities (in `benchmarks/`): `benchmark.py`,
+  `serial.py`, `writer_edges.py`,
+  `parallel.py`, `gpu_memory.py`, and the other
+  `*.py` scripts listed in the manifest.
+- Scaling and CPU-accounted results: `benchmark-scaling.md`,
+  `benchmark-cpu.md`, and
+  `benchmark-serial.md`.
 - Output hashes, branch/source pins, run scripts, and saved dendrogram/CNA
-  diagnostics: `navin-review-assets/` and the raw results referenced by the
+  diagnostics: `benchmark-assets/` and the raw results referenced by the
   reports.
 - Installed-data accuracy, paired findings and limitations:
-  `navin-accuracy-results.md` and `navin-accuracy-assets/`.
+  `accuracy-results.md` and `accuracy-assets/`.
 
 At 80k cells, the pinned six-PR snapshot completed in `2081.32 s`; the pinned
 upstream snapshot took `3337.18 s`. Its 120k six-PR run was recorded as running

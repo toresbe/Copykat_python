@@ -1,0 +1,358 @@
+{
+  "schema_version": 2,
+  "status": "assembled and published to fork; provenance tags, both proposal branches, ten semantic branches, and main verified remotely",
+  "source_reference": {
+    "repository": "navinlabcode/Copykat_python",
+    "branch": "main",
+    "sha": "ea1a15c2457c0a69ee61ada07db57a0c9c726bf2"
+  },
+  "proposal_refs": {
+    "proposed/bit-identical": {
+      "tip": "7fc9e57b057feeae7c55635f85749e7329deee35",
+      "prs": [
+        4,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    "with-proposed-changes": {
+      "tip": "d62e91ff54ff52b53b1c706999594f012be7500d",
+      "prs": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    "main": "Assembly is based on with-proposed-changes, then integrates current DX and semantic branches; local main ref will be advanced only after validation."
+  },
+  "pull_requests": [
+    {
+      "number": 4,
+      "name": "Shared DLM gains",
+      "head_ref": "perf/dlm-shared-gains",
+      "head_sha": "516d7194f68b5e8aa36bb7c0dc78ab0a23de9b50",
+      "proposal_merge": "b6710bd35b96e01d74bb7c78490a48c06df079e9",
+      "bit_identical_merge": "429ae0cc65819b64222e7fe1a4aa0dee220e8d9a"
+    },
+    {
+      "number": 5,
+      "name": "Arrow gene CNA output",
+      "head_ref": "perf/pyarrow-gene-output",
+      "head_sha": "92d7e51c494332dd66a1fb069d8315978de89347",
+      "proposal_merge": "5a4ff607ef33a6be0bb82b4e40e47680fbb85016",
+      "classification": "text representation and dependency policy change; PyArrow >=22; gene-level TSV formatting/quoting contract changes; intentionally included only in with-proposed-changes"
+    },
+    {
+      "number": 6,
+      "name": "Shared-memory thread pools",
+      "head_ref": "perf/thread-pools",
+      "head_sha": "24475ca993c7784c718f2a580b95a7fe95eafe7a",
+      "proposal_merge": "8046eb36f16fdfe4f1e3ca54b927e76bd0e7711e",
+      "bit_identical_merge": "c1519980a07cf7e2cda7ecaf9d873dc4021abb1d"
+    },
+    {
+      "number": 7,
+      "name": "Skip discarded GMM clustering",
+      "head_ref": "perf/skip-unused-gmm-clustering",
+      "head_sha": "1cf6437a5c69acec5bf507d9d123213cda11bfd9",
+      "proposal_merge": "b8e330eaec533b8042fa67b91ba5754c664f8287",
+      "bit_identical_merge": "e27c2a03a0fecc8fd5401ec3086a91861c04e77d"
+    },
+    {
+      "number": 8,
+      "name": "Known-normal membership",
+      "head_ref": "perf/known-normal-set",
+      "head_sha": "bb4abc547142b8f8d509a0d52810199e92cbe3a0",
+      "proposal_merge": "60c013b1de181faa58c2615906cef6dc888e30a7",
+      "bit_identical_merge": "1ad921e82e03696fdb977a6d3ebfe1fd8576ee90"
+    },
+    {
+      "number": 9,
+      "name": "Heatmap interpolation stage",
+      "head_ref": "perf/heatmap-interpolation-stage",
+      "head_sha": "2215462830a7c2d8973df145fab25d4598f055e2",
+      "proposal_merge": "d62e91ff54ff52b53b1c706999594f012be7500d",
+      "bit_identical_merge": "7fc9e57b057feeae7c55635f85749e7329deee35",
+      "classification": "raises Matplotlib dependency floor to >=3.5"
+    }
+  ],
+  "semantic_branches": [
+    {
+      "ref": "experiment/storage-output",
+      "tip": "1c3b4f9b8f6a004f179bb78b5bf65c03327ae89f",
+      "depends_on": [
+        "with-proposed-changes / PR #5 Arrow API"
+      ],
+      "original_sources": [
+        "6a43d8c",
+        "769aed3",
+        "a0eaacf writer hunks"
+      ],
+      "rationale": "bounded/parallel TSV output and repeated-row formatting",
+      "validation": "signed-zero row equality uses byte representation; assembled repeated writer byte-matched full Arrow writer on a signed-zero fixture; full-pipeline output-byte check pending"
+    },
+    {
+      "ref": "experiment/ward",
+      "tip": "c767d77a365414f7d9f350b52c6045b1a9cc7ead",
+      "depends_on": [
+        "experiment/storage-output"
+      ],
+      "original_sources": [
+        "350c1c0",
+        "44c15db"
+      ],
+      "rationale": "condensed Euclidean distances plus Ward; threaded cdist blocks preserve pair calculations, finite-precision merge ties remain observable",
+      "validation": "current CPU Ward smoke; T989 repeated-collapse comparison documented in benchmark-scaling.md"
+    },
+    {
+      "ref": "experiment/repeated-bin-collapse",
+      "tip": "0e4dee05f4e1b31665b4e871832c12ccb992fce0",
+      "depends_on": [
+        "experiment/ward"
+      ],
+      "original_sources": [
+        "5768793"
+      ],
+      "rationale": "replace m identical adjacent features with one feature scaled by sqrt(m), preserving squared Euclidean distances algebraically",
+      "validation": "historical T989: calls/major clades matched while CNA hash and heights differed; max sorted-height deviation 5.27907e-05"
+    },
+    {
+      "ref": "experiment/pca-bypass",
+      "tip": "014bb2df885ae34a25fd718d1d9ce299dd7268ed",
+      "depends_on": [
+        "experiment/repeated-bin-collapse"
+      ],
+      "original_sources": [
+        "5768793 PCA-bypass hunks"
+      ],
+      "rationale": "skip float32 PCA only when collapsed feature width is within the retained component rank; removes approximation but changes arithmetic",
+      "validation": "historical diagnostic linked float32 PCA to linkage height changes; not byte-identical"
+    },
+    {
+      "ref": "experiment/gpu-execution",
+      "tip": "45c6f7806f39889f8c015f17a501e8282dad1af5",
+      "depends_on": [
+        "experiment/pca-bypass"
+      ],
+      "original_sources": [
+        "a0eaacf GPU hunks",
+        "0460d50 backend/CLI hunks"
+      ],
+      "rationale": "CUDA Ward/GMM/baseline kernels and certified RNN Ward candidate search",
+      "validation": "historical GPU snapshots only; current optional route statically compiled; no Torch/CuPy or CUDA device in current environment"
+    },
+    {
+      "ref": "experiment/numerical-precision",
+      "tip": "2c862ec4946be4b12dd7dcee893964c7e2a80ac9",
+      "depends_on": [
+        "experiment/gpu-execution"
+      ],
+      "original_sources": [
+        "a0eaacf precision-policy hunks"
+      ],
+      "rationale": "separate gpu-compat PCA geometry from full-feature GPU Ward geometry",
+      "validation": "historical full-policy CNA/tree deviations; current integration wires Ward geometry only; FP64 segmentation/all-cell silhouette/full-tree rendering not ported"
+    },
+    {
+      "ref": "experiment/gpu-ward-refinement",
+      "tip": "c6624c2c96b3e41f4d37539f1b47d008d64e9c31",
+      "depends_on": [
+        "experiment/numerical-precision"
+      ],
+      "original_sources": [
+        "0460d50 Triton/streaming Ward hunks"
+      ],
+      "rationale": "projection lower bounds plus exact FP64 candidate validation and exact fallback",
+      "validation": "syntax checked; device runtime and adversarial equivalence not rerun"
+    },
+    {
+      "ref": "experiment/statistical-decisions",
+      "tip": "a9943ef7c94d47fec295569cc89f7e41ff7e2248",
+      "depends_on": [
+        "with-proposed-changes; CPU only"
+      ],
+      "original_sources": [
+        "a0eaacf exact-Gamma KS hunks",
+        "0460d50 CLI hunks"
+      ],
+      "rationale": "compute the Gamma-posterior KS supremum at density crossings rather than from sampled posteriors",
+      "validation": "direct equal/symmetric distributions, deterministic breakpoint fixture and CLI option checks passed; cutoff calibration incomplete"
+    },
+    {
+      "ref": "experiment/marker-anchor",
+      "tip": "d3f38313804a3489078fc73161086d6e78723cfe",
+      "depends_on": [
+        "pipeline foundation; source parent 14aae8d"
+      ],
+      "original_sources": [
+        "d3f3831"
+      ],
+      "rationale": "immune/endothelial marker reference with enrichment and sigma fallbacks; separate arm-correlation final call",
+      "validation": "historical 43-study paired mean balanced-accuracy +0.047 [0.024,0.078], inversions 29 to 5; selection/circularity limitations documented"
+    },
+    {
+      "ref": "experiment/allele-orientation",
+      "tip": "de8a6e3876da0156d8266afc0f5eaff24ebd743c",
+      "depends_on": [
+        "experiment/marker-anchor"
+      ],
+      "original_sources": [
+        "de8a6e3"
+      ],
+      "rationale": "phased B-allele imbalance as an orthogonal tumor/normal orientation check",
+      "validation": "historical public-read subset in docs/allele_orientation.md; assembled CLI integration not rerun"
+    },
+    {
+      "ref": "dx/logging",
+      "tip": "8bc3b82d7090ff266372fb1d66fb1926a7e92a71",
+      "depends_on": [
+        "dx/dependencies -> dx/ruff -> dx/typing"
+      ],
+      "original_sources": [
+        "548c5cd",
+        "2ef30c4",
+        "876085b",
+        "8a85078",
+        "611cd13",
+        "de78bbf",
+        "03e8a04",
+        "dafabae",
+        "86963ba",
+        "4b595ac",
+        "72d4804",
+        "8bc3b82"
+      ],
+      "rationale": "dependency floors, lint, typing, logging, metadata colors/layout/labels, reports and mm10 genomic order",
+      "validation": "current CPU module compilation; mm10 matched-WGS and fresh proposal comparison recorded in mm10-order-validation.md"
+    }
+  ],
+  "assembly": {
+    "local_ref": "assembly/main",
+    "tip_before_audit_commit": "0197b84a6a67800cf60aa32532a5d190e40418fa",
+    "base": "with-proposed-changes at d62e91ff54ff52b53b1c706999594f012be7500d",
+    "merge_commits": [
+      "838ad813c81e82fc25ea5cbe64020df47f05e698",
+      "488f63c92edb126a385e5111f895464a24bf18bb",
+      "dc9521430ec269f20c08991264a1cce3cb211ebe",
+      "f51f17625b8ce9d4c76447555811693976d3a514",
+      "eb366b105ce1a4191fd7f60381616ffb2be24873",
+      "45bba91f073874f014769ff690cb89a9f096bb9f",
+      "511449d67fccb6473e622bc740be2a560b3a106a",
+      "03f27a202d7b5fd57701fd7cfc8be1fa87a7ead8",
+      "569efdc2b055849eedd1d814f8d6e4c50ee8e5d4",
+      "38fa1325655786616a851c883ca23913ff3ad576",
+      "220b5468fe4e5d50ad0a38075c0f6c44b3e06e5a"
+    ],
+    "working_tree": "assembled source and audit package published to fork/main; fork-only refs verified",
+    "audit_package_commit": "8683dcdcb74ad2d0bfd6cf7b5b82c6690b0a8132",
+    "manifest_refinement_commit": "fca499cf964f9e426cef950ed0a7a62a8e438832",
+    "validation_documentation_commit": "8b474dbbf8139fff0d29d00e4e9ce41ba3f4b81d",
+    "benchmark_scope_refresh_commit": "d1b569041c4ffa75d2d0874c51939ba12ca64e9d",
+    "assembled_tip_before_final_audit_refresh": "078b90d533d7519c8f67ebd57da5c9c184d2e040"
+  },
+  "fresh_integration_comparison": {
+    "dataset": "T989 mouse tumor raw scRNA counts",
+    "reference": "six-PR proposal d62e91f",
+    "assembled": "assembly/main at 0197b84 (default path identical to measured 220b546 tree; marker CSV support-only follow-up)",
+    "same_parameters": true,
+    "plot": false,
+    "output": "large CNA files directed to /dev/null for paired timing; assembled full output files also retained on NAS",
+    "proposal": {
+      "elapsed_s": 199.6,
+      "aneuploid": 5141,
+      "diploid": 3524,
+      "not_defined": 698,
+      "prediction_sha256": "b72d2acc9671aff720f6461ff062100b4deeb674dd32696d5b7479958c2be0b8",
+      "cna_numeric_sha256": "483815d027a1e8cdeff72431c0f9dd49fce6bee7845fe688991f959789cc924b",
+      "linkage_sha256": "1370cc51333a05e61af48cbea2e6bb999e774037e8b614ce87af3b3ccb897296"
+    },
+    "paired_calls": {
+      "same_cells": 9363,
+      "identical": 8126,
+      "agreement": 0.8679,
+      "ari": 0.57492055114576,
+      "all_not_defined_agree": 698
+    },
+    "tree": {
+      "leaves": 8665,
+      "shared_rooted_clades": 288,
+      "replaced_clades": 8376,
+      "max_shared_clade_height_delta": 46.592737796945784,
+      "median_shared_clade_height_delta": 0.27674722714388866
+    },
+    "interpretation": "material inference change, including the mouse genomic-order correction; WGS concordance supports corrected order on one sample, not universal biological accuracy",
+    "evidence_nas": "/mnt/nas/cancer_research/mm10_genomic_order_validation/proposal_vs_assembly_20261010"
+  },
+  "benchmark_evidence": {
+    "drivers": [
+      "benchmarks/benchmark.py",
+      "benchmarks/serial.py",
+      "benchmarks/writer_edges.py",
+      "benchmarks/parallel.py",
+      "benchmarks/gpu_memory.py",
+      "benchmarks/cpu_report.py",
+      "benchmarks/serial_report.py",
+      "benchmarks/datasets.py",
+      "benchmarks/precision.py",
+      "benchmarks/sweep.sh"
+    ],
+    "reports": [
+      "docs/benchmark-scaling.md",
+      "docs/benchmark-cpu.md",
+      "docs/benchmark-serial.md",
+      "docs/benchmark-six-pr-followup.md",
+      "docs/accuracy-results.md"
+    ],
+    "incomplete_measurements": [
+      "fresh six-PR 120k run was still running in the latest committed report snapshot (43.6 minutes elapsed); 170,057 six-PR run queued",
+      "full current assembly 120k/170k not benchmarked",
+      "per-PR isolated effects incomplete",
+      "GPU device revalidation unavailable"
+    ],
+    "regressions": [
+      "gpu-compat kidney label near-total inversion in pinned historical benchmark",
+      "full GPU policy changes CNA/tree and is not established biologically superior",
+      "marker/arm aggregate gains include individual regressions; e.g. Wang2019_Brain/SF9259S -0.267 and Li2019_Skin/p26 -0.204 balanced-accuracy delta",
+      "T989 mouse order changes 1,237 calls between aneuploid and diploid classes; single-sample WGS is not a guarantee"
+    ],
+    "raw_evidence": "large raw benchmark/accuracy archives remain on /mnt/nas/cancer_research; compact scripts, reports, and selected figures are in repository"
+  },
+  "validation": {
+    "passed": [
+      "python py_compile for current GPU/CPU/anchor/allele modules",
+      "manual CPU Ward smoke",
+      "exact-Gamma KS identical/symmetric and deterministic breakpoint checks",
+      "CLI backend/KS/anchor/final-call option parse; allele CLI entry-point help",
+      "signed-zero repeated-row output byte matched full Arrow formatting",
+      "fresh paired T989 CPU-default comparison and tree/call diagnostics",
+      "mocked GPU dispatch through Ward, selected GMM, and baseline adjustment"
+    ],
+    "not_run": [
+      "pytest: pytest is not installed in configured environment; added regression modules were run through equivalent direct assertions",
+      "GPU runtime: Torch and CuPy are not installed; no CUDA path execution or GPU integration comparison",
+      "fresh assembled-main full scaling sweep and per-PR causal benchmarks"
+    ],
+    "gpu_scope": "GPU Ward, selected GMM fitting, and baseline adjustment are dispatched; smoothing, segmentation, bin conversion, and other pipeline stages remain CPU in this assembly"
+  },
+  "storage_and_push_policy": {
+    "raw_archives_on_nas": true,
+    "push_destination": "fork only",
+    "push_order": [
+      "provenance tags for six exact PR heads",
+      "proposed/bit-identical and with-proposed-changes",
+      "experimental semantic branches",
+      "fork main last"
+    ],
+    "forbidden": [
+      "upstream push",
+      "new pull request",
+      "rewriting existing PR heads"
+    ],
+    "push_status": "completed and verified on fork; no upstream refs changed"
+  }
+}
