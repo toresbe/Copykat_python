@@ -29,6 +29,11 @@ from threadpoolctl import threadpool_limits
 from copykat_py._logging import with_default_progress_output
 from copykat_py._types import FloatArray, IntArray, LinkageMatrix
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
+from copykat_py.genomic_coordinates import chromosome_label
+from copykat_py.metadata_colors import ContinuousAnnotation, continuous_annotation, is_continuous
+from copykat_py.metadata_labels import annotation_title, is_prediction_column, legend_label, warning_caption
+from copykat_py.metadata_layout import annotation_layout
+from copykat_py.metadata_legend import draw_metadata_legends
 
 logger = logging.getLogger(__name__)
 
@@ -288,12 +293,12 @@ def _safe_dendrogram_with_recursion_management(Z: LinkageMatrix, ax: Axes, n_cel
         sys.setrecursionlimit(old_limit)
 
 
-def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any]) -> None:
-    """Place chromosome name labels just above the chromosome-bar axes.
+def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any], below: bool = False, genome: str = "hg20") -> None:
+    """Place chromosome name labels beside the chromosome-bar axes.
 
     Uses a mixed-coordinate transform (x in data coordinates, y in axes
-    fraction) so labels sit above the coloured band without overlapping it.
-    Chromosomes 23 and 24 are labelled "X" and "Y" respectively.
+    fraction) so labels sit outside the coloured band without overlapping it.
+    Numeric sex chromosome codes are decoded for the supplied genome.
     """
     chrom_arr = np.asarray(chrom_info)
     n_bins = len(chrom_arr)
@@ -304,25 +309,18 @@ def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any]) -> None:
     ends = np.concatenate([starts[1:], [n_bins]])
     chr_ids = chrom_arr[starts]
 
-    def _chr_label(c: object) -> str:
-        try:
-            v = int(float(str(c)))
-            return {23: "X", 24: "Y"}.get(v, str(v))
-        except (ValueError, TypeError):
-            return str(c)
-
-    # x in data coords, y in axes fraction — place labels just above the bar
+    # x in data coordinates, y in axes fraction
     trans = ax.get_xaxis_transform()
     ax.set_xlim(-0.5, n_bins - 0.5)
     for cid, s, e in zip(chr_ids, starts, ends, strict=True):
         mid = (s + e - 1) / 2.0
         ax.text(
             mid,
-            1.08,
-            _chr_label(cid),
+            -0.2 if below else 1.08,
+            chromosome_label(cid, genome),
             transform=trans,
             ha="center",
-            va="bottom",
+            va="top" if below else "bottom",
             fontsize=8,
             color="black",
             clip_on=False,
@@ -340,6 +338,7 @@ def plot_heatmap(
     WNS1: str = "",
     WNS: str = "",
     output_path: str | None = None,
+    genome: str = "hg20",
 ) -> None:
     """Plot CNA heatmap with hierarchical clustering dendrogram.
 
@@ -447,25 +446,31 @@ def plot_heatmap(
     has_pred = predictions is not None
 
     # Columns: dendrogram | heatmap | pred sidebar | colorbar | legend
-    # Rows:    chr bar (thin) | main
+    # Rows:    annotation headings | main | chromosome bar
     n_cols = 5 if has_pred else 3
     if has_pred:
-        width_ratios = [8, 50, 1.4, 1.2, 5.5]
+        width_ratios = [8, 50, 1.0, 0.8, 8]
         col_dendro, col_heat, col_pred, col_cbar, col_legend = 0, 1, 2, 3, 4
     else:
         width_ratios = [8, 50, 1.2]
         col_dendro, col_heat, col_cbar = 0, 1, 2
 
-    gs = GridSpec(2, n_cols, height_ratios=[1, 50], width_ratios=width_ratios, hspace=0.02, wspace=0.02)
+    gs = GridSpec(3, n_cols, height_ratios=[1, 50, 1], width_ratios=width_ratios, hspace=0.02, wspace=0.02)
     fig = plt.figure(figsize=(22, h))
+    fig.subplots_adjust(top=0.90)
+    fig.suptitle(f"{sample_name}  ·  {n_cells:,} cells", fontsize=15, fontweight="bold", y=0.99)
+    caption = warning_caption(WNS1, WNS)
+    if caption:
+        fig.text(0.5, 0.965, caption, ha="center", va="top", fontsize=11, color="#555555")
 
-    # --- Chromosome bar (top, above heatmap only) -------------------------
-    ax_chr = fig.add_subplot(gs[0, col_heat])
+    # --- Chromosome bar (bottom, below heatmap only) -----------------------
+    ax_chr = fig.add_subplot(gs[2, col_heat])
     chr_colors = (chrom_info.astype(int) % 2).astype(float)
     ax_chr.imshow(chr_colors.reshape(1, -1), aspect="auto", cmap="binary", interpolation="nearest")
     ax_chr.set_xticks([])
     ax_chr.set_yticks([])
-    _add_chr_labels(ax_chr, chrom_info)
+    _add_chr_labels(ax_chr, chrom_info, below=True, genome=genome)
+    ax_chr.set_xlabel("Genomic position", fontsize=13, labelpad=22)
 
     # --- Main heatmap -----------------------------------------------------
     ax_heat = fig.add_subplot(gs[1, col_heat])
@@ -483,15 +488,13 @@ def plot_heatmap(
     im = ax_heat.imshow(
         mat_ordered.T, aspect="auto", cmap=cmap, norm=norm, interpolation="nearest", interpolation_stage="data"
     )
-    ax_heat.set_xlabel("Genomic position")
+    ax_heat.set_xticks([])
     ax_heat.set_yticks([])
-    title_parts = [p for p in (WNS1, WNS) if p]
-    ax_heat.set_title("; ".join(title_parts) if title_parts else "", fontsize=16)
 
     # Chromosome boundaries
     chrom_changes = np.where(np.diff(chrom_info.astype(int)))[0]
     for pos in chrom_changes:
-        ax_heat.axvline(x=pos, color="gray", linewidth=0.3, alpha=0.5)
+        ax_heat.axvline(x=pos + 0.5, color="gray", linewidth=0.3, alpha=0.5)
 
     # --- Dendrogram (left) ------------------------------------------------
     ax_dendro = fig.add_subplot(gs[1, col_dendro])
@@ -517,64 +520,51 @@ def plot_heatmap(
     for spine in ax_dendro.spines.values():
         spine.set_visible(False)
 
-    # --- Prediction sidebar (outside heatmap area, on the right) ----------
+    # --- Prediction sidebar (right of the heatmap) ------------------------
     if predictions is not None:
         ax_pred = fig.add_subplot(gs[1, col_pred], sharey=ax_heat)
-        pred_colors = np.zeros(n_cells)
         pred_list = list(predictions.values())
         pred_ordered = [pred_list[i] if i < len(pred_list) else "not.defined" for i in cell_order]
-        for i, p in enumerate(pred_ordered):
-            if "aneuploid" in str(p):
-                pred_colors[i] = 1.0
-            elif "diploid" in str(p):
-                pred_colors[i] = 0.0
-            else:
-                pred_colors[i] = 0.5
-
-        sidebar_cmap = mcolors.ListedColormap(["#1B9E77", "#7570B3", "#D95F02"])
-        sidebar_norm = mcolors.BoundaryNorm([0, 0.3, 0.7, 1.0], 3)
+        pred_palette = _assign_cat_colors(pred_ordered)
+        pred_colors = np.array([mcolors.to_rgb(pred_palette[str(p)]) for p in pred_ordered]).reshape(n_cells, 1, 3)
         ax_pred.imshow(
-            pred_colors.reshape(-1, 1), aspect="auto", cmap=sidebar_cmap, norm=sidebar_norm, interpolation="nearest"
+            pred_colors, aspect="auto", interpolation="nearest"
         )
         ax_pred.set_xticks([])
         ax_pred.set_yticks([])
-        ax_pred.set_title("Pred", fontsize=11, pad=4)
+        ax_pred_top = fig.add_subplot(gs[0, col_pred])
+        ax_pred_top.axis("off")
+        ax_pred_top.text(0.5, 0.02, "CopyKAT Python", ha="left", va="bottom", fontsize=10,
+                         rotation=45, rotation_mode="anchor", transform=ax_pred_top.transAxes)
         for spine in ax_pred.spines.values():
             spine.set_linewidth(0.6)
 
     # Hide empty top-left cells
     for c in range(n_cols):
-        if c == col_heat:
+        if c == col_heat or (has_pred and c == col_pred):
             continue
         ax_empty = fig.add_subplot(gs[0, c])
         ax_empty.axis("off")
 
     # --- Legend for predictions -------------------------------------------
     if has_pred:
-        from matplotlib.patches import Patch
-
-        legend_elements = [
-            Patch(facecolor="#D95F02", label="pred aneuploid"),
-            Patch(facecolor="#1B9E77", label="pred diploid"),
-            Patch(facecolor="#7570B3", label="pred not.defined"),
-        ]
         ax_legend = fig.add_subplot(gs[1, col_legend])
         ax_legend.axis("off")
-        ax_legend.legend(
-            handles=legend_elements,
-            loc="upper left",
-            bbox_to_anchor=(0.0, 1.0),
-            fontsize=12,
-            frameon=True,
-            fancybox=False,
-            edgecolor="black",
-            borderaxespad=0.0,
-        )
+        entries = [(pred_palette[cat], legend_label(cat)) for cat in sorted(pred_palette, key=_natural_sort_key)]
+        draw_metadata_legends(ax_legend, [("CopyKAT Python", entries)], start=0.96)
 
     # --- Colorbar (vertical, right side) ----------------------------------
     ax_cbar = fig.add_subplot(gs[1, col_cbar])
     cbar = fig.colorbar(im, cax=ax_cbar, orientation="vertical")
-    cbar.set_label("Relative CNA")
+    ax_cbar_top = fig.add_subplot(gs[0, col_cbar])
+    ax_cbar_top.axis("off")
+    ax_cbar_top.text(0.5, 0.02, "Relative CNA", ha="left", va="bottom", fontsize=10,
+                    rotation=45, rotation_mode="anchor", transform=ax_cbar_top.transAxes)
+    cbar.ax.tick_params(labelsize=10)
+    for ax in [ax_heat, ax_chr, ax_cbar]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.5)
+            spine.set_edgecolor("#999999")
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -702,11 +692,14 @@ def plot_heatmap_annotated(
     distance: str = "euclidean",
     n_cores: int = 1,
     output_path: str | None = None,
+    continuous_meta: Sequence[str] | None = None,
+    genome: str = "hg20",
 ) -> None:
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
     Reads a CSV where the first column is the cell name and every remaining
-    column is drawn as a narrow coloured sidebar on the left of the heatmap.
+    column is drawn as a narrow coloured sidebar. CopyKAT predictions precede
+    continuous numeric measurements on the right; other categories stay left.
     Rows are split into labelled groups according to *row_split_col*; within
     each group cells are ordered by hierarchical or K-means clustering so the
     intra-group CNA structure is preserved.
@@ -725,7 +718,8 @@ def plot_heatmap_annotated(
         Cells present in *mat* but absent from the CSV are labelled "unknown".
     row_split_col : str or None
         Column name used to split rows into labelled groups.  When *None* the
-        second column of the CSV is used.
+        second column of the CSV is used. An empty string disables row splitting
+        and clusters all cells together.
     sample_name : str
         Label shown in the figure title and used for the default filename.
     distance : str
@@ -736,6 +730,10 @@ def plot_heatmap_annotated(
     output_path : str or None
         PNG save path.  Defaults to
         ``"{sample_name}_copykat_annotated_heatmap.png"``.
+    continuous_meta : sequence of str or None
+        Explicit continuous columns, useful for integer measurements with few
+        distinct values. By default numeric measurements are detected; small
+        integer-coded categories and the row-split column remain categorical.
     """
     if output_path is None:
         output_path = f"{sample_name}_copykat_annotated_heatmap.png"
@@ -750,17 +748,23 @@ def plot_heatmap_annotated(
 
     if row_split_col is None:
         row_split_col = ann_cols[0]
-    if row_split_col not in ann_cols:
+    if row_split_col and row_split_col not in ann_cols:
         raise ValueError(f"row_split_col '{row_split_col}' not found; available: {ann_cols}")
+    forced_continuous = set(continuous_meta or [])
+    if forced_continuous - set(ann_cols):
+        raise ValueError(f"Continuous metadata columns not found: {sorted(forced_continuous - set(ann_cols))}")
+    if row_split_col in forced_continuous:
+        raise ValueError("The row-split column must remain categorical")
 
     # Ensure row_split_col is always the leftmost annotation sidebar
-    ann_cols = [row_split_col] + [c for c in ann_cols if c != row_split_col]
+    if row_split_col:
+        ann_cols = [row_split_col] + [c for c in ann_cols if c != row_split_col]
 
     cell_names_str = [str(c) for c in cell_names]
     meta_aligned = meta_df.reindex(cell_names_str).fillna("unknown")
 
     # ── 2. Per-group ordering: sort groups, then cluster cells within ─────
-    split_vals = meta_aligned[row_split_col].astype(str).to_numpy()
+    split_vals = meta_aligned[row_split_col].astype(str).to_numpy() if row_split_col else np.full(n_cells, "")
     group_names = sorted(np.unique(split_vals), key=_natural_sort_key)
 
     ordered_indices = []
@@ -777,36 +781,42 @@ def plot_heatmap_annotated(
     mat_ordered = mat[:, order]
     meta_ordered = meta_aligned.iloc[order].reset_index(drop=True)
 
-    # ── 3. Build per-column categorical RGB image arrays ──────────────────
+    # ── 3. Build categorical or continuous RGB image arrays ───────────────
     ann_cmaps = {}  # col → {category: hex}
     ann_imgs = {}  # col → float32 array (n_cells, 1, 3)
+    continuous: dict[str, ContinuousAnnotation] = {}
 
     for col in ann_cols:
+        if col in forced_continuous or (col != row_split_col and is_continuous(meta_df[col])):
+            annotation = continuous_annotation(meta_ordered[col])
+            continuous[col] = annotation
+            ann_imgs[col] = annotation.colors
+            continue
         vals = meta_ordered[col].astype(str)
         cmap_dict = _assign_cat_colors(vals)
         ann_cmaps[col] = cmap_dict
         ann_imgs[col] = np.array([mcolors.to_rgb(cmap_dict[v]) for v in vals], dtype=np.float32).reshape(n_cells, 1, 3)
 
     # ── 4. Figure layout ──────────────────────────────────────────────────
-    k = len(ann_cols)
+    layout = annotation_layout(ann_cols, continuous)
     col_grp = 0  # group-name labels
-    col_ann0 = 1  # first annotation sidebar
-    col_heat = 1 + k  # main heatmap
-    col_cbar = 2 + k  # colour bar
-    col_leg = 3 + k  # categorical legend
-    n_cols_total = 4 + k
+    col_heat = layout.heatmap
+    col_cbar = layout.colorbar
+    col_leg = layout.legend
+    n_cols_total = len(layout.width_ratios)
 
-    width_ratios = [1.5] + [1.0] * k + [35.0, 0.8, 8.0]
+    width_ratios = layout.width_ratios
     gs = GridSpec(
-        2,
+        3,
         n_cols_total,
-        height_ratios=[1, 50],
+        height_ratios=[1, 50, 1],
         width_ratios=width_ratios,
         hspace=0.02,
         wspace=0.02,
     )
     fig_h = max(15.0, min(28.0, 10.0 + n_cells / 20000.0))
     fig = plt.figure(figsize=(22, fig_h))
+    fig.subplots_adjust(top=0.90)
 
     # ── 5. Main heatmap ───────────────────────────────────────────────────
     ax_heat = fig.add_subplot(gs[1, col_heat])
@@ -821,15 +831,14 @@ def plot_heatmap_annotated(
     )
     ax_heat.set_xticks([])
     ax_heat.set_yticks([])
-    ax_heat.set_xlabel("Genomic position", fontsize=13)
 
     for pos in np.where(np.diff(chrom_info.astype(int)))[0]:
-        ax_heat.axvline(x=pos, color="gray", linewidth=0.3, alpha=0.5)
+        ax_heat.axvline(x=pos + 0.5, color="gray", linewidth=0.3, alpha=0.5)
     for bd in group_boundaries[1:-1]:
         ax_heat.axhline(y=bd - 0.5, color="white", linewidth=1.5)
 
-    # ── 6. Chromosome bar (top row) ───────────────────────────────────────
-    ax_chr = fig.add_subplot(gs[0, col_heat])
+    # ── 6. Chromosome bar (bottom row) ────────────────────────────────────
+    ax_chr = fig.add_subplot(gs[2, col_heat])
     ax_chr.imshow(
         (chrom_info.astype(int) % 2).reshape(1, -1).astype(float),
         aspect="auto",
@@ -838,11 +847,13 @@ def plot_heatmap_annotated(
     )
     ax_chr.set_xticks([])
     ax_chr.set_yticks([])
-    _add_chr_labels(ax_chr, chrom_info)
+    _add_chr_labels(ax_chr, chrom_info, below=True, genome=genome)
+    ax_chr.set_xlabel("Genomic position", fontsize=13, labelpad=22)
 
     # ── 7. Annotation sidebars ────────────────────────────────────────────
-    for i, col in enumerate(ann_cols):
-        ax_a = fig.add_subplot(gs[1, col_ann0 + i], sharey=ax_heat)
+    for col in ann_cols:
+        sidebar_col = layout.annotation_columns[col]
+        ax_a = fig.add_subplot(gs[1, sidebar_col], sharey=ax_heat)
         ax_a.imshow(ann_imgs[col], aspect="auto", interpolation="nearest")
         ax_a.set_xticks([])
         ax_a.set_yticks([])
@@ -850,16 +861,17 @@ def plot_heatmap_annotated(
             ax_a.axhline(y=bd - 0.5, color="white", linewidth=1.5)
 
         # column name in the top-row cell above each sidebar
-        ax_top = fig.add_subplot(gs[0, col_ann0 + i])
+        ax_top = fig.add_subplot(gs[0, sidebar_col])
         ax_top.axis("off")
         ax_top.text(
             0.5,
             0.02,
-            col,
-            ha="center",
+            annotation_title(col),
+            ha="left",
             va="bottom",
             fontsize=10,
-            rotation=90,
+            rotation=45,
+            rotation_mode="anchor",
             transform=ax_top.transAxes,
         )
 
@@ -868,6 +880,8 @@ def plot_heatmap_annotated(
     ax_grp.set_xlim(0, 1)
     ax_grp.axis("off")
     for i, grp in enumerate(group_names):
+        if not row_split_col:
+            continue
         y_mid = (group_boundaries[i] + group_boundaries[i + 1]) / 2.0
         ax_grp.text(
             0.98,
@@ -881,46 +895,50 @@ def plot_heatmap_annotated(
     # ── 9. Colour bar ─────────────────────────────────────────────────────
     ax_cbar = fig.add_subplot(gs[1, col_cbar])
     cbar = fig.colorbar(im, cax=ax_cbar, orientation="vertical")
-    cbar.set_label("Relative CNA", fontsize=11)
+    ax_cbar_top = fig.add_subplot(gs[0, col_cbar])
+    ax_cbar_top.axis("off")
+    ax_cbar_top.text(0.5, 0.02, "Relative CNA", ha="left", va="bottom", fontsize=10,
+                    rotation=45, rotation_mode="anchor", transform=ax_cbar_top.transAxes)
     cbar.ax.tick_params(labelsize=10)
 
     # ── 10. Categorical legend ────────────────────────────────────────────
-    from matplotlib.patches import Patch
-
     ax_leg = fig.add_subplot(gs[1, col_leg])
     ax_leg.axis("off")
-    patches = []
+    for i, (col, annotation) in enumerate(continuous.items()):
+        scale_ax = ax_leg.inset_axes([0.2, 0.92 - i * 0.11, 0.8, 0.02])
+        scale = matplotlib.cm.ScalarMappable(norm=annotation.norm, cmap="viridis")
+        scale_bar = fig.colorbar(scale, cax=scale_ax, orientation="horizontal", ticks=annotation.ticks)
+        scale_ax.set_title(annotation_title(col), fontsize=11, fontweight="bold", loc="left", pad=8)
+        scale_bar.ax.tick_params(labelsize=9)
+        scale_bar.outline.set_visible(False)
+        if col == "n_umi":
+            from matplotlib.ticker import StrMethodFormatter
+
+            scale_bar.ax.xaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+    legend_groups = []
     for col in ann_cols:
-        patches.append(Patch(facecolor="none", edgecolor="none", label=f"── {col} ──"))
-        for cat in sorted(ann_cmaps[col], key=_natural_sort_key):
-            patches.append(
-                Patch(
-                    facecolor=ann_cmaps[col][cat],
-                    edgecolor="gray",
-                    linewidth=0.3,
-                    label=str(cat),
-                )
-            )
-    ax_leg.legend(
-        handles=patches,
-        loc="upper left",
-        bbox_to_anchor=(0.25, 1.0),
-        fontsize=10,
-        frameon=True,
-        fancybox=False,
-        edgecolor="gray",
-        handlelength=1.0,
-        handleheight=0.8,
-        borderaxespad=0,
-        labelspacing=0.2,
-    )
+        if col in continuous:
+            if continuous[col].has_missing:
+                legend_groups.append((annotation_title(col), [("#cccccc", "Missing / nonfinite")]))
+            continue
+        prediction_column = is_prediction_column(col, ann_cmaps[col])
+        entries = [
+            (ann_cmaps[col][cat], legend_label(cat, prediction=prediction_column))
+            for cat in sorted(ann_cmaps[col], key=_natural_sort_key)
+        ]
+        legend_groups.append((annotation_title(col), entries))
+    draw_metadata_legends(ax_leg, legend_groups, start=0.96 - 0.11 * len(continuous))
 
     # ── 11. Empty top-row placeholders ───────────────────────────────────
-    for c in [col_grp, col_cbar, col_leg]:
+    for c in [col_grp, col_leg]:
         ax_e = fig.add_subplot(gs[0, c])
         ax_e.axis("off")
 
-    fig.suptitle(f"{sample_name}  |  {n_cells} cells", fontsize=15, y=1.005)
+    for ax in [ax_heat, ax_chr, ax_cbar]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.5)
+            spine.set_edgecolor("#999999")
+    fig.suptitle(f"{sample_name}  ·  {n_cells:,} cells", fontsize=15, fontweight="bold", y=0.99)
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

@@ -152,6 +152,55 @@ All entry points produce the same outputs as copykat-R:
 
 When metadata is supplied, an additional annotated heatmap PNG is produced. AnnData workflows also write `*_selected_obs_meta.csv`.
 
+### Reports from completed runs
+
+Each successful analysis also saves `*_copykat_runtime.json`. New runs record
+parameters (including requested and effective `UP_DR`), software versions,
+reference-cell counts, filtering counts, analysis notes, and step timings in this
+file. Existing prediction and CNA outputs keep their formats.
+
+Generate a report afterward, without repeating inference or loading the CNA matrix:
+
+```bash
+copykat-py-report \
+    --run-dir results/sample1 \
+    --formats txt,markdown,html,json
+```
+
+`--formats` accepts one or more comma-separated formats; the default is `html`.
+Reports are written as `<sample>_copykat_report.txt`, `.md`, `.html`, or `.json` in
+the run directory. Use `--output-dir` to write them elsewhere and `--sample-name`
+to select a run when the directory contains multiple runtime files. Repeating the
+command replaces only the selected report files.
+
+All formats summarize the run, filtering, reference cells, prediction counts,
+recorded warnings/notes, timings, and available output files. HTML embeds existing
+standard and annotated heatmaps, so those figures remain visible when the HTML
+file is shared. Markdown links to the heatmap files. Analytical output links still
+require the original files; share those separately when needed. No additional
+plots or reports are generated during inference.
+
+PNG previews exceeding 12,000 pixels in either dimension or 40 million total
+pixels are linked with a warning instead of embedded. This prevents malformed
+plot layouts (such as excessively long categorical legends) from overwhelming
+the report. The source plot is preserved; this check does not validate CNA calls.
+
+Older runtime files are supported, with missing metadata explicitly marked as
+unavailable. Reports also work without heatmaps or prediction tables (for example,
+cell-line mode). Warnings summarize what the runtime metadata recorded, rather
+than every third-party message in `copykat_run.log`. Reference details are counts,
+not a list of cell barcodes. The `genes_after_annotation` count is after the
+pipeline's gene exclusions, not a gene-identifier mapping success rate.
+
+The same functionality is available in Python:
+
+```python
+from copykat_py.reporting import load_report, write_reports
+
+report = load_report("results/sample1")
+write_reports(report, ["markdown", "html"], "results/sample1")
+```
+
 ### Progress messages
 
 Progress messages are sent to the `copykat_py` logger. If your script or notebook has not configured logging, they are printed to stdout. Once logging is configured, they follow that configuration. For example, `logging.getLogger("copykat_py").setLevel(logging.WARNING)` shows only warnings, and `logging.basicConfig(level=logging.INFO)` routes progress through your own handlers.
@@ -192,6 +241,37 @@ aaaandia-1,5,lumhr
 ```
 
 Cells present in the CNA results but absent from the CSV are labelled `"unknown"` and shown in grey. All remaining metadata columns are drawn as coloured annotation sidebars.
+
+CopyKAT prediction annotations appear immediately to the right of the CNA
+heatmap, followed by numeric measurements such as UMI counts, using
+continuous viridis colors and a compact color scale. The continuous red–blue CNA
+scale also remains on the right. Other categorical annotations stay on the left.
+Small integer-coded categories (up to 20 distinct values)
+and the row-split column remain categorical. Missing/nonfinite numeric values
+are grey. To explicitly display an integer measurement with few distinct values
+continuously, pass `--continuous-meta n_umi` to `copykat-py-plot`, or
+`continuous_meta=["n_umi"]` to `plot_heatmap_annotated`. Row splitting still
+requires a categorical column.
+
+To show continuous measurements without dividing cells into categorical groups,
+omit the group column from the metadata CSV and use `--no-row-split` (Python:
+`row_split_col=""`). All cells are then clustered together.
+
+CopyKAT prediction legends use readable labels: `diploid` → "Diploid",
+`aneuploid` → "Aneuploid", and the `c1:`/`c2:` low-confidence states →
+"Diploid (low confidence)" / "Aneuploid (low confidence)". `not.defined`
+means "Not classified"; `unknown` means "Missing annotation". These are
+display labels only; saved prediction and metadata values remain unchanged.
+The standard metadata headings `copykat_pred_py` / `copykat_pred_R` display as
+"CopyKAT Python" / "CopyKAT R", with borderless, titled legend groups.
+`n_umi` displays as "UMI count per cell" (a count, not a percentage or read count).
+
+Mouse (`mm10`) genes are ordered by chromosome and gene start position before
+smoothing and segmentation. Mouse annotation `abspos` values are chromosome
+offsets and cannot order genes within chromosomes. Runs generated before this
+correction should be rerun from raw counts; sorting an existing CNA heatmap
+does not correct the inference. The plot command detects mouse gene tables
+automatically and displays chromosome codes 20/21 as X/Y.
 
 ### Python API — `plot_heatmap_annotated`
 
@@ -301,52 +381,3 @@ Currently, CopyKat-Python is under internal testing.
 - Numerical implementation details
 - Smoothing and segmentation algorithms
 - Clustering behavior (parDist + hcluster vs. PCA + fastcluster)
-### Reports from completed runs
-
-Each successful analysis also saves `*_copykat_runtime.json`. New runs record
-parameters (including requested and effective `UP_DR`), software versions,
-reference-cell counts, filtering counts, analysis notes, and step timings in this
-file. Existing prediction and CNA outputs keep their formats.
-
-Generate a report afterward, without repeating inference or loading the CNA matrix:
-
-```bash
-copykat-py-report \
-    --run-dir results/sample1 \
-    --formats txt,markdown,html,json
-```
-
-`--formats` accepts one or more comma-separated formats; the default is `html`.
-Reports are written as `<sample>_copykat_report.txt`, `.md`, `.html`, or `.json` in
-the run directory. Use `--output-dir` to write them elsewhere and `--sample-name`
-to select a run when the directory contains multiple runtime files. Repeating the
-command replaces only the selected report files.
-
-All formats summarize the run, filtering, reference cells, prediction counts,
-recorded warnings/notes, timings, and available output files. HTML embeds existing
-standard and annotated heatmaps, so those figures remain visible when the HTML
-file is shared. Markdown links to the heatmap files. Analytical output links still
-require the original files; share those separately when needed. No additional
-plots or reports are generated during inference.
-
-PNG previews exceeding 12,000 pixels in either dimension or 40 million total
-pixels are linked with a warning instead of embedded. This prevents malformed
-plot layouts (such as excessively long categorical legends) from overwhelming
-the report. The source plot is preserved; this check does not validate CNA calls.
-
-Older runtime files are supported, with missing metadata explicitly marked as
-unavailable. Reports also work without heatmaps or prediction tables (for example,
-cell-line mode). Warnings summarize what the runtime metadata recorded, rather
-than every third-party message in `copykat_run.log`. Reference details are counts,
-not a list of cell barcodes. The `genes_after_annotation` count is after the
-pipeline's gene exclusions, not a gene-identifier mapping success rate.
-
-The same functionality is available in Python:
-
-```python
-from copykat_py.reporting import load_report, write_reports
-
-report = load_report("results/sample1")
-write_reports(report, ["markdown", "html"], "results/sample1")
-```
-
