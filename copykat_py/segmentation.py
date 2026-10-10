@@ -20,7 +20,7 @@ from scipy.optimize import brentq
 from scipy.special import gammainc, gammaincinv, gammaln
 from scipy.stats import ks_2samp
 
-from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, ParallelInfo, SegmentationResult
+from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, KSMethod, ParallelInfo, SegmentationResult
 
 _LAST_PAR_INFO: ParallelInfo = {
     "step": "cna_mcmc",
@@ -145,7 +145,7 @@ def _gamma_ks_distance(a1: float, r1: float, a2: float, r2: float, tail: float =
             edges = [lo, turning_point, hi]
 
     distance = 0.0
-    for left, right in zip(edges[:-1], edges[1:]):
+    for left, right in zip(edges[:-1], edges[1:], strict=False):
         f_left, f_right = log_density_ratio(left), log_density_ratio(right)
         if f_left == 0:
             root = left
@@ -183,7 +183,7 @@ def cna_mcmc(
     cut_cor: float = 0.1,
     n_cores: int = 1,
     mc_samples: int | None = None,
-    ks_method: str = "mc",
+    ks_method: KSMethod = KSMethod.MONTE_CARLO,
 ) -> SegmentationResult:
     """MCMC segmentation of copy number data.
 
@@ -209,8 +209,7 @@ def cna_mcmc(
         'breaks': list - breakpoint positions
     """
     n_genes, n_cells = fttmat.shape
-    if ks_method not in {"mc", "exact"}:
-        raise ValueError("ks_method must be 'mc' or 'exact'")
+    ks_method = KSMethod(ks_method)
 
     # Adaptive MC sample size: fewer samples for small datasets (speed optimization)
     if mc_samples is None:
@@ -226,7 +225,7 @@ def cna_mcmc(
     # Step 2: Find breakpoints for each cluster consensus
     breakpoints: set[int] = set()
     for c in range(norm_mat_sm.shape[1]):
-        if ks_method == "exact":
+        if ks_method is KSMethod.EXACT:
             bre = _find_breakpoints_exact(norm_mat_sm[:, c], bins, cut_cor)
         else:
             bre = _find_breakpoints_for_cluster(

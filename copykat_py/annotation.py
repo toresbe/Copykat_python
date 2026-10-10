@@ -8,7 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from copykat_py._types import Genome
+from copykat_py._types import GeneIdType, Genome
 from copykat_py.data_loader import load_full_anno
 from copykat_py.genomic_coordinates import annotation_order
 
@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 def annotate_gene_rows(
-    genes: Sequence[Hashable] | pd.Index | npt.NDArray[Any], id_type: str = "S", genome: Genome = Genome.HG20
+    genes: Sequence[Hashable] | pd.Index | npt.NDArray[Any],
+    id_type: GeneIdType = GeneIdType.SYMBOL,
+    genome: Genome = Genome.HG20,
 ) -> tuple[pd.DataFrame, npt.NDArray[np.intp]]:
     """Annotate gene identifiers with genomic coordinates, without touching expression values.
 
@@ -38,6 +40,7 @@ def annotate_gene_rows(
         For each annotation row, the index of the matching expression-matrix row.
     """
     genome = Genome(genome)
+    id_type = GeneIdType.ENSEMBL if str(id_type).upper().startswith("E") else GeneIdType.SYMBOL
     logger.info("  start annotation ...")
     full_anno = load_full_anno(genome)
 
@@ -46,7 +49,7 @@ def annotate_gene_rows(
     else:
         symbol_col = "hgnc_symbol"
 
-    if id_type.upper().startswith("E"):
+    if id_type is GeneIdType.ENSEMBL:
         id_col = "ensembl_gene_id"
     else:
         id_col = symbol_col
@@ -77,7 +80,9 @@ def annotate_gene_rows(
     return anno, rows
 
 
-def annotate_genes(mat: pd.DataFrame, id_type: str = "S", genome: Genome = Genome.HG20) -> pd.DataFrame:
+def annotate_genes(
+    mat: pd.DataFrame, id_type: GeneIdType = GeneIdType.SYMBOL, genome: Genome = Genome.HG20
+) -> pd.DataFrame:
     """Annotate gene expression matrix with genomic coordinates.
 
     Parameters

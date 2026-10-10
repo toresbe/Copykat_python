@@ -27,7 +27,16 @@ from sklearn.decomposition import TruncatedSVD
 from threadpoolctl import threadpool_limits
 
 from copykat_py._logging import with_default_progress_output
-from copykat_py._types import DistanceMetric, FloatArray, Genome, IntArray, LinkageMatrix
+from copykat_py._types import (
+    BaselineWarning,
+    DataQualityStatus,
+    DistanceMetric,
+    FloatArray,
+    Genome,
+    IntArray,
+    LinkageMatrix,
+    PredictionLabel,
+)
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
 from copykat_py.genomic_coordinates import chromosome_label
 from copykat_py.metadata_colors import ContinuousAnnotation, continuous_annotation, is_continuous
@@ -74,7 +83,14 @@ def _simple_cell_order(mat: FloatArray, predictions: Mapping[str, str] | None = 
     if predictions is not None:
         pred_list = list(predictions.values())
         pred_rank = np.array(
-            [0 if "aneuploid" in str(p) else 1 if "diploid" in str(p) else 2 for p in pred_list],
+            [
+                0
+                if str(p) in {PredictionLabel.ANEUPLOID, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE}
+                else 1
+                if str(p) in {PredictionLabel.DIPLOID, PredictionLabel.DIPLOID_LOW_CONFIDENCE}
+                else 2
+                for p in pred_list
+            ],
             dtype=np.int16,
         )
         cna_magnitude = np.sum(np.abs(mat), axis=0)
@@ -344,8 +360,8 @@ def plot_heatmap(
     sample_name: str = "",
     distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     n_cores: int = 1,
-    WNS1: str = "",
-    WNS: str = "",
+    WNS1: DataQualityStatus = DataQualityStatus.OK,
+    WNS: BaselineWarning = BaselineWarning.NONE,
     output_path: str | None = None,
     genome: Genome = Genome.HG20,
 ) -> None:
@@ -535,18 +551,25 @@ def plot_heatmap(
     if predictions is not None:
         ax_pred = fig.add_subplot(gs[1, col_pred], sharey=ax_heat)
         pred_list = list(predictions.values())
-        pred_ordered = [pred_list[i] if i < len(pred_list) else "not.defined" for i in cell_order]
+        pred_ordered = [pred_list[i] if i < len(pred_list) else PredictionLabel.NOT_DEFINED for i in cell_order]
         pred_palette = _assign_cat_colors(pred_ordered)
         pred_colors = np.array([mcolors.to_rgb(pred_palette[str(p)]) for p in pred_ordered]).reshape(n_cells, 1, 3)
-        ax_pred.imshow(
-            pred_colors, aspect="auto", interpolation="nearest"
-        )
+        ax_pred.imshow(pred_colors, aspect="auto", interpolation="nearest")
         ax_pred.set_xticks([])
         ax_pred.set_yticks([])
         ax_pred_top = fig.add_subplot(gs[0, col_pred])
         ax_pred_top.axis("off")
-        ax_pred_top.text(0.5, 0.02, "CopyKAT Python", ha="left", va="bottom", fontsize=10,
-                         rotation=45, rotation_mode="anchor", transform=ax_pred_top.transAxes)
+        ax_pred_top.text(
+            0.5,
+            0.02,
+            "CopyKAT Python",
+            ha="left",
+            va="bottom",
+            fontsize=10,
+            rotation=45,
+            rotation_mode="anchor",
+            transform=ax_pred_top.transAxes,
+        )
         for spine in ax_pred.spines.values():
             spine.set_linewidth(0.6)
 
@@ -569,8 +592,17 @@ def plot_heatmap(
     cbar = fig.colorbar(im, cax=ax_cbar, orientation="vertical")
     ax_cbar_top = fig.add_subplot(gs[0, col_cbar])
     ax_cbar_top.axis("off")
-    ax_cbar_top.text(0.5, 0.02, "Relative CNA", ha="left", va="bottom", fontsize=10,
-                    rotation=45, rotation_mode="anchor", transform=ax_cbar_top.transAxes)
+    ax_cbar_top.text(
+        0.5,
+        0.02,
+        "Relative CNA",
+        ha="left",
+        va="bottom",
+        fontsize=10,
+        rotation=45,
+        rotation_mode="anchor",
+        transform=ax_cbar_top.transAxes,
+    )
     cbar.ax.tick_params(labelsize=10)
     for ax in [ax_heat, ax_chr, ax_cbar]:
         for spine in ax.spines.values():
@@ -595,12 +627,12 @@ def _natural_sort_key(s: object) -> list[int | str]:
 
 # Fixed colors for copykat prediction values (aneuploid=orange, diploid=blue)
 _COPYKAT_PRED_COLORS = {
-    "aneuploid": "#E8601C",  # orange
-    "c2:aneuploid:low.conf": "#F4A86A",  # light orange
-    "diploid": "#3A87C8",  # blue
-    "c1:diploid:low.conf": "#9EC8E8",  # light blue
-    "not.defined": "#B0B0B0",  # grey
-    "unknown": "#D4D4D4",  # light grey
+    PredictionLabel.ANEUPLOID: "#E8601C",  # orange
+    PredictionLabel.ANEUPLOID_LOW_CONFIDENCE: "#F4A86A",  # light orange
+    PredictionLabel.DIPLOID: "#3A87C8",  # blue
+    PredictionLabel.DIPLOID_LOW_CONFIDENCE: "#9EC8E8",  # light blue
+    PredictionLabel.NOT_DEFINED: "#B0B0B0",  # grey
+    PredictionLabel.UNKNOWN: "#D4D4D4",  # light grey
 }
 
 
@@ -615,7 +647,8 @@ def _assign_cat_colors(values: Iterable[object]) -> dict[str, str]:
     cats = sorted({str(v) for v in values}, key=_natural_sort_key)
 
     # Detect copykat prediction columns by value content
-    if any("aneuploid" in c or "diploid" in c for c in cats):
+    prediction_labels = set(PredictionLabel) - {PredictionLabel.UNKNOWN, PredictionLabel.NOT_DEFINED}
+    if set(cats) & prediction_labels:
         return {cat: _COPYKAT_PRED_COLORS.get(cat, "#B0B0B0") for cat in cats}
 
     n = len(cats)
@@ -626,8 +659,8 @@ def _assign_cat_colors(values: Iterable[object]) -> dict[str, str]:
     else:
         palette = [mcolors.to_hex(plt.cm.hsv(i / n)) for i in range(n)]
     cmap = {cat: palette[i % len(palette)] for i, cat in enumerate(cats)}
-    if "unknown" in cmap:
-        cmap["unknown"] = "#cccccc"
+    if PredictionLabel.UNKNOWN in cmap:
+        cmap[PredictionLabel.UNKNOWN] = "#cccccc"
     return cmap
 
 
@@ -778,7 +811,7 @@ def plot_heatmap_annotated(
         ann_cols = [row_split_col] + [c for c in ann_cols if c != row_split_col]
 
     cell_names_str = [str(c) for c in cell_names]
-    meta_aligned = meta_df.reindex(cell_names_str).fillna("unknown")
+    meta_aligned = meta_df.reindex(cell_names_str).fillna(PredictionLabel.UNKNOWN)
 
     # ── 2. Per-group ordering: sort groups, then cluster cells within ─────
     split_vals = meta_aligned[row_split_col].astype(str).to_numpy() if row_split_col else np.full(n_cells, "")
@@ -914,8 +947,17 @@ def plot_heatmap_annotated(
     cbar = fig.colorbar(im, cax=ax_cbar, orientation="vertical")
     ax_cbar_top = fig.add_subplot(gs[0, col_cbar])
     ax_cbar_top.axis("off")
-    ax_cbar_top.text(0.5, 0.02, "Relative CNA", ha="left", va="bottom", fontsize=10,
-                    rotation=45, rotation_mode="anchor", transform=ax_cbar_top.transAxes)
+    ax_cbar_top.text(
+        0.5,
+        0.02,
+        "Relative CNA",
+        ha="left",
+        va="bottom",
+        fontsize=10,
+        rotation=45,
+        rotation_mode="anchor",
+        transform=ax_cbar_top.transAxes,
+    )
     cbar.ax.tick_params(labelsize=10)
 
     # ── 10. Categorical legend ────────────────────────────────────────────

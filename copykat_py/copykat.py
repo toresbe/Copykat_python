@@ -31,16 +31,27 @@ from copykat_py import anchor as _anchor
 from copykat_py import backend
 from copykat_py._logging import with_default_progress_output
 from copykat_py._types import (
+    AnchorPath,
+    AnchorStrategy,
+    BaselineWarning,
     BoolArray,
+    CellLineMode,
     ClusteringResult,
     ClusterLabels,
     CopyKATResult,
+    DataQualityStatus,
     DistanceMetric,
+    ExecutionBackend,
+    FinalCallStrategy,
     FloatArray,
+    GeneIdType,
     GeneProfile,
     Genome,
+    KSMethod,
     ParallelInfo,
+    PredictionLabel,
     RawMatrix,
+    ReferenceMode,
     RuntimeInfo,
     SparseMatrix,
 )
@@ -117,7 +128,7 @@ def _meta_with_pred(meta_csv: str, pred_dict: dict[str, str] | None, sample_name
     """Read *meta_csv*, append copykat-py predictions as the last column.
 
     Returns the path to a new CSV written alongside the original outputs.
-    Cells absent from *pred_dict* receive ``"not.defined"``.
+    Cells absent from *pred_dict* receive ``PredictionLabel.NOT_DEFINED``.
     """
     import pandas as pd
 
@@ -125,9 +136,9 @@ def _meta_with_pred(meta_csv: str, pred_dict: dict[str, str] | None, sample_name
     cell_col = meta.columns[0]
     meta = meta.set_index(cell_col)
     if pred_dict is not None:
-        meta["copykat_pred_py"] = meta.index.map(pred_dict).fillna("not.defined")
+        meta["copykat_pred_py"] = meta.index.map(pred_dict).fillna(PredictionLabel.NOT_DEFINED)
     else:
-        meta["copykat_pred_py"] = "not.defined"
+        meta["copykat_pred_py"] = PredictionLabel.NOT_DEFINED
     out_path = f"{sample_name}meta_with_pred.csv"
     meta.reset_index().to_csv(out_path, index=False)
     return out_path
@@ -140,8 +151,8 @@ def _run_plot_heatmap(
     sample_name: str,
     distance: DistanceMetric,
     n_cores: int,
-    WNS1: str,
-    WNS: str,
+    WNS1: DataQualityStatus,
+    WNS: BaselineWarning,
     output_path: str,
 ) -> None:
     from copykat_py.plotting import plot_heatmap
@@ -214,7 +225,10 @@ def _preN_to_names(preN: str | bytes | Sequence[Any] | npt.NDArray[Any] | None, 
 
 
 def _assign_binary_labels(
-    cluster_labels: ClusterLabels, scores: Sequence[float] | FloatArray, high_label: str, low_label: str
+    cluster_labels: ClusterLabels,
+    scores: Sequence[float] | FloatArray,
+    high_label: PredictionLabel,
+    low_label: PredictionLabel,
 ) -> npt.NDArray[np.object_]:
     labels = np.empty(len(cluster_labels), dtype=object)
     labels[:] = ""
@@ -233,8 +247,8 @@ def _assign_binary_labels(
 @with_default_progress_output
 def copykat(
     rawmat: RawMatrix,
-    id_type: str = "S",
-    cell_line: str = "no",
+    id_type: GeneIdType = GeneIdType.SYMBOL,
+    cell_line: CellLineMode = CellLineMode.NO,
     ngene_chr: int = 5,
     min_gene_per_cell: int = 200,
     LOW_DR: float = 0.05,
@@ -251,10 +265,10 @@ def copykat(
     pca_components: int | None = None,
     meta_csv: str | None = None,
     row_split_col: str | None = None,
-    backend_name: str = "cpu",
-    ks_method: str = "mc",
-    anchor: str = "sigma",
-    final_call: str = "clusters",
+    backend_name: ExecutionBackend = ExecutionBackend.CPU,
+    ks_method: KSMethod = KSMethod.MONTE_CARLO,
+    anchor: AnchorStrategy = AnchorStrategy.SIGMA,
+    final_call: FinalCallStrategy = FinalCallStrategy.CLUSTERS,
 ) -> CopyKATResult:
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
 
@@ -263,10 +277,10 @@ def copykat(
     rawmat : pd.DataFrame, np.ndarray, scipy.sparse, or str
         UMI count matrix (genes in rows, cells in columns).
         If str, path to .mtx, .csv, or .tsv file.
-    id_type : str
-        Gene ID type: "S" for Symbol, "E" for Ensembl.
-    cell_line : str
-        "yes" for pure cell line data, "no" for tumor/normal mixture.
+    id_type : GeneIdType
+        Gene ID type: ``GeneIdType.SYMBOL`` or ``GeneIdType.ENSEMBL``.
+    cell_line : CellLineMode
+        ``CellLineMode.YES`` for pure cell line data, ``CellLineMode.NO`` for tumor/normal mixture.
     ngene_chr : int
         Minimum number of genes per chromosome for cell filtering.
     min_gene_per_cell : int
@@ -317,13 +331,15 @@ def copykat(
         'hclustering': linkage matrix or cluster labels
     """
     distance = DistanceMetric(distance)
+    backend_name = ExecutionBackend(backend_name)
+    id_type = GeneIdType.ENSEMBL if str(id_type).upper().startswith("E") else GeneIdType.SYMBOL
+    cell_line = CellLineMode(cell_line)
+    ks_method = KSMethod(ks_method)
+    anchor = AnchorStrategy(anchor)
+    final_call = FinalCallStrategy(final_call)
     backend.set_backend(backend_name)
-    if anchor not in {"sigma", "markers"}:
-        raise ValueError("anchor must be 'sigma' or 'markers'")
-    if final_call not in {"clusters", "arm_correlation"}:
-        raise ValueError("final_call must be 'clusters' or 'arm_correlation'")
     genome = Genome(genome)
-    if final_call == "arm_correlation" and genome is Genome.MM10:
+    if final_call is FinalCallStrategy.ARM_CORRELATION and genome is Genome.MM10:
         raise ValueError("arm_correlation currently uses hg38 centromere coordinates and is only supported for hg20")
     start_time = time.perf_counter()
     # Global seed kept for reproducibility with earlier versions; moving to a
@@ -375,7 +391,7 @@ def copykat(
     logger.info("step 1: read and filter data ...")
     step_start = time.perf_counter()
     marker_counts = None
-    if anchor == "markers":
+    if anchor is AnchorStrategy.MARKERS:
         marker_counts = (
             _anchor.count_markers(rawmat, _anchor.IMMUNE_MARKERS),
             _anchor.count_markers(rawmat, _anchor.ENDOTHELIAL_MARKERS),
@@ -416,9 +432,9 @@ def copykat(
         )
     logger.info(f"  {rawmat.shape[0]} genes past LOW_DR filtering")
 
-    WNS1 = "data quality is ok"
+    WNS1 = DataQualityStatus.OK
     if rawmat.shape[0] < 7000:
-        WNS1 = "low data quality"
+        WNS1 = DataQualityStatus.LOW
         UP_DR = LOW_DR
         logger.warning("  WARNING: low data quality; assigned LOW_DR to UP_DR...")
         runtime_info["warnings"].append("Low data quality; effective UP_DR was set to LOW_DR")
@@ -521,7 +537,7 @@ def copykat(
 
     cell_name_list = cell_cols
 
-    if cell_line == "yes":
+    if cell_line is CellLineMode.YES:
         logger.info("  running pure cell line mode")
         relt = baseline_synthetic(
             norm_mat_smooth,
@@ -532,7 +548,7 @@ def copykat(
         )
         norm_mat_relat = relt["expr_relat"]
         CL = relt["cl"]
-        WNS = "run with cell line mode"
+        WNS = BaselineWarning.CELL_LINE
         preN = None
     elif isinstance(norm_cell_names, list) and len(norm_cell_names) > 1:
         # Known normal cells provided
@@ -578,17 +594,17 @@ def copykat(
             if km == 2:
                 break
 
-        WNS = "run with known normal"
+        WNS = BaselineWarning.KNOWN_NORMAL
         preN = np.asarray(cell_name_list, dtype=object)[known_normal_mask].tolist()
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     else:
         # Auto-detect normal cells
         anchor_selector = None
-        if anchor == "markers" and marker_counts is not None:
+        if anchor is AnchorStrategy.MARKERS and marker_counts is not None:
             immune_counts = marker_counts[0].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
             endothelial_counts = marker_counts[1].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
 
-            def anchor_selector(labels: ClusterLabels, sigma_cluster: int) -> tuple[int, str]:
+            def anchor_selector(labels: ClusterLabels, sigma_cluster: int) -> tuple[int, AnchorPath]:
                 selected, path = _anchor.choose_anchor_cluster(labels, immune_counts, endothelial_counts, sigma_cluster)
                 return int(selected), path
 
@@ -607,14 +623,18 @@ def copykat(
         clustered = basa["cl"]
         assert clustered is not None  # baseline_norm_cl always clusters
         CL = clustered
-        runtime_info["anchor_path"] = basa.get("anchor_path", "sigma")
-        if anchor == "markers":
-            WNS = "" if runtime_info["anchor_path"] in {"immune", "endothelial"} else "unclassified.prediction"
+        runtime_info["anchor_path"] = basa.get("anchor_path", AnchorPath.SIGMA)
+        if anchor is AnchorStrategy.MARKERS:
+            WNS = (
+                BaselineWarning.NONE
+                if runtime_info["anchor_path"] in {AnchorPath.IMMUNE, AnchorPath.ENDOTHELIAL}
+                else BaselineWarning.UNCLASSIFIED
+            )
             logger.info(f"  normal reference from markers: path={runtime_info['anchor_path']}, cells={len(preN)}")
 
-        if WNS == "unclassified.prediction" and anchor != "markers":
+        if WNS is BaselineWarning.UNCLASSIFIED and anchor is not AnchorStrategy.MARKERS:
             cluster_preN = list(preN) if preN is not None else []
-            keep_cluster_anchor = WNS1 == "low data quality" and len(cluster_preN) >= max(
+            keep_cluster_anchor = WNS1 is DataQualityStatus.LOW and len(cluster_preN) >= max(
                 50, int(0.05 * len(cell_name_list))
             )
             if keep_cluster_anchor:
@@ -675,14 +695,18 @@ def copykat(
                     )
                 basel = basa["basel"]
                 preN = basa["preN"]
-                WNS = "unclassified.prediction"
+                WNS = BaselineWarning.UNCLASSIFIED
 
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     del norm_mat_smooth
     baseline_cluster_info = get_last_cluster_info()
     runtime_info["reference"] = {
         "mode": (
-            "synthetic" if cell_line == "yes" else "known_normal" if WNS == "run with known normal" else "automatic"
+            ReferenceMode.SYNTHETIC
+            if cell_line is CellLineMode.YES
+            else ReferenceMode.KNOWN_NORMAL
+            if WNS is BaselineWarning.KNOWN_NORMAL
+            else ReferenceMode.AUTOMATIC
         ),
         "supplied_count": len(set(norm_cell_names)) if isinstance(norm_cell_names, list) else 0,
         "matched_supplied_count": len(set(norm_cell_names).intersection(cell_name_list))
@@ -834,11 +858,11 @@ def copykat(
         step_start = time.perf_counter()
         step7_reduce = uber_mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
 
-        if cell_line == "yes":
+        if cell_line is CellLineMode.YES:
             mat_adj = uber_mat_adj
         else:
             arm_calls = None
-            if final_call == "arm_correlation" and preN is not None and len(preN) > 0:
+            if final_call is FinalCallStrategy.ARM_CORRELATION and preN is not None and len(preN) > 0:
                 preN_names = _preN_to_names(preN, cell_name_list)
                 anchor_mask = np.array([cell in preN_names for cell in cell_cols_seg], dtype=bool)
                 if anchor_mask.sum() >= 5:
@@ -848,7 +872,7 @@ def copykat(
                         bin_coords["chrompos"].to_numpy(),
                         anchor_mask,
                     )
-                    runtime_info["final_call_path"] = "arm_correlation"
+                    runtime_info["final_call_path"] = FinalCallStrategy.ARM_CORRELATION
                 else:
                     runtime_info["final_call_path"] = "clusters_insufficient_anchor"
             # First hierarchical clustering for initial prediction
@@ -871,20 +895,22 @@ def copykat(
                     cli_names = [cell_cols_seg[j] for j in range(len(cell_cols_seg)) if hc_umap[j] == cl_val]
                     pid = len(set(cli_names) & preN_names) / max(len(cli_names), 1)
                     cl_ID.append(pid)
-                com_pred = _assign_binary_labels(hc_umap, cl_ID, "diploid", "aneuploid")
+                com_pred = _assign_binary_labels(hc_umap, cl_ID, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID)
             else:
                 # If no preN, assign based on total CNA magnitude
                 cl_mag = []
                 for cl_val in sorted(set(hc_umap)):
                     mask = hc_umap == cl_val
                     cl_mag.append(np.mean(np.abs(uber_mat_adj[:, mask])))
-                com_pred = _assign_binary_labels(hc_umap, -np.asarray(cl_mag, dtype=float), "diploid", "aneuploid")
+                com_pred = _assign_binary_labels(
+                    hc_umap, -np.asarray(cl_mag, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
+                )
 
             if arm_calls is not None:
-                com_pred = np.where(arm_calls, "aneuploid", "diploid")
+                com_pred = np.where(arm_calls, PredictionLabel.ANEUPLOID, PredictionLabel.DIPLOID)
 
             # Baseline adjustment: subtract diploid mean, then denoise
-            diploid_mask = com_pred == "diploid"
+            diploid_mask = com_pred == PredictionLabel.DIPLOID
             if diploid_mask.sum() > 0:
                 mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
             else:
@@ -906,7 +932,7 @@ def copykat(
         logger.info("step 8: final prediction ...")
         step_start = time.perf_counter()
         step8_reduce = mat_adj.shape[1] > FULL_CLUSTER_MAX_CELLS
-        if cell_line != "yes":
+        if cell_line is not CellLineMode.YES:
             labels_final, Z_final = _hierarchical_cluster(
                 mat_adj.T,
                 2,
@@ -925,21 +951,29 @@ def copykat(
                     cli_names = [cell_cols_seg[j] for j in range(len(cell_cols_seg)) if hc_final[j] == cl_val]
                     pid = len(set(cli_names) & preN_names) / max(len(cli_names), 1)
                     cl_ID_final.append(pid)
-                com_preN = _assign_binary_labels(hc_final, cl_ID_final, "diploid", "aneuploid")
+                com_preN = _assign_binary_labels(
+                    hc_final, cl_ID_final, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
+                )
             else:
                 cl_mag = []
                 for cl_val in sorted(set(hc_final)):
                     mask = hc_final == cl_val
                     cl_mag.append(np.mean(np.abs(mat_adj[:, mask])))
-                com_preN = _assign_binary_labels(hc_final, -np.asarray(cl_mag, dtype=float), "diploid", "aneuploid")
+                com_preN = _assign_binary_labels(
+                    hc_final, -np.asarray(cl_mag, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
+                )
 
             if arm_calls is not None:
                 # The Ward tree still orders the heatmap; this option supplies the final call.
-                com_preN = np.where(arm_calls, "aneuploid", "diploid")
+                com_preN = np.where(arm_calls, PredictionLabel.ANEUPLOID, PredictionLabel.DIPLOID)
 
-            if WNS == "unclassified.prediction":
-                com_preN = np.where(com_preN == "diploid", "c1:diploid:low.conf", com_preN)
-                com_preN = np.where(com_preN == "aneuploid", "c2:aneuploid:low.conf", com_preN)
+            if WNS is BaselineWarning.UNCLASSIFIED:
+                com_preN = np.where(
+                    com_preN == PredictionLabel.DIPLOID, PredictionLabel.DIPLOID_LOW_CONFIDENCE, com_preN
+                )
+                com_preN = np.where(
+                    com_preN == PredictionLabel.ANEUPLOID, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE, com_preN
+                )
         else:
             labels, Z = _hierarchical_cluster(
                 mat_adj.T,
@@ -966,11 +1000,11 @@ def copykat(
         # =========================================================================
         pred_dict = None
         res = None
-        if cell_line != "yes":
+        if cell_line is not CellLineMode.YES:
             pred_dict = {cell_cols_seg[i]: com_preN[i] for i in range(len(cell_cols_seg))}
             for cell in original_cell_names:
                 if cell not in pred_dict:
-                    pred_dict[cell] = "not.defined"
+                    pred_dict[cell] = PredictionLabel.NOT_DEFINED
             res = pd.DataFrame(
                 {
                     "cell.names": list(pred_dict.keys()),
@@ -990,8 +1024,8 @@ def copykat(
 
         # Save clustering
         clustering_data: ClusteringResult = {
-            "labels": labels_final if cell_line != "yes" else labels,
-            "Z": Z_final if cell_line != "yes" else Z,
+            "labels": labels_final if cell_line is not CellLineMode.YES else labels,
+            "Z": Z_final if cell_line is not CellLineMode.YES else Z,
         }
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:
             pickle.dump(clustering_data, f)
@@ -1009,7 +1043,7 @@ def copykat(
         if plot_genes:
             logger.info("step 10: plotting heatmap ...")
             plot_step_start = time.perf_counter()
-            predictions = pred_dict if cell_line != "yes" else None
+            predictions = pred_dict if cell_line is not CellLineMode.YES else None
             _run_plot_heatmap(
                 mat_adj,
                 chrom_info,
@@ -1105,12 +1139,14 @@ def copykat(
                 cl_ID.append(float(np.mean(np.abs(uber_mat_adj[:, mask]))))
 
         if preN is not None and len(preN) > 0:
-            com_pred = _assign_binary_labels(hc_umap, cl_ID, "diploid", "aneuploid")
+            com_pred = _assign_binary_labels(hc_umap, cl_ID, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID)
         else:
-            com_pred = _assign_binary_labels(hc_umap, -np.asarray(cl_ID, dtype=float), "diploid", "aneuploid")
+            com_pred = _assign_binary_labels(
+                hc_umap, -np.asarray(cl_ID, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
+            )
 
         # Baseline adjustment
-        diploid_mask = com_pred == "diploid"
+        diploid_mask = com_pred == PredictionLabel.DIPLOID
         if diploid_mask.sum() > 0:
             mat_adj = _adjust_baseline_inplace(uber_mat_adj, diploid_mask)
         else:
@@ -1148,17 +1184,21 @@ def copykat(
                 cli_names = [cell_cols_seg[j] for j in range(len(cell_cols_seg)) if hc_final[j] == cl_val]
                 pid = len(set(cli_names) & preN_names) / max(len(cli_names), 1)
                 cl_ID_final.append(pid)
-            com_preN = _assign_binary_labels(hc_final, cl_ID_final, "diploid", "aneuploid")
+            com_preN = _assign_binary_labels(hc_final, cl_ID_final, PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID)
         else:
             cl_mag = []
             for cl_val in sorted(set(hc_final)):
                 mask = hc_final == cl_val
                 cl_mag.append(np.mean(np.abs(mat_adj[:, mask])))
-            com_preN = _assign_binary_labels(hc_final, -np.asarray(cl_mag, dtype=float), "diploid", "aneuploid")
+            com_preN = _assign_binary_labels(
+                hc_final, -np.asarray(cl_mag, dtype=float), PredictionLabel.DIPLOID, PredictionLabel.ANEUPLOID
+            )
 
-        if WNS == "unclassified.prediction":
-            com_preN = np.where(com_preN == "diploid", "c1:diploid:low.conf", com_preN)
-            com_preN = np.where(com_preN == "aneuploid", "c2:aneuploid:low.conf", com_preN)
+        if WNS is BaselineWarning.UNCLASSIFIED:
+            com_preN = np.where(com_preN == PredictionLabel.DIPLOID, PredictionLabel.DIPLOID_LOW_CONFIDENCE, com_preN)
+            com_preN = np.where(
+                com_preN == PredictionLabel.ANEUPLOID, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE, com_preN
+            )
         cluster_info = get_last_cluster_info()
         elapsed = _record_step(
             runtime_info, "final_prediction", step_start, parallel_info=cluster_info, extra={"warning": WNS}
@@ -1175,7 +1215,7 @@ def copykat(
         pred_dict = {cell_cols_seg[i]: com_preN[i] for i in range(len(cell_cols_seg))}
         for cell in original_cell_names:
             if cell not in pred_dict:
-                pred_dict[cell] = "not.defined"
+                pred_dict[cell] = PredictionLabel.NOT_DEFINED
 
         res = pd.DataFrame(
             {

@@ -19,6 +19,7 @@ from sklearn.metrics import silhouette_score
 
 from copykat_py import backend
 from copykat_py._types import (
+    AnchorPath,
     BaselineResult,
     BaselineWarning,
     CellByFeature,
@@ -30,6 +31,7 @@ from copykat_py._types import (
     IntArray,
     LinkageMatrix,
     ParallelInfo,
+    PredictionLabel,
     SyntheticBaselineResult,
 )
 
@@ -403,7 +405,7 @@ def baseline_norm_cl(
     cell_names: Sequence[str] | None = None,
     pca_components: int | None = None,
     genome: Genome = Genome.HG20,
-    anchor_selector: Callable[[ClusterLabels, int], tuple[int, str]] | None = None,
+    anchor_selector: Callable[[ClusterLabels, int], tuple[int, AnchorPath]] | None = None,
 ) -> BaselineResult:
     """Find a cluster of diploid cells using integrative clustering + GMM variance test.
 
@@ -520,15 +522,15 @@ def baseline_norm_cl(
     PDt = f_dist.sf(f_stat, n_genes, n_genes)
 
     if wn <= 0.15 or not np.all(_cluster_sizes(labels) > min_cells) or PDt > 0.05:
-        WNS: BaselineWarning = "unclassified.prediction"
+        WNS: BaselineWarning = BaselineWarning.UNCLASSIFIED
         logger.warning("  low confidence in classification")
     else:
-        WNS = ""
+        WNS = BaselineWarning.NONE
 
     # Cluster with minimum sigma is the 'confident normal' cluster
     min_sigma_idx = np.argmin(SDM)
     normal_cluster_id = unique_clusters[min_sigma_idx]
-    anchor_path = "sigma"
+    anchor_path = AnchorPath.SIGMA
     if anchor_selector is not None:
         normal_cluster_id, anchor_path = anchor_selector(labels, int(normal_cluster_id))
 
@@ -608,15 +610,15 @@ def baseline_gmm(
         if s >= 1:
             frq = np.sum(weights[neutral_mask])
             if frq > Nfraq_cut:
-                pred = "diploid"
+                pred = PredictionLabel.DIPLOID
             else:
-                pred = "aneuploid"
+                pred = PredictionLabel.ANEUPLOID
         else:
-            pred = "aneuploid"
+            pred = PredictionLabel.ANEUPLOID
 
         N_normal_labels.append(pred)
 
-        if pred == "diploid":
+        if pred is PredictionLabel.DIPLOID:
             N_normal.append(cell_names[m])
 
         if len(N_normal) >= max_normal:
@@ -641,7 +643,7 @@ def baseline_gmm(
         )
 
     if len(N_normal) > 2:
-        WNS: BaselineWarning = ""
+        WNS: BaselineWarning = BaselineWarning.NONE
         preN = N_normal
         normal_mask = np.isin(np.asarray(cell_names, dtype=object), np.asarray(preN, dtype=object))
         basel = np.mean(CNA_mat[:, normal_mask], axis=1)
@@ -651,7 +653,7 @@ def baseline_gmm(
             return RE_before
         else:
             # Fallback: use the full dataset median as baseline
-            WNS = "unclassified.prediction"
+            WNS = BaselineWarning.UNCLASSIFIED
             return {"basel": np.median(CNA_mat, axis=1), "WNS": WNS, "preN": N_normal, "cl": labels}
 
 

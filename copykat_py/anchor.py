@@ -26,16 +26,43 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from copykat_py._types import AnchorPath
+
 IMMUNE_MARKERS = ("PTPRC", "LAPTM5", "CORO1A", "CD53", "LCP1", "CD52", "ARHGDIB")
 ENDOTHELIAL_MARKERS = ("PECAM1", "VWF", "CDH5", "CLDN5", "ESAM", "EMCN", "PLVAP")
-MIN_MARKERS = 3          # markers detected for a cell to count as immune/endothelial
-MIN_FRACTION = 0.5       # marked fraction for a cluster to qualify
-MIN_CELLS = 20           # and at least max(MIN_CELLS, 1% of cells)
-ENRICHMENT = 3.0         # fallback: mean immune-marker count vs the rest of the cells
+MIN_MARKERS = 3  # markers detected for a cell to count as immune/endothelial
+MIN_FRACTION = 0.5  # marked fraction for a cluster to qualify
+MIN_CELLS = 20  # and at least max(MIN_CELLS, 1% of cells)
+ENRICHMENT = 3.0  # fallback: mean immune-marker count vs the rest of the cells
 
 # hg38 centromere midpoints (Mb), chr1..22, X (=23)
-_CENTROMERES_MB = np.array([123.4, 93.9, 90.9, 50.0, 48.8, 59.8, 60.1, 45.2, 43.0, 39.8, 53.4, 35.5,
-                            17.7, 17.2, 19.0, 36.8, 25.1, 18.5, 26.2, 28.1, 12.0, 15.0, 60.6])
+_CENTROMERES_MB = np.array(
+    [
+        123.4,
+        93.9,
+        90.9,
+        50.0,
+        48.8,
+        59.8,
+        60.1,
+        45.2,
+        43.0,
+        39.8,
+        53.4,
+        35.5,
+        17.7,
+        17.2,
+        19.0,
+        36.8,
+        25.1,
+        18.5,
+        26.2,
+        28.1,
+        12.0,
+        15.0,
+        60.6,
+    ]
+)
 
 
 def count_markers(rawmat, markers):
@@ -69,14 +96,16 @@ def _largest_population(labels, marked, n_cells):
     return best
 
 
-def choose_anchor_cluster(labels, immune_counts, endothelial_counts, sigma_cluster):
+def choose_anchor_cluster(
+    labels: np.ndarray, immune_counts: np.ndarray, endothelial_counts: np.ndarray, sigma_cluster: int
+) -> tuple[int, AnchorPath]:
     """Return (cluster id, path) for the normal reference; path is "immune", "endothelial",
     "enrichment" or "sigma" and doubles as a coarse confidence indicator."""
     labels = np.asarray(labels)
     imm = np.asarray(immune_counts, dtype=float)
     endo = np.asarray(endothelial_counts, dtype=float)
     n = len(labels)
-    for path, marked in (("immune", imm >= MIN_MARKERS), ("endothelial", endo >= MIN_MARKERS)):
+    for path, marked in ((AnchorPath.IMMUNE, imm >= MIN_MARKERS), (AnchorPath.ENDOTHELIAL, endo >= MIN_MARKERS)):
         k = _largest_population(labels, marked, n)
         if k is not None:
             return k, path
@@ -86,8 +115,8 @@ def choose_anchor_cluster(labels, immune_counts, endothelial_counts, sigma_clust
     m = labels == ids[j]
     rest = imm[~m].mean() if (~m).any() else 0.0
     if m.sum() >= MIN_CELLS and means[j] >= 1.0 and means[j] >= ENRICHMENT * max(rest, 1e-9):
-        return ids[j], "enrichment"
-    return sigma_cluster, "sigma"
+        return int(ids[j]), AnchorPath.ENRICHMENT
+    return sigma_cluster, AnchorPath.SIGMA
 
 
 def _arm_ids(chrom, pos_bp):
@@ -104,10 +133,10 @@ def arm_correlation_calls(values, chrom, pos_bp, anchor_mask, top_fraction=0.10,
     A = np.asarray(agg @ np.asarray(values, dtype=np.float32), dtype=np.float64)  # arms x cells
     A = A.astype(np.float16).astype(np.float64)  # same precision as the evaluated harness
     w = sizes.astype(np.float64)
-    energy = np.sqrt((w[:, None] * A ** 2).sum(0) / w.sum())
+    energy = np.sqrt((w[:, None] * A**2).sum(0) / w.sum())
     consensus = A[:, energy >= np.percentile(energy, 100 * (1 - top_fraction))].mean(1)
     Ac = A - (w[:, None] * A).sum(0) / w.sum()
     cc = consensus - (w * consensus).sum() / w.sum()
-    r = (w[:, None] * Ac * cc[:, None]).sum(0) / np.sqrt((w[:, None] * Ac ** 2).sum(0) * (w * cc ** 2).sum() + 1e-30)
+    r = (w[:, None] * Ac * cc[:, None]).sum(0) / np.sqrt((w[:, None] * Ac**2).sum(0) * (w * cc**2).sum() + 1e-30)
     anchor_mask = np.asarray(anchor_mask, dtype=bool)
     return r > np.percentile(r[anchor_mask], percentile)

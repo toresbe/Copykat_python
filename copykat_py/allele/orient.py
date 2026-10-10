@@ -13,6 +13,7 @@ import json
 import numpy as np
 import pandas as pd
 
+from copykat_py._types import PredictionLabel
 from copykat_py.allele import counts as _counts
 from copykat_py.allele import hmm as _hmm
 
@@ -21,7 +22,10 @@ MIN_GROUP_CELLS = 10
 
 
 def _swap_labels(pred):
-    swap = {"aneuploid": "diploid", "diploid": "aneuploid"}
+    swap = {
+        PredictionLabel.ANEUPLOID.value: PredictionLabel.DIPLOID.value,
+        PredictionLabel.DIPLOID.value: PredictionLabel.ANEUPLOID.value,
+    }
     return pred.str.replace(r"aneuploid|diploid", lambda m: swap[m.group(0)], regex=True)
 
 
@@ -42,21 +46,27 @@ def orient_prediction(prediction, counts_dir, phase_csv, min_f_diff=MIN_F_DIFF):
     pred = prediction.iloc[:, 1].astype(str)
     idx = prediction.iloc[:, 0].map(_counts.barcode_key).map(col)
     has = idx.notna().to_numpy()
-    groups = {"aneuploid": (pred.str.contains("aneuploid").to_numpy() & has),
-              "diploid": (pred.str.contains("diploid").to_numpy() & ~pred.str.contains("aneuploid").to_numpy() & has)}
-    report = {"snps_phased": int(len(snps)), "flipped": False}
+    groups = {
+        PredictionLabel.ANEUPLOID: pred.str.contains(PredictionLabel.ANEUPLOID.value).to_numpy() & has,
+        PredictionLabel.DIPLOID: pred.str.contains(PredictionLabel.DIPLOID.value).to_numpy()
+        & ~pred.str.contains(PredictionLabel.ANEUPLOID.value).to_numpy()
+        & has,
+    }
+    report = {"snps_phased": len(snps), "flipped": False}
     for g, m in groups.items():
         cols = idx[m].astype(int).to_numpy()
-        report[f"cells_{g}"] = int(len(cols))
+        report[f"cells_{g.value}"] = len(cols)
         if len(cols) < MIN_GROUP_CELLS:
-            report["note"] = f"fewer than {MIN_GROUP_CELLS} {g} cells with allele data; calls left as they are"
+            report["note"] = f"fewer than {MIN_GROUP_CELLS} {g.value} cells with allele data; calls left as they are"
             return prediction.copy(), report
         k = np.asarray(HA[:, cols].sum(axis=1)).ravel()
         n = np.asarray(DP[:, cols].sum(axis=1)).ravel()
         seg, frac = _hmm.segments(snps, k, n)
-        report[f"F_{g}"] = frac
-        report[f"segments_{g}"] = seg.to_dict(orient="records")
-    report["flipped"] = bool(report["F_diploid"] - report["F_aneuploid"] >= min_f_diff)
+        report[f"F_{g.value}"] = frac
+        report[f"segments_{g.value}"] = seg.to_dict(orient="records")
+    report["flipped"] = bool(
+        report[f"F_{PredictionLabel.DIPLOID.value}"] - report[f"F_{PredictionLabel.ANEUPLOID.value}"] >= min_f_diff
+    )
     out = prediction.copy()
     if report["flipped"]:
         out.iloc[:, 1] = _swap_labels(pred).to_numpy()
@@ -68,8 +78,13 @@ def orient_prediction_file(prediction_txt, counts_dir, phase_csv, out_prefix=Non
     (out_prefix defaults to the prediction file's path without 'prediction.txt')."""
     pred = pd.read_csv(prediction_txt, sep="\t")
     out, report = orient_prediction(pred, counts_dir, phase_csv, min_f_diff)
-    prefix = out_prefix if out_prefix is not None else prediction_txt[: -len("prediction.txt")] \
-        if prediction_txt.endswith("prediction.txt") else prediction_txt + "."
+    prefix = (
+        out_prefix
+        if out_prefix is not None
+        else prediction_txt[: -len("prediction.txt")]
+        if prediction_txt.endswith("prediction.txt")
+        else prediction_txt + "."
+    )
     out.to_csv(f"{prefix}prediction.allele_oriented.txt", sep="\t", index=False)
     with open(f"{prefix}allele_orientation.json", "w") as f:
         json.dump(report, f, indent=1)

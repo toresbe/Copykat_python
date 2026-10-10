@@ -16,7 +16,20 @@ from scipy import sparse as sp
 from scipy.io import mmread
 
 from copykat_py._logging import default_progress_output, log_progress_to, with_default_progress_output
-from copykat_py._types import CopyKATResult, DistanceMetric, Genome, RawInput, RawMatrix, SparseMatrix
+from copykat_py._types import (
+    AnchorStrategy,
+    CellLineMode,
+    CopyKATResult,
+    DistanceMetric,
+    ExecutionBackend,
+    FinalCallStrategy,
+    GeneIdType,
+    Genome,
+    KSMethod,
+    RawInput,
+    RawMatrix,
+    SparseMatrix,
+)
 from copykat_py.genomic_coordinates import split_cna_table
 
 logger = logging.getLogger(__name__)
@@ -44,14 +57,16 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
     """Attach CopyKAT runtime arguments shared by matrix and Python wrappers."""
     parser.add_argument(
         "--id-type",
-        default="S",
-        choices=["S", "E"],
+        type=GeneIdType,
+        default=GeneIdType.SYMBOL,
+        choices=list(GeneIdType),
         help="[optional] Gene ID type: S=Symbol, E=Ensembl (default: S)",
     )
     parser.add_argument(
         "--cell-line",
-        default="no",
-        choices=["yes", "no"],
+        type=CellLineMode,
+        default=CellLineMode.NO,
+        choices=list(CellLineMode),
         help="[optional] Pure cell line mode (default: no)",
     )
     parser.add_argument(
@@ -146,26 +161,32 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--backend",
-        default="cpu",
-        choices=["cpu", "gpu-compat", "gpu"],
+        type=ExecutionBackend,
+        default=ExecutionBackend.CPU,
+        choices=list(ExecutionBackend),
         help="[experimental] Execution backend; GPU modes require CUDA-enabled torch and CuPy.",
     )
     parser.add_argument(
         "--anchor",
-        default="sigma",
-        choices=["sigma", "markers"],
-        help="[experimental] Normal reference: smallest GMM sigma (default) or marker-defined immune/endothelial cells.",
+        type=AnchorStrategy,
+        default=AnchorStrategy.SIGMA,
+        choices=list(AnchorStrategy),
+        help=(
+            "[experimental] Normal reference: smallest GMM sigma (default) or marker-defined immune/endothelial cells."
+        ),
     )
     parser.add_argument(
         "--final-call",
-        default="clusters",
-        choices=["clusters", "arm_correlation"],
+        type=FinalCallStrategy,
+        default=FinalCallStrategy.CLUSTERS,
+        choices=list(FinalCallStrategy),
         help="[experimental] Final calls from the Ward split (default) or arm-level correlation.",
     )
     parser.add_argument(
         "--ks-method",
-        default="mc",
-        choices=["mc", "exact"],
+        type=KSMethod,
+        default=KSMethod.MONTE_CARLO,
+        choices=list(KSMethod),
         help="Breakpoint statistic: Monte Carlo posterior KS (default) or exact posterior-Gamma KS.",
     )
     parser.add_argument(
@@ -491,9 +512,7 @@ def _run_copykat_analysis(
 
             from copykat_py.allele.orient import orient_prediction
 
-            oriented, allele_report = orient_prediction(
-                result["prediction"], allele_counts_path, allele_phase_path
-            )
+            oriented, allele_report = orient_prediction(result["prediction"], allele_counts_path, allele_phase_path)
             prefix = f"{args.sample_name}_copykat_"
             with open(f"{prefix}allele_orientation.json", "w", encoding="utf-8") as report_file:
                 json.dump(allele_report, report_file, indent=2)
@@ -581,8 +600,8 @@ def copykat_anndata(
     output_dir: str | os.PathLike[str] = ".",
     layer: str | None = None,
     use_raw: bool = False,
-    id_type: str = "S",
-    cell_line: str = "no",
+    id_type: GeneIdType = GeneIdType.SYMBOL,
+    cell_line: CellLineMode = CellLineMode.NO,
     ngene_chr: int = 5,
     min_genes: int = 200,
     low_dr: float = 0.05,
@@ -597,6 +616,8 @@ def copykat_anndata(
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
     genome = Genome(genome)
     distance = DistanceMetric(distance)
+    id_type = GeneIdType.ENSEMBL if str(id_type).upper().startswith("E") else GeneIdType.SYMBOL
+    cell_line = CellLineMode(cell_line)
     _, rawmat, matrix_label = _anndata_to_rawmat(
         adata,
         layer=layer,
@@ -742,11 +763,15 @@ Meta CSV format
         help="[optional] Output PNG path. Defaults to {sample_name}_copykat_annotated_heatmap.png.",
     )
     parser.add_argument(
-        "--continuous-meta", nargs="+", default=None, metavar="COLUMN",
+        "--continuous-meta",
+        nargs="+",
+        default=None,
+        metavar="COLUMN",
         help="Force selected numeric metadata columns to use continuous colors (e.g. n_umi).",
     )
     parser.add_argument(
-        "--no-row-split", action="store_true",
+        "--no-row-split",
+        action="store_true",
         help="Cluster all cells together without categorical row groups.",
     )
 
