@@ -1,53 +1,49 @@
 """Final cell clustering, copy-number calls, and baseline adjustment."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
 
 from copykat_py import backend
-from copykat_py._types import (
-    BoolArray,
-    ClusterLabels,
-    FloatArray,
-    LinkageMatrix,
-    PredictionLabel,
-)
+from copykat_py._types import BoolArray, ClusterLabels, FloatArray, LinkageMatrix, PredictionLabel
 from copykat_py.baseline import FULL_CLUSTER_MAX_CELLS, _hierarchical_cluster
+from copykat_py.normal_cells import normal_cells_to_names
 
 
-def _preN_to_names(
-    preN: str | bytes | Sequence[Any] | npt.NDArray[Any] | None,
-    cell_names: Sequence[str],
-) -> set[str]:
-    if preN is None:
-        return set()
+@dataclass(frozen=True, slots=True)
+class WardClusteringResult:
+    """Ward clustering labels and linkage tree for a set of cells."""
 
-    if isinstance(preN, str | bytes):
-        return {str(preN)}
+    labels: ClusterLabels
+    linkage: LinkageMatrix
 
-    values = list(preN)
-    if not values:
-        return set()
 
-    names = []
-    for value in values:
-        if isinstance(value, int | np.integer):
-            idx = int(value)
-            if 0 <= idx < len(cell_names):
-                names.append(cell_names[idx])
-        else:
-            names.append(str(value))
-    return set(names)
+@dataclass(frozen=True, slots=True)
+class FinalCallResult(WardClusteringResult):
+    """Ward clustering and the per-cell copy-number calls derived from it.
+
+    Labels are 1-based cluster IDs. Predictions contains one
+    diploid/aneuploid label per cell.
+    """
+
+    predictions: npt.NDArray[np.object_]
 
 
 def _assign_binary_labels(
     cluster_labels: ClusterLabels,
     scores: Sequence[float] | FloatArray,
-    high_label: PredictionLabel,
-    low_label: PredictionLabel,
+    max_score_label: PredictionLabel,
+    min_score_label: PredictionLabel,
 ) -> npt.NDArray[np.object_]:
+    """Map the maximum and minimum cluster scores to their respective labels.
+
+    Scores must be ordered to match the sorted unique values in ``cluster_labels``.
+    Tied maximum or minimum scores assign that label to every tied cluster. If
+    all scores tie, the minimum-score label wins because that assignment runs last.
+    """
     labels = np.empty(len(cluster_labels), dtype=object)
     labels[:] = ""
     cluster_vals = np.asarray(sorted(set(cluster_labels)))
@@ -56,9 +52,9 @@ def _assign_binary_labels(
     min_score = np.min(score_arr)
 
     for cluster_val in cluster_vals[score_arr == max_score]:
-        labels[cluster_labels == cluster_val] = high_label
+        labels[cluster_labels == cluster_val] = max_score_label
     for cluster_val in cluster_vals[score_arr == min_score]:
-        labels[cluster_labels == cluster_val] = low_label
+        labels[cluster_labels == cluster_val] = min_score_label
     return labels
 
 
@@ -67,9 +63,19 @@ def cluster_cells(
     *,
     n_cores: int,
     pca_components: int | None,
-) -> tuple[ClusterLabels, LinkageMatrix | None]:
-    """Cluster the cells represented by columns in a feature-by-cell matrix."""
-    return _hierarchical_cluster(
+) -> WardClusteringResult:
+    """Ward-cluster the cells in a feature-by-cell matrix.
+
+    Args:
+        values: Matrix shaped ``(features, cells)``; cells are clustered on its transpose.
+        n_cores: Maximum number of CPU workers requested for clustering.
+        pca_components: Optional PCA cap used by the large-sample clustering path.
+
+    Returns:
+        A ``WardClusteringResult`` containing 1-based cluster labels and the Ward
+        linkage matrix.
+    """
+    labels, linkage = _hierarchical_cluster(
         values.T,
         2,
         method="ward",
@@ -78,27 +84,51 @@ def cluster_cells(
         reduce=values.shape[1] > FULL_CLUSTER_MAX_CELLS,
         pca_components=pca_components,
     )
+    return WardClusteringResult(labels=labels, linkage=linkage)
 
 
 def cluster_and_call(
     values: FloatArray,
     cell_names: Sequence[str],
     reference_cell_names: Sequence[str],
-    preN: str | bytes | Sequence[Any] | npt.NDArray[Any] | None,
+    normal_cells: str | bytes | Sequence[Any] | npt.NDArray[Any] | None,
     *,
     n_cores: int,
     pca_components: int | None,
-    prediction_override: npt.NDArray[Any] | None = None,
+    prediction_override: BoolArray | None = None,
     low_confidence: bool = False,
-) -> tuple[ClusterLabels, LinkageMatrix | None, npt.NDArray[np.object_]]:
+) -> FinalCallResult:
     """Cluster cells and assign diploid/aneuploid labels from reference overlap or CNA magnitude.
 
-    ``prediction_override`` can supply an external per-cell call, such as
-    arm-correlation results, while retaining Ward clustering for ordering.
+    Args:
+        values: Feature-by-cell CNA matrix used both for clustering and fallback scoring.
+        cell_names: Cell names in the same order as the matrix columns and returned labels.
+        reference_cell_names: Ordered source for resolving integer entries in ``normal_cells``.
+        normal_cells: Known normal-cell names, a single name, or integer indices into
+            ``reference_cell_names``. When absent or empty, calls use CNA magnitude.
+        n_cores: Maximum number of CPU workers requested for clustering.
+        pca_components: Optional PCA cap used by the large-sample clustering path.
+        prediction_override: Optional boolean call per cell. ``True`` means aneuploid;
+            the Ward result is still returned for ordering.
+        low_confidence: Replace ordinary diploid/aneuploid labels with their low-confidence forms.
+
+    Returns:
+        A ``FinalCallResult`` containing Ward ``labels``, the linkage tree, and per-cell
+        ``predictions``. With known normals, clusters are scored by their normal-cell
+        fraction. Otherwise, the cluster with the lower mean absolute CNA magnitude is
+        called diploid. Overrides are applied after cluster scoring, then low-confidence
+        labels are applied last.
     """
-    labels, linkage = cluster_cells(values, n_cores=n_cores, pca_components=pca_components)
-    if preN is not None and len(preN) > 0:
-        normal_names = _preN_to_names(preN, reference_cell_names)
+    if len(cell_names) != values.shape[1]:
+        raise ValueError("cell_names must contain one name per matrix column")
+    if prediction_override is not None and prediction_override.shape != (values.shape[1],):
+        raise ValueError("prediction_override must contain one boolean value per cell")
+
+    clustering = cluster_cells(values, n_cores=n_cores, pca_components=pca_components)
+    labels = clustering.labels
+
+    if normal_cells is not None and len(normal_cells) > 0:
+        normal_names = normal_cells_to_names(normal_cells, reference_cell_names)
         scores = []
         for cluster_value in sorted(set(labels)):
             cluster_names = [cell_names[index] for index in range(len(cell_names)) if labels[index] == cluster_value]
@@ -121,7 +151,7 @@ def cluster_and_call(
             PredictionLabel.ANEUPLOID_LOW_CONFIDENCE,
             predictions,
         )
-    return labels, linkage, predictions
+    return FinalCallResult(labels=labels, linkage=clustering.linkage, predictions=predictions)
 
 
 def adjust_baseline_inplace(
@@ -129,7 +159,13 @@ def adjust_baseline_inplace(
     diploid_mask: BoolArray,
     chunk_elems: int = 1 << 24,
 ) -> FloatArray:
-    """Subtract the diploid baseline and flatten noise around it, overwriting ``mat``."""
+    """Subtract the diploid baseline and flatten noise around it, mutating ``mat``.
+
+    ``diploid_mask`` selects the cell columns used to estimate the per-feature
+    baseline and noise threshold. Callers should pass a mask containing at least
+    one diploid cell. The CPU implementation processes rows in chunks; the GPU
+    backend performs the equivalent operation on device.
+    """
     if backend.use_gpu():
         from copykat_py.gpu import ops
 
