@@ -239,6 +239,15 @@ def _hierarchical_cluster(
 
     # Keep Ward + Euclidean on the vectorized full/PCA matrix path.
     if metric == "euclidean" and method.startswith("ward"):
+        collapsed = _collapse_repeated_features(data)
+        if collapsed is not None:
+            pca_components_used = min(pca_components, n_samples - 1, n_features)
+            pca_applies = n_samples > FULL_CLUSTER_MAX_CELLS and n_features > 256 and pca_components_used >= 8
+            if not pca_applies or collapsed.shape[1] <= pca_components_used:
+                Z, engine = _ward_linkage(collapsed, n_cores=n_cores)
+                _LAST_CLUSTER_INFO["engine"] = f"dedup{collapsed.shape[1]}+{engine}"
+                labels = fcluster(Z, t=n_clusters, criterion="maxclust")
+                return labels, Z
         cluster_data, n_components = _reduce_for_clustering(data, max_components=pca_components)
         Z, engine = _ward_linkage(cluster_data, n_cores=n_cores)
         _LAST_CLUSTER_INFO["engine"] = engine
