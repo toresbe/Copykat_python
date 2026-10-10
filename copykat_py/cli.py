@@ -149,10 +149,32 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
         help="[experimental] Execution backend; GPU modes require CUDA-enabled torch and CuPy.",
     )
     parser.add_argument(
+        "--anchor",
+        default="sigma",
+        choices=["sigma", "markers"],
+        help="[experimental] Normal reference: smallest GMM sigma (default) or marker-defined immune/endothelial cells.",
+    )
+    parser.add_argument(
+        "--final-call",
+        default="clusters",
+        choices=["clusters", "arm_correlation"],
+        help="[experimental] Final calls from the Ward split (default) or arm-level correlation.",
+    )
+    parser.add_argument(
         "--ks-method",
         default="mc",
         choices=["mc", "exact"],
         help="Breakpoint statistic: Monte Carlo posterior KS (default) or exact posterior-Gamma KS.",
+    )
+    parser.add_argument(
+        "--allele-counts",
+        default=None,
+        help="[optional] cellsnp-lite allele-count directory; requires --allele-phase.",
+    )
+    parser.add_argument(
+        "--allele-phase",
+        default=None,
+        help="[optional] phased SNP CSV produced by copykat-py-allele phase.",
     )
     parser.add_argument(
         "--output-dir",
@@ -400,6 +422,10 @@ def _run_copykat_analysis(
 ) -> CopyKATResult:
     """Run copykat() with consistent logging and output-directory setup."""
     norm_cells_path = os.path.abspath(args.norm_cells) if args.norm_cells else ""
+    allele_counts_path = os.path.abspath(args.allele_counts) if args.allele_counts else None
+    allele_phase_path = os.path.abspath(args.allele_phase) if args.allele_phase else None
+    if bool(allele_counts_path) != bool(allele_phase_path):
+        raise ValueError("--allele-counts and --allele-phase must be provided together")
     meta_csv = os.path.abspath(meta_csv) if meta_csv is not None else None
     post_plot_meta = os.path.abspath(post_plot_meta) if post_plot_meta is not None else None
 
@@ -452,9 +478,28 @@ def _run_copykat_analysis(
             pca_components=args.pca_components,
             backend_name=args.backend,
             ks_method=args.ks_method,
+            anchor=args.anchor,
+            final_call=args.final_call,
             meta_csv=meta_csv,
             row_split_col=row_split_col,
         )
+
+        if allele_counts_path and "prediction" in result:
+            import json
+
+            from copykat_py.allele.orient import orient_prediction
+
+            oriented, allele_report = orient_prediction(
+                result["prediction"], allele_counts_path, allele_phase_path
+            )
+            prefix = f"{args.sample_name}_copykat_"
+            with open(f"{prefix}allele_orientation.json", "w", encoding="utf-8") as report_file:
+                json.dump(allele_report, report_file, indent=2)
+            if allele_report["flipped"]:
+                result["prediction"].to_csv(f"{prefix}prediction.before_allele.txt", sep="\t", index=False)
+                oriented.to_csv(f"{prefix}prediction.txt", sep="\t", index=False)
+                result["prediction"] = oriented
+            result["allele_orientation"] = allele_report
 
         logger.info("CopyKAT-Py analysis complete.")
         if "prediction" in result:

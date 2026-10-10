@@ -296,6 +296,17 @@ plot_heatmap_annotated(
 
 ## Benchmarking and Validation
 
+### Experimental inference options
+
+The proposal branches preserve the six performance PRs as explicit merges. The assembled fork also carries optional inference experiments:
+
+- `--backend gpu-compat` routes Ward clustering, selected GMM fits, and baseline adjustment through the optional CUDA backend while retaining the CPU PCA policy. `--backend gpu` uses the full-feature GPU Ward policy. Other pipeline stages remain on CPU in this integration. Install `.[gpu]` and a CuPy build matching the local CUDA toolkit.
+- `--ks-method exact` replaces Monte Carlo comparisons of sampled Gamma posteriors with an exact posterior-Gamma KS distance. This changes breakpoint decisions and remains opt-in; the original cutoff has not been recalibrated for it.
+- `--anchor markers` selects an immune/endothelial marker-enriched normal reference when available. `--final-call arm_correlation` changes final human hg20 cell calls using arm-level profiles; both are opt-in and intended for solid tumors.
+- `copykat-py-allele` provides a separate read-counting, phasing, and allele-orientation workflow. It needs external sequencing tools and data described in [the allele workflow guide](docs/allele_orientation.md).
+
+The review package in `docs/navin-review-manifest.json`, `docs/fork-integration-audit.md`, and the linked benchmark reports records source commits, dependencies, numerical/output contracts, measured gains, regressions, and incomplete evidence. Existing timings remain evidence for their pinned snapshots, not this assembled commit.
+
 ### Validation for 11 datasets from [Cancer Cell Atlas (3CA)](https://www.weizmann.ac.il/sites/3CA/)
 
 Both CopyKAT-R and CopyKAT-Python were tested on raw datasets (no QC filtering) using 24 cores. 

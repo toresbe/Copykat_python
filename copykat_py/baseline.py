@@ -5,7 +5,7 @@ Mirrors baseline.norm.cl.R, baseline.GMM.R, and baseline.synthetic.R from the R 
 
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, cast
 
@@ -398,6 +398,7 @@ def baseline_norm_cl(
     cell_names: Sequence[str] | None = None,
     pca_components: int | None = None,
     genome: str = "hg20",
+    anchor_selector: Callable[[ClusterLabels, int], tuple[int, str]] | None = None,
 ) -> BaselineResult:
     """Find a cluster of diploid cells using integrative clustering + GMM variance test.
 
@@ -522,6 +523,9 @@ def baseline_norm_cl(
     # Cluster with minimum sigma is the 'confident normal' cluster
     min_sigma_idx = np.argmin(SDM)
     normal_cluster_id = unique_clusters[min_sigma_idx]
+    anchor_path = "sigma"
+    if anchor_selector is not None:
+        normal_cluster_id, anchor_path = anchor_selector(labels, int(normal_cluster_id))
 
     normal_mask = labels == normal_cluster_id
     basel = np.median(norm_mat_smooth[:, normal_mask], axis=1)
@@ -537,6 +541,7 @@ def baseline_norm_cl(
         "WNS": WNS,
         "preN": preN,
         "cl": labels,
+        "anchor_path": anchor_path,
     }
 
 

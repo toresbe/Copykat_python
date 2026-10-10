@@ -26,7 +26,8 @@ dependencies = [
 [project.optional-dependencies]
 large-datasets = ["fastcluster>=1.3.0"]
 all = ["fastcluster>=1.3.0"]
-gpu = ["torch>=2.0", "cupy>=13.0", "triton>=3.0"]
+gpu = ["torch>=2.4", "triton>=3.0"]
+allele = ["torch>=2.4"]
 dev = ["ruff>=0.6", "mypy>=1.10", "pandas-stubs", "scipy-stubs"]
 
 [project.scripts]
@@ -34,12 +35,14 @@ copykat-py = "copykat_py.cli:main"
 copykat_matrix = "copykat_py.cli:matrix_main"
 copykat-py-plot = "copykat_py.cli:plot_main"
 copykat-py-report = "copykat_py.reporting.cli:main"
+copykat-py-allele = "copykat_py.allele.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["copykat_py*"]
 
 [tool.setuptools.package-data]
 "copykat_py" = ["data/*.csv", "data/*.mtx", "data/*.txt"]
+"copykat_py.allele" = ["fqseq.c"]
 
 [tool.ruff]
 target-version = "py311"

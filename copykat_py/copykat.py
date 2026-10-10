@@ -35,6 +35,7 @@ from scipy.io import mmread
 
 from copykat_py._logging import with_default_progress_output
 from copykat_py import backend
+from copykat_py import anchor as _anchor
 from copykat_py._types import (
     BoolArray,
     ClusteringResult,
@@ -595,6 +596,8 @@ def copykat(
     row_split_col: str | None = None,
     backend_name: str = "cpu",
     ks_method: str = "mc",
+    anchor: str = "sigma",
+    final_call: str = "clusters",
 ) -> CopyKATResult:
     """Run CopyKAT analysis: infer copy number profiles from scRNA-seq data.
 
@@ -657,6 +660,12 @@ def copykat(
         'hclustering': linkage matrix or cluster labels
     """
     backend.set_backend(backend_name)
+    if anchor not in {"sigma", "markers"}:
+        raise ValueError("anchor must be 'sigma' or 'markers'")
+    if final_call not in {"clusters", "arm_correlation"}:
+        raise ValueError("final_call must be 'clusters' or 'arm_correlation'")
+    if final_call == "arm_correlation" and str(genome).lower() == "mm10":
+        raise ValueError("arm_correlation currently uses hg38 centromere coordinates and is only supported for hg20")
     start_time = time.perf_counter()
     # Global seed kept for reproducibility with earlier versions; moving to a
     # Generator would change any random stream that depends on it.
@@ -676,6 +685,8 @@ def copykat(
             "meta_csv": meta_csv, "row_split_col": row_split_col,
             "backend": backend.get_backend(),
             "ks_method": ks_method,
+            "anchor": anchor,
+            "final_call": final_call,
         },
         "versions": {},
         "warnings": [],
@@ -693,6 +704,12 @@ def copykat(
     # =========================================================================
     logger.info("step 1: read and filter data ...")
     step_start = time.perf_counter()
+    marker_counts = None
+    if anchor == "markers":
+        marker_counts = (
+            _anchor.count_markers(rawmat, _anchor.IMMUNE_MARKERS),
+            _anchor.count_markers(rawmat, _anchor.ENDOTHELIAL_MARKERS),
+        )
     rawmat, gene_names, barcodes, original_cell_names, prep_stats = _prepare_input_matrix(
         rawmat, min_gene_per_cell, LOW_DR
     )
@@ -896,6 +913,17 @@ def copykat(
         norm_mat_relat = norm_mat_smooth - basel[:, np.newaxis]
     else:
         # Auto-detect normal cells
+        anchor_selector = None
+        if anchor == "markers" and marker_counts is not None:
+            immune_counts = marker_counts[0].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
+            endothelial_counts = marker_counts[1].groupby(level=0).first().reindex(cell_name_list).fillna(0).to_numpy()
+
+            def anchor_selector(labels: ClusterLabels, sigma_cluster: int) -> tuple[int, str]:
+                selected, path = _anchor.choose_anchor_cluster(
+                    labels, immune_counts, endothelial_counts, sigma_cluster
+                )
+                return int(selected), path
+
         basa = baseline_norm_cl(
             norm_mat_smooth,
             min_cells=5,
@@ -903,6 +931,7 @@ def copykat(
             cell_names=cell_name_list,
             pca_components=selected_pca_components,
             genome=genome,
+            anchor_selector=anchor_selector,
         )
         basel = basa["basel"]
         WNS = basa["WNS"]
@@ -910,8 +939,12 @@ def copykat(
         clustered = basa["cl"]
         assert clustered is not None  # baseline_norm_cl always clusters
         CL = clustered
+        runtime_info["anchor_path"] = basa.get("anchor_path", "sigma")
+        if anchor == "markers":
+            WNS = "" if runtime_info["anchor_path"] in {"immune", "endothelial"} else "unclassified.prediction"
+            logger.info(f"  normal reference from markers: path={runtime_info['anchor_path']}, cells={len(preN)}")
 
-        if WNS == "unclassified.prediction":
+        if WNS == "unclassified.prediction" and anchor != "markers":
             cluster_preN = list(preN) if preN is not None else []
             keep_cluster_anchor = WNS1 == "low data quality" and len(cluster_preN) >= max(
                 50, int(0.05 * len(cell_name_list))
@@ -1129,6 +1162,20 @@ def copykat(
         if cell_line == "yes":
             mat_adj = uber_mat_adj
         else:
+            arm_calls = None
+            if final_call == "arm_correlation" and preN is not None and len(preN) > 0:
+                preN_names = _preN_to_names(preN, cell_name_list)
+                anchor_mask = np.array([cell in preN_names for cell in cell_cols_seg], dtype=bool)
+                if anchor_mask.sum() >= 5:
+                    arm_calls = _anchor.arm_correlation_calls(
+                        uber_mat_adj,
+                        bin_coords["chrom"].to_numpy(),
+                        bin_coords["chrompos"].to_numpy(),
+                        anchor_mask,
+                    )
+                    runtime_info["final_call_path"] = "arm_correlation"
+                else:
+                    runtime_info["final_call_path"] = "clusters_insufficient_anchor"
             # First hierarchical clustering for initial prediction
             labels, Z = _hierarchical_cluster(
                 uber_mat_adj.T,
@@ -1157,6 +1204,9 @@ def copykat(
                     mask = hc_umap == cl_val
                     cl_mag.append(np.mean(np.abs(uber_mat_adj[:, mask])))
                 com_pred = _assign_binary_labels(hc_umap, -np.asarray(cl_mag, dtype=float), "diploid", "aneuploid")
+
+            if arm_calls is not None:
+                com_pred = np.where(arm_calls, "aneuploid", "diploid")
 
             # Baseline adjustment: subtract diploid mean, then denoise
             diploid_mask = com_pred == "diploid"
@@ -1207,6 +1257,10 @@ def copykat(
                     mask = hc_final == cl_val
                     cl_mag.append(np.mean(np.abs(mat_adj[:, mask])))
                 com_preN = _assign_binary_labels(hc_final, -np.asarray(cl_mag, dtype=float), "diploid", "aneuploid")
+
+            if arm_calls is not None:
+                # The Ward tree still orders the heatmap; this option supplies the final call.
+                com_preN = np.where(arm_calls, "aneuploid", "diploid")
 
             if WNS == "unclassified.prediction":
                 com_preN = np.where(com_preN == "diploid", "c1:diploid:low.conf", com_preN)

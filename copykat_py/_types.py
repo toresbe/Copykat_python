@@ -66,6 +66,7 @@ class BaselineResult(TypedDict):
     preN: list[str] | IntArray
     """Reference normal cells: names when cell names are known, otherwise column indices."""
     cl: ClusterLabels | None
+    anchor_path: NotRequired[str]
 
 
 class SyntheticBaselineResult(TypedDict):
@@ -144,3 +145,4 @@ class CopyKATResult(TypedDict):
     mm10: the seven gene annotation columns, then one column per cell (genes)."""
     hclustering: ClusteringResult
     runtime: RuntimeInfo
+    allele_orientation: NotRequired[dict[str, Any]]
