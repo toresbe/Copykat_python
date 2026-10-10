@@ -44,7 +44,6 @@ from copykat_py.baseline import (
     baseline_gmm,
     baseline_synthetic,
     _hierarchical_cluster,
-    _effective_threads,
     _fit_gmm_3component,
     get_last_cluster_info,
     resolve_adaptive_pca_components,
@@ -114,7 +113,7 @@ def _write_cna_columns(path, lead_df, values, value_columns, round_floats=True, 
         arrays.extend(pa.array(block[:, j], type=value_type, from_pandas=True) for j in range(block.shape[1]))
         return pa.Table.from_arrays(arrays, schema=schema)
 
-    n_threads = _effective_threads(n_cores)
+    n_threads = max(1, min(int(n_cores), int(os.cpu_count() or 1)))
     parallel_rows = _PARALLEL_WRITE_BYTES // (n_threads * row_bytes)
     parallel = n_threads > 1 and parallel_rows >= _PARALLEL_WRITE_MIN_ROWS and values.shape[0] > parallel_rows
     if parallel:
@@ -873,7 +872,7 @@ def copykat(rawmat, id_type="S", cell_line="no", ngene_chr=5, min_gene_per_cell=
     gene_anno = anno_mat2[anno_cols].reset_index(drop=True)
     
     step_start = time.perf_counter()
-_write_cna_columns(
+    _write_cna_columns(
         f"{sample_name}CNA_raw_results_gene_by_cell.txt", gene_anno, results_com, cell_cols_seg,
         round_floats=False, n_cores=n_cores,
     )
@@ -1024,7 +1023,7 @@ _write_cna_columns(
             res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
         
         # Save CNA results
-cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
+        cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
         _write_cna_columns(f"{sample_name}CNA_results.txt", bin_coords, mat_adj, cell_cols_seg, n_cores=n_cores)
         # Save clustering
         clustering_data = {"labels": labels_final if cell_line != "yes" else labels,
@@ -1208,7 +1207,7 @@ cna_out = _frame_with_leading_columns(bin_coords, mat_adj, cell_cols_seg)
         })
         res.to_csv(f"{sample_name}prediction.txt", sep="\t", index=False)
         
-cna_out = _frame_with_leading_columns(gene_anno, mat_adj, cell_cols_seg)
+        cna_out = _frame_with_leading_columns(gene_anno, mat_adj, cell_cols_seg)
         _write_cna_columns(f"{sample_name}CNA_results.txt", gene_anno, mat_adj, cell_cols_seg, n_cores=n_cores)
         clustering_data = {"labels": labels_final, "Z": Z_final}
         with open(f"{sample_name}clustering_results.pkl", "wb") as f:
