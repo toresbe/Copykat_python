@@ -27,7 +27,7 @@ from sklearn.decomposition import TruncatedSVD
 from threadpoolctl import threadpool_limits
 
 from copykat_py._logging import with_default_progress_output
-from copykat_py._types import DistanceMetric, FloatArray, IntArray, LinkageMatrix
+from copykat_py._types import DistanceMetric, FloatArray, Genome, IntArray, LinkageMatrix
 from copykat_py.baseline import _collapse_repeated_features, _ward_linkage
 from copykat_py.genomic_coordinates import chromosome_label
 from copykat_py.metadata_colors import ContinuousAnnotation, continuous_annotation, is_continuous
@@ -302,7 +302,7 @@ def _safe_dendrogram_with_recursion_management(Z: LinkageMatrix, ax: Axes, n_cel
         sys.setrecursionlimit(old_limit)
 
 
-def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any], below: bool = False, genome: str = "hg20") -> None:
+def _add_chr_labels(ax: Axes, chrom_info: npt.NDArray[Any], below: bool = False, genome: Genome = Genome.HG20) -> None:
     """Place chromosome name labels beside the chromosome-bar axes.
 
     Uses a mixed-coordinate transform (x in data coordinates, y in axes
@@ -347,7 +347,7 @@ def plot_heatmap(
     WNS1: str = "",
     WNS: str = "",
     output_path: str | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
 ) -> None:
     """Plot CNA heatmap with hierarchical clustering dendrogram.
 
@@ -378,6 +378,7 @@ def plot_heatmap(
     output_path : str or None
         Path to save figure.
     """
+    genome = Genome(genome)
     distance = DistanceMetric(distance)
     if output_path is None:
         output_path = f"{sample_name}_copykat_heatmap.png"
@@ -707,7 +708,7 @@ def plot_heatmap_annotated(
     n_cores: int = 1,
     output_path: str | None = None,
     continuous_meta: Sequence[str] | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
 ) -> None:
     """Plot CNA heatmap with per-cell metadata annotation bars and row splitting.
 
@@ -749,6 +750,7 @@ def plot_heatmap_annotated(
         distinct values. By default numeric measurements are detected; small
         integer-coded categories and the row-split column remain categorical.
     """
+    genome = Genome(genome)
     distance = DistanceMetric(distance)
     if output_path is None:
         output_path = f"{sample_name}_copykat_annotated_heatmap.png"

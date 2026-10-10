@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
-from copykat_py._types import BinConversion, GeneByCell, ParallelInfo
+from copykat_py._types import BinConversion, GeneByCell, Genome, ParallelInfo
 from copykat_py.data_loader import load_dna_bins, load_full_anno
 
 _LAST_PAR_INFO: ParallelInfo = {
@@ -30,7 +30,7 @@ def get_last_convert_bins_info() -> ParallelInfo:
 
 def convert_to_bins(
     RNA_mat: pd.DataFrame,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
     n_cores: int = 1,
     values: GeneByCell | None = None,
     cell_names: Sequence[str] | None = None,
@@ -42,7 +42,7 @@ def convert_to_bins(
     RNA_mat : pd.DataFrame
         CNA results with columns: abspos, chromosome_name, start_position,
         end_position, ensembl_gene_id, hgnc_symbol (or mgi_symbol), band, cell1, cell2, ...
-    genome : str
+    genome : Genome
         "hg20" (bins conversion only supported for hg20).
     n_cores : int
         Number of parallel workers.
@@ -60,12 +60,12 @@ def convert_to_bins(
         'RNA_adj': pd.DataFrame - CNA values at genomic bins (chrom, chrompos, abspos, cell1, ...)
         'RNA_adj_values': np.ndarray - the (n_bins, n_cells) values backing 'RNA_adj'
     """
-    if genome != "hg20":
+    if genome != Genome.HG20:
         # For mm10, return gene-level results (no bin conversion, same as R)
         return None
 
-    full_anno = load_full_anno("hg20")
-    DNA_mat = load_dna_bins("hg20")
+    full_anno = load_full_anno(Genome.HG20)
+    DNA_mat = load_dna_bins(Genome.HG20)
 
     # Remove chromosome 24 (Y)
     DNA = DNA_mat[DNA_mat["chrom"] != 24].copy().reset_index(drop=True)

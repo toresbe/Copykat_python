@@ -16,7 +16,7 @@ from scipy import sparse as sp
 from scipy.io import mmread
 
 from copykat_py._logging import default_progress_output, log_progress_to, with_default_progress_output
-from copykat_py._types import CopyKATResult, DistanceMetric, RawInput, RawMatrix, SparseMatrix
+from copykat_py._types import CopyKATResult, DistanceMetric, Genome, RawInput, RawMatrix, SparseMatrix
 from copykat_py.genomic_coordinates import split_cna_table
 
 logger = logging.getLogger(__name__)
@@ -127,8 +127,9 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--genome",
-        default="hg20",
-        choices=["hg20", "mm10"],
+        type=Genome,
+        default=Genome.HG20,
+        choices=list(Genome),
         help="[optional] Genome assembly (default: hg20)",
     )
     parser.add_argument(
@@ -575,7 +576,7 @@ def copykat_anndata(
     row_split: str | None = None,
     sample_name: str = "",
     distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
     n_cores: int = 1,
     output_dir: str | os.PathLike[str] = ".",
     layer: str | None = None,
@@ -594,6 +595,7 @@ def copykat_anndata(
     pca_components: int | None = None,
 ) -> CopyKATResult:
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
+    genome = Genome(genome)
     distance = DistanceMetric(distance)
     _, rawmat, matrix_label = _anndata_to_rawmat(
         adata,

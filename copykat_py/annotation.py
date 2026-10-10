@@ -8,6 +8,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from copykat_py._types import Genome
 from copykat_py.data_loader import load_full_anno
 from copykat_py.genomic_coordinates import annotation_order
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def annotate_gene_rows(
-    genes: Sequence[Hashable] | pd.Index | npt.NDArray[Any], id_type: str = "S", genome: str = "hg20"
+    genes: Sequence[Hashable] | pd.Index | npt.NDArray[Any], id_type: str = "S", genome: Genome = Genome.HG20
 ) -> tuple[pd.DataFrame, npt.NDArray[np.intp]]:
     """Annotate gene identifiers with genomic coordinates, without touching expression values.
 
@@ -25,8 +26,8 @@ def annotate_gene_rows(
         Gene identifiers, one per expression-matrix row.
     id_type : str
         "S" for gene Symbol, "E" for Ensembl ID.
-    genome : str
-        "hg20" or "mm10".
+    genome : Genome
+        Genome.HG20 or Genome.MM10.
 
     Returns
     -------
@@ -36,10 +37,11 @@ def annotate_gene_rows(
     rows : np.ndarray
         For each annotation row, the index of the matching expression-matrix row.
     """
+    genome = Genome(genome)
     logger.info("  start annotation ...")
     full_anno = load_full_anno(genome)
 
-    if genome == "mm10":
+    if genome is Genome.MM10:
         symbol_col = "mgi_symbol"
     else:
         symbol_col = "hgnc_symbol"
@@ -75,7 +77,7 @@ def annotate_gene_rows(
     return anno, rows
 
 
-def annotate_genes(mat: pd.DataFrame, id_type: str = "S", genome: str = "hg20") -> pd.DataFrame:
+def annotate_genes(mat: pd.DataFrame, id_type: str = "S", genome: Genome = Genome.HG20) -> pd.DataFrame:
     """Annotate gene expression matrix with genomic coordinates.
 
     Parameters
@@ -84,8 +86,8 @@ def annotate_genes(mat: pd.DataFrame, id_type: str = "S", genome: str = "hg20") 
         Gene expression matrix, genes in rows, cells in columns.
     id_type : str
         "S" for gene Symbol, "E" for Ensembl ID.
-    genome : str
-        "hg20" or "mm10".
+    genome : Genome
+        Genome.HG20 or Genome.MM10.
 
     Returns
     -------

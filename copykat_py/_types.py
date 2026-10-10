@@ -52,6 +52,13 @@ class DistanceMetric(StrEnum):
     SPEARMAN = "spearman"
 
 
+class Genome(StrEnum):
+    """Supported reference genome assemblies."""
+
+    HG20 = "hg20"
+    MM10 = "mm10"
+
+
 class RawInput(TypedDict):
     """Count matrix with its gene and cell names (genes x cells)."""
 

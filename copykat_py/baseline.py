@@ -17,6 +17,7 @@ from scipy.spatial.distance import cdist, pdist
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
+from copykat_py import backend
 from copykat_py._types import (
     BaselineResult,
     BaselineWarning,
@@ -25,12 +26,12 @@ from copykat_py._types import (
     FloatArray,
     GeneByCell,
     GeneProfile,
+    Genome,
     IntArray,
     LinkageMatrix,
     ParallelInfo,
     SyntheticBaselineResult,
 )
-from copykat_py import backend
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,11 @@ def get_last_cluster_info() -> ParallelInfo:
     return _LAST_CLUSTER_INFO.copy()
 
 
-def resolve_adaptive_pca_components(n_cells: int, pca_components: int | None = None, genome: str = "hg20") -> int:
+def resolve_adaptive_pca_components(
+    n_cells: int,
+    pca_components: int | None = None,
+    genome: Genome = Genome.HG20,
+) -> int:
     """Choose the PCA component cap for large-cell clustering.
 
     When ``pca_components`` is provided, that explicit value is used.
@@ -89,9 +94,9 @@ def resolve_adaptive_pca_components(n_cells: int, pca_components: int | None = N
         return int(pca_components)
 
     n_cells = int(n_cells)
-    genome = str(genome).strip().lower()
+    genome = Genome(str(genome).strip().lower())
 
-    if genome == "mm10":
+    if genome is Genome.MM10:
         if n_cells < MOUSE_AUTO_PCA_SMALL_CELL_COUNT_CUTOFF:
             return MOUSE_AUTO_PCA_SMALL_SAMPLE
         if n_cells < MOUSE_AUTO_PCA_MEDIUM_CELL_COUNT_CUTOFF:
@@ -397,7 +402,7 @@ def baseline_norm_cl(
     n_cores: int = 1,
     cell_names: Sequence[str] | None = None,
     pca_components: int | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
     anchor_selector: Callable[[ClusterLabels, int], tuple[int, str]] | None = None,
 ) -> BaselineResult:
     """Find a cluster of diploid cells using integrative clustering + GMM variance test.
@@ -554,7 +559,7 @@ def baseline_gmm(
     RE_before: BaselineResult | None = None,
     n_cores: int = 1,
     pca_components: int | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
     cluster: bool = True,
 ) -> BaselineResult:
     """Identify diploid cells one-by-one using GMM (fallback when clustering is uncertain).
@@ -655,7 +660,7 @@ def baseline_synthetic(
     min_cells: int = 10,
     n_cores: int = 1,
     pca_components: int | None = None,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
 ) -> SyntheticBaselineResult:
     """Estimate baseline using synthetic normal profiles (for cell line data).
 

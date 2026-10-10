@@ -38,6 +38,7 @@ from copykat_py._types import (
     DistanceMetric,
     FloatArray,
     GeneProfile,
+    Genome,
     ParallelInfo,
     RawMatrix,
     RuntimeInfo,
@@ -245,7 +246,7 @@ def copykat(
     distance: DistanceMetric = DistanceMetric.EUCLIDEAN,
     output_seg: bool = False,
     plot_genes: bool = True,
-    genome: str = "hg20",
+    genome: Genome = Genome.HG20,
     n_cores: int = 1,
     pca_components: int | None = None,
     meta_csv: str | None = None,
@@ -288,8 +289,8 @@ def copykat(
         Whether to output .seg file for IGV.
     plot_genes : bool
         Whether to plot gene-level heatmap.
-    genome : str
-        "hg20" or "mm10".
+    genome : Genome
+        Genome.HG20 or Genome.MM10.
     n_cores : int
         Number of CPU cores for parallel computation.
     pca_components : int or None
@@ -321,7 +322,8 @@ def copykat(
         raise ValueError("anchor must be 'sigma' or 'markers'")
     if final_call not in {"clusters", "arm_correlation"}:
         raise ValueError("final_call must be 'clusters' or 'arm_correlation'")
-    if final_call == "arm_correlation" and str(genome).lower() == "mm10":
+    genome = Genome(genome)
+    if final_call == "arm_correlation" and genome is Genome.MM10:
         raise ValueError("arm_correlation currently uses hg38 centromere coordinates and is only supported for hg20")
     start_time = time.perf_counter()
     # Global seed kept for reproducibility with earlier versions; moving to a
@@ -391,7 +393,7 @@ def copykat(
     runtime_info["pca_selection_mode"] = "manual" if pca_components is not None else "auto_by_input_cell_count"
     runtime_info["pca_selection_genome"] = str(genome)
     runtime_info["pca_selection_input_cells"] = input_cell_count
-    if str(genome).strip().lower() == "mm10":
+    if genome is Genome.MM10:
         runtime_info["pca_selection_rule"] = (
             f"<{MOUSE_AUTO_PCA_SMALL_CELL_COUNT_CUTOFF}->{MOUSE_AUTO_PCA_SMALL_SAMPLE},"
             f"<{MOUSE_AUTO_PCA_MEDIUM_CELL_COUNT_CUTOFF}->{MOUSE_AUTO_PCA_MEDIUM_SAMPLE},"
@@ -430,12 +432,12 @@ def copykat(
     logger.info("step 2: annotating gene coordinates ...")
     step_start = time.perf_counter()
     anno_mat, anno_rows = annotate_gene_rows(gene_names, id_type=id_type, genome=genome)
-    runtime_info["parameters"]["gene_order"] = "chromosome,start_position" if genome == "mm10" else "abspos"
+    runtime_info["parameters"]["gene_order"] = "chromosome,start_position" if genome is Genome.MM10 else "abspos"
 
     # =========================================================================
     # Step 3: Remove cell cycle genes and HLA genes (hg20 only)
     # =========================================================================
-    if genome == "hg20":
+    if genome is Genome.HG20:
         symbol_col = "hgnc_symbol"
         cyclegenes = load_cyclegenes()
         hla_genes = anno_mat[symbol_col][anno_mat[symbol_col].str.startswith("HLA-", na=False)].tolist()
@@ -809,7 +811,7 @@ def copykat(
     # =========================================================================
     # Step 6: Convert to genomic bins (hg20 only)
     # =========================================================================
-    if genome == "hg20":
+    if genome is Genome.HG20:
         logger.info("step 6: convert to genomic bins ...")
         step_start = time.perf_counter()
         Aj = convert_to_bins(gene_anno, genome=genome, n_cores=n_cores, values=results_com, cell_names=cell_cols_seg)

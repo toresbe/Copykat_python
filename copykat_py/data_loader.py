@@ -6,6 +6,8 @@ import pandas as pd
 from scipy import sparse
 from scipy.io import mmread
 
+from copykat_py._types import Genome
+
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 
@@ -13,23 +15,25 @@ def _load_csv(filename: str) -> pd.DataFrame:
     return pd.read_csv(os.path.join(_DATA_DIR, filename))
 
 
-def load_full_anno(genome: str = "hg20") -> pd.DataFrame:
+def load_full_anno(genome: Genome = Genome.HG20) -> pd.DataFrame:
     """Load the gene annotation table.
 
     Columns: abspos, chromosome_name, start_position, end_position,
     ensembl_gene_id, hgnc_symbol (or mgi_symbol for mm10), band.
     """
-    if genome == "hg20":
+    genome = Genome(genome)
+    if genome is Genome.HG20:
         return _load_csv("full_anno_hg20.csv")
-    elif genome == "mm10":
+    elif genome is Genome.MM10:
         return _load_csv("full_anno_mm10.csv")
     else:
         raise ValueError(f"Unsupported genome: {genome}")
 
 
-def load_dna_bins(genome: str = "hg20") -> pd.DataFrame:
+def load_dna_bins(genome: Genome = Genome.HG20) -> pd.DataFrame:
     """Load 220KB variable genomic bins (chrom, chrompos, abspos)."""
-    if genome == "hg20":
+    genome = Genome(genome)
+    if genome is Genome.HG20:
         return _load_csv("DNA_hg20.csv")
     else:
         raise ValueError(f"DNA bins only available for hg20, got {genome}")
