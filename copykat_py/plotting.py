@@ -52,18 +52,30 @@ logger = logging.getLogger(__name__)
 class AnnotatedHeatmapOptions:
     """Display and clustering options for an annotated CNA heatmap.
 
-    ``row_split_col=None`` uses the first metadata column, while an empty
-    string disables row splitting. Continuous metadata columns are inferred
-    unless explicitly named in ``continuous_meta``. When ``output_path`` is
-    omitted, a filename is derived from ``sample_name``.
+    The genome belongs to the data and is passed directly to
+    ``plot_heatmap_annotated`` rather than stored in these display options.
 
-    Attributes:
-        row_split_col: Metadata column used to group cells.
-        sample_name: Label shown in the figure title and default filename.
-        distance: Metric used to order cells within each group.
-        n_cores: Parallel threads passed to the clustering backend.
-        output_path: PNG destination, or ``None`` to use the default filename.
-        continuous_meta: Metadata columns to color as continuous values.
+    Attributes
+    ----------
+    row_split_col : str or None, default None
+        Metadata column used to split and label rows. ``None`` uses the first
+        metadata column after the cell-name column; an empty string disables
+        row splitting and clusters all cells together.
+    sample_name : str, default ""
+        Label shown in the figure title and prefix for the default output
+        filename ``{sample_name}_copykat_annotated_heatmap.png``.
+    distance : DistanceMetric, default DistanceMetric.EUCLIDEAN
+        Distance metric used to order cells within each metadata group.
+        Normalized to a ``DistanceMetric`` when the options are constructed.
+    n_cores : int, default 1
+        Number of CPU workers requested for plotting-time clustering.
+    output_path : str or None, default None
+        PNG destination. ``None`` derives the filename from ``sample_name``.
+    continuous_meta : Sequence of str or None, default None
+        Metadata columns forced to use continuous color scales. Numeric
+        columns are also inferred automatically when they are not the row-split
+        column. ``None`` leaves inference unchanged. Supplied names are stored
+        as an immutable tuple; the row-split column must remain categorical.
     """
 
     row_split_col: str | None = None
