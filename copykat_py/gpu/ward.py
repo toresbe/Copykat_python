@@ -31,6 +31,11 @@ sqrt(2 * delta_SSE), the same convention as scipy/fastcluster).
 import numpy as np
 import torch
 
+try:
+    from copykat_py.gpu import nn_triton
+except Exception:  # pragma: no cover - Triton missing or unsupported GPU
+    nn_triton = None
+
 _EPS32 = 2.0 ** -24
 
 
@@ -88,15 +93,61 @@ def _nearest_neighbours(C, size, query=None, k=8, mem_bytes=1 << 30, S=None):
     return nn, nnw, n_retry
 
 
+def _sq_norms(X, chunk_elems=int(2.5e8)):
+    """fp64 squared row norms of X, computed in row chunks."""
+    out = torch.empty(X.shape[0], dtype=torch.float64, device=X.device)
+    step = max(1, chunk_elems // max(1, X.shape[1]))
+    for lo in range(0, X.shape[0], step):
+        out[lo:lo + step] = (X[lo:lo + step].double() ** 2).sum(1)
+    return out
+
+
+def _exact_pairs(C, size, rows, cols, mem_bytes):
+    """Exact fp64 Ward costs between rows[i] and each of cols[i, :]."""
+    d = C.shape[1]
+    kk = cols.shape[1]
+    w = torch.empty(cols.shape, dtype=torch.float64, device=C.device)
+    sub = max(1, int(mem_bytes // (8 * 2 * kk * d)))
+    for s0 in range(0, len(rows), sub):
+        r = rows[s0:s0 + sub]
+        ci = cols[s0:s0 + sub]
+        diff = C[r].double()[:, None, :] - C[ci].double()
+        w[s0:s0 + sub] = _ward_factor(size[r, None], size[ci]) * (diff * diff).sum(-1)
+        del diff
+    return w
+
+
+_REACH_CAP = 16
+
+
+def _lower_bounds(G, rows, nrm32, size32, err):
+    """Ward cost lower bounds from a GEMM block (PyTorch version of nn_triton)."""
+    low = G.mul(-2.0).add_(nrm32[rows, None]).add_(nrm32[None, :])
+    low.sub_(err[:, None]).clamp_(min=0.0)
+    low.mul_(_ward_factor(size32[rows, None], size32[None, :]))
+    low[torch.arange(len(rows), device=G.device), rows] = float("inf")
+    return low
+
+
 def _candidate_search(C, size, query, k, mem_bytes, S):
-    """One certified top-k pass; returns (nn, nnw, positions in query not certified)."""
+    """One certified search pass; returns (nn, nnw, positions in query not certified).
+
+    Per row: lower bounds on every Ward cost come from an fp32 GEMM (minus
+    its error bound). Fast path: re-score the single best lower bound
+    exactly, then collect every column whose lower bound reaches that exact
+    cost (at most ``_REACH_CAP``); re-scoring those exactly gives the
+    nearest neighbour, since no other column can beat or tie it. With Triton
+    both reductions run fused over the GEMM output. Rows with more reaching
+    columns re-score their ``k`` best lower bounds and are certified when
+    the (k+1)-th cannot beat the winner.
+    """
     m, d = C.shape
     dev = C.device
     if S is None:
         S = C
     q = len(query)
     k = min(k, m - 1)
-    nrm = (S.double() ** 2).sum(1)  # fp64 norms of the fp32 search coordinates
+    nrm = _sq_norms(S)  # fp64 norms of the fp32 search coordinates
     nrm32 = nrm.float()
     # Error bound on an fp32 GEMM squared distance, relative to the norms
     # (plus slack for a projection basis that is orthonormal only to fp32).
@@ -107,44 +158,68 @@ def _candidate_search(C, size, query, k, mem_bytes, S):
     uncertified = []
     block = max(1, min(q, int(mem_bytes // (4 * 3 * m))))
     size32 = size.float()
+    inf = torch.tensor(float("inf"), device=dev)
     for lo in range(0, q, block):
         hi = min(q, lo + block)
         rows = query[lo:hi]
         G = S[rows] @ S.T  # fp32 GEMM
-        D2 = (nrm32[rows, None] + nrm32[None, :]) - 2.0 * G
+        err = (gamma * (nrm32[rows] + max_nrm)).contiguous()
+        if nn_triton is not None:
+            _, j1 = nn_triton.row_argmin(G, rows, nrm32, size32, err)
+        else:
+            j1 = _lower_bounds(G, rows, nrm32, size32, err).argmin(dim=1)
+        w1 = _exact_pairs(C, size, rows, j1[:, None], mem_bytes)[:, 0]
+        # Columns whose lower bound reaches w1 (rounded up to fp32) could beat
+        # or tie it; re-score them all.
+        w1_up = torch.nextafter(w1.float(), inf).contiguous()
+        if nn_triton is not None:
+            reach, hits = nn_triton.row_reach(G, rows, nrm32, size32, err, w1_up, cap=_REACH_CAP)
+        else:
+            low = _lower_bounds(G, rows, nrm32, size32, err)
+            hit = low <= w1_up[:, None]
+            reach = hit.sum(dim=1)
+            hv, hits = torch.topk(torch.where(hit, -torch.arange(m, device=dev, dtype=torch.float32), -float("inf")),
+                                  min(_REACH_CAP, m), dim=1)
+            hits = torch.where(hv > -float("inf"), hits, -1)
+            del low, hit
+        nn[lo:hi] = j1
+        nnw[lo:hi] = w1
+        multi = torch.nonzero((reach > 1) & (reach <= _REACH_CAP))[:, 0]
+        if multi.numel():
+            hc = hits[multi]
+            valid = hc >= 0
+            hw = _exact_pairs(C, size, rows[multi], torch.where(valid, hc, rows[multi, None]), mem_bytes)
+            hw = torch.where(valid, hw, float("inf"))
+            bw = hw.min(dim=1).values
+            # lowest column among exact ties
+            bj = torch.where(hw == bw[:, None], hc, m).min(dim=1).values
+            nn[lo + multi] = bj
+            nnw[lo + multi] = bw
+        rest = torch.nonzero(reach > _REACH_CAP)[:, 0]
+        if rest.numel() == 0:
+            continue
+
+        sub_lower = _lower_bounds(G[rest], rows[rest], nrm32, size32, err[rest])
         del G
-        D2 -= gamma * (nrm32[rows, None] + max_nrm)
-        D2.clamp_(min=0.0)
-        D2 *= _ward_factor(size32[rows, None], size32[None, :])
-        lower = D2
-        lower[torch.arange(hi - lo, device=dev), rows] = float("inf")
-        cand_w, cand = torch.topk(lower, k + 1 if k + 1 <= m - 1 else k, dim=1, largest=False, sorted=True)
-        del lower, D2
+        sub_rows = rows[rest]
+        cand_w, cand = torch.topk(sub_lower, k + 1 if k + 1 <= m - 1 else k, dim=1, largest=False, sorted=True)
+        del sub_lower
         kk = min(k, cand.shape[1])
         cidx = cand[:, :kk]
-        # Exact FP64 re-score of the candidates, in chunks of rows so the
-        # (rows x k x d) differences stay within the memory budget
-        w = torch.empty(cidx.shape, dtype=torch.float64, device=dev)
-        sub = max(1, int(mem_bytes // (8 * 2 * kk * d)))
-        for s0 in range(0, hi - lo, sub):
-            r = rows[s0:s0 + sub]
-            ci = cidx[s0:s0 + sub]
-            diff = C[r].double()[:, None, :] - C[ci].double()
-            w[s0:s0 + sub] = _ward_factor(size[r, None], size[ci]) * (diff * diff).sum(-1)
-            del diff
+        w = _exact_pairs(C, size, sub_rows, cidx, mem_bytes)
         # Tie-break on the lowest index: order candidates by index first
         order = torch.argsort(cidx, dim=1)
         cidx = torch.gather(cidx, 1, order)
         w = torch.gather(w, 1, order)
         bw, bpos = w.min(dim=1)
-        nn[lo:hi] = torch.gather(cidx, 1, bpos[:, None])[:, 0]
-        nnw[lo:hi] = bw
+        nn[lo + rest] = torch.gather(cidx, 1, bpos[:, None])[:, 0]
+        nnw[lo + rest] = bw
         if cand.shape[1] > kk:
             # Next candidate's lower bound must not beat the exact winner
             # (ties included, so the lowest-index rule stays exact).
             bad = torch.nonzero(cand_w[:, kk].double() <= bw)[:, 0]
             if bad.numel():
-                uncertified.append(bad + lo)
+                uncertified.append(lo + rest[bad])
     bad = torch.cat(uncertified) if uncertified else torch.empty(0, dtype=torch.long, device=dev)
     return nn, nnw, bad
 
@@ -171,7 +246,7 @@ def _projection_basis(C, dim, seed=1234):
     return Q.contiguous()
 
 
-def ward_linkage(X, device="cuda", k=8, return_stats=False, search_dim=None):
+def ward_linkage(X, device="cuda", k=8, return_stats=False, search_dim=None, overwrite_input=False):
     """Exact Ward linkage of the rows of ``X`` (Euclidean) on the GPU.
 
     Parameters
@@ -182,6 +257,9 @@ def ward_linkage(X, device="cuda", k=8, return_stats=False, search_dim=None):
     search_dim : int or None
         When set and smaller than d, run the candidate search on a
         ``search_dim``-wide principal projection (the tree is still exact).
+    overwrite_input : bool
+        Allow a float32 CUDA tensor ``X`` to be centred and compacted in
+        place instead of copied (saves one copy of the data).
 
     Returns
     -------
@@ -190,6 +268,8 @@ def ward_linkage(X, device="cuda", k=8, return_stats=False, search_dim=None):
     """
     if isinstance(X, torch.Tensor):
         C = X.to(device=device, dtype=torch.float32).contiguous()  # centred in place below
+        if C.data_ptr() == X.data_ptr() and not overwrite_input:
+            C = C.clone()
     else:
         C = torch.as_tensor(np.asarray(X, dtype=np.float32), device=device)
     n, d = C.shape

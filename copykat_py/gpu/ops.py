@@ -22,8 +22,10 @@ PROJECTED_SEARCH_MIN_CELLS = 30000
 
 
 def free_bytes():
+    """Device memory available to this process, counting blocks PyTorch's
+    caching allocator has reserved but not handed out."""
     free, _ = torch.cuda.mem_get_info()
-    return free
+    return free + torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
 
 
 def _chunk(n_items, bytes_per_item, fraction=0.25, minimum=1):
@@ -262,7 +264,7 @@ def ward_cluster(data, reduce_to=None, collapse=True):
         # Exact tree; the projection only narrows the candidate search.
         search_dim = PROJECTED_SEARCH_DIM
         engine = f"{engine}+search{search_dim}"
-    Z = ward_linkage(X, search_dim=search_dim)
+    Z = ward_linkage(X, search_dim=search_dim, overwrite_input=True)
     return Z, engine
 
 
@@ -409,39 +411,36 @@ def bin_medians(values, bin_gene_indices, n_bins, source_bin):
 
 
 def adjust_baseline(mat, diploid_mask):
-    """GPU version of copykat._adjust_baseline_inplace (fp64); overwrites ``mat``.
+    """GPU version of copykat._adjust_baseline_inplace; overwrites ``mat``.
 
     Same arithmetic as the CPU version. The per-row diploid statistics need
-    passes over all cells, so cells are streamed in chunks: (1) diploid row
-    means, (2) re-centre and accumulate diploid means, (3) diploid SDs,
-    (4) flatten noise and re-centre each cell.
+    passes over all cells: (1) diploid row means, (2) re-centre and
+    accumulate diploid means, (3) diploid SDs, (4) flatten noise and
+    re-centre each cell. The matrix stays on the device when it fits (fp64,
+    else fp32 storage with fp64 reductions) and each pass walks it in cell
+    chunks so temporaries stay small; otherwise fp64 cell chunks are streamed
+    from the host on every pass.
     """
     n_bins, n_cells = mat.shape
     dm = np.asarray(diploid_mask, dtype=bool)
     n_dip = int(dm.sum())
-    # Keep the whole matrix on the device when it fits (fp64, else fp32 with
-    # fp64 reductions); otherwise stream fp64 cell chunks through each pass.
     free = free_bytes()
-    if 3 * n_bins * n_cells * 8 < 0.8 * free:
-        store_dtype, chunk = torch.float64, n_cells
-    elif 3 * n_bins * n_cells * 4 < 0.8 * free:
-        store_dtype, chunk = torch.float32, n_cells
-    else:
-        store_dtype, chunk = torch.float64, _chunk(n_cells, n_bins * 8 * 4, 0.4, minimum=64)
-    spans = [(lo, min(n_cells, lo + chunk)) for lo in range(0, n_cells, chunk)]
-    resident = len(spans) == 1
-    cache = {}
+    work = _chunk(n_cells, n_bins * 8 * 4, 0.15, minimum=64)  # cells per pass chunk
+    R = None
+    if 1.2 * n_bins * n_cells * 8 < 0.7 * free:
+        R = torch.empty((n_cells, n_bins), dtype=torch.float64, device=DEVICE).T
+    elif 1.2 * n_bins * n_cells * 4 < 0.7 * free:
+        R = torch.empty((n_cells, n_bins), dtype=torch.float32, device=DEVICE).T
+    spans = [(lo, min(n_cells, lo + work)) for lo in range(0, n_cells, work)]
+    if R is not None:
+        for lo, hi in spans:
+            R[:, lo:hi] = _upload(mat[:, lo:hi], torch.float64).to(R.dtype)
 
     def load(lo, hi):
-        if resident and lo in cache:
-            return cache[lo]
-        M = _upload(mat[:, lo:hi], store_dtype)
-        if resident:
-            cache[lo] = M
-        return M
+        return R[:, lo:hi] if R is not None else _upload(mat[:, lo:hi], torch.float64)
 
     def store(lo, hi, M):
-        if not resident:
+        if R is None:
             _download_into(mat[:, lo:hi], M)
 
     def dip_cols(lo, hi):
@@ -477,5 +476,4 @@ def adjust_baseline(mat, diploid_mask):
         M -= col_means(M).to(M.dtype)
         _download_into(mat[:, lo:hi], M)
         del M, noise
-        cache.clear()
     return mat

@@ -134,6 +134,14 @@ def _add_common_copykat_args(parser):
              "(default: automatic by cell count)",
     )
     parser.add_argument(
+        "--backend",
+        default="cpu",
+        choices=["cpu", "gpu", "gpu-compat"],
+        help="[optional] Compute backend: cpu (reference), gpu (CUDA, exact algorithms in place of "
+             "the CPU path's approximations), gpu-compat (CUDA, same approximations as cpu) "
+             "(default: cpu)",
+    )
+    parser.add_argument(
         "--output-dir",
         "-o",
         default=".",
@@ -398,6 +406,8 @@ def _run_copykat_analysis(
     print(f"Working directory: {output_dir}")
     print(f"Input: {input_label or getattr(args, 'input', '<in-memory>')}")
     print(f"Requested cores: {args.n_cores}")
+    if getattr(args, "backend", "cpu") != "cpu":
+        print(f"Backend: {args.backend}")
     if args.pca_components is not None:
         print(f"Requested adaptive PCA components: {args.pca_components}")
     if meta_csv is not None:
@@ -426,6 +436,7 @@ def _run_copykat_analysis(
             pca_components=args.pca_components,
             meta_csv=meta_csv,
             row_split_col=row_split_col,
+            backend_name=getattr(args, "backend", "cpu"),
         )
 
         print("CopyKAT-Py analysis complete.")
@@ -519,6 +530,7 @@ def copykat_anndata(
     output_seg=False,
     plot_genes=True,
     pca_components=None,
+    backend="cpu",
 ):
     """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
     _, rawmat, matrix_label = _anndata_to_rawmat(
@@ -565,6 +577,7 @@ def copykat_anndata(
         genome=genome,
         n_cores=n_cores,
         pca_components=pca_components,
+        backend=backend,
         output_dir=str(output_dir),
     )
     return _run_copykat_analysis(
