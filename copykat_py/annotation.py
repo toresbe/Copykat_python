@@ -40,7 +40,7 @@ def annotate_gene_rows(
         For each annotation row, the index of the matching expression-matrix row.
     """
     genome = Genome(genome)
-    id_type = GeneIdType.from_legacy(id_type)
+    id_type = GeneIdType.normalize(id_type)
     logger.info("  start annotation ...")
     full_anno = load_full_anno(genome)
 

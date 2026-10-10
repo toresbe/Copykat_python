@@ -97,8 +97,8 @@ class GeneIdType(StrEnum):
     ENSEMBL = "E"
 
     @classmethod
-    def from_legacy(cls, value: GeneIdType | str) -> GeneIdType:
-        """Normalize the historical ID-type argument, which treated E-prefixed values as Ensembl."""
+    def normalize(cls, value: GeneIdType | str) -> GeneIdType:
+        """Normalize the ID-type argument: E-prefixed values select Ensembl; others select symbols."""
         if isinstance(value, cls):
             return value
         return cls.ENSEMBL if str(value).upper().startswith(cls.ENSEMBL.value) else cls.SYMBOL

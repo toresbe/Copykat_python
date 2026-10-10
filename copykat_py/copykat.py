@@ -332,7 +332,7 @@ def copykat(
     """
     distance = DistanceMetric(distance)
     backend_name = ExecutionBackend(backend_name)
-    id_type = GeneIdType.from_legacy(id_type)
+    id_type = GeneIdType.normalize(id_type)
     cell_line = CellLineMode(cell_line)
     ks_method = KSMethod(ks_method)
     anchor = AnchorStrategy(anchor)
