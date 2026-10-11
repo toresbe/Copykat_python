@@ -663,11 +663,20 @@ def baseline_norm_cl(
     # Parallel GMM fitting. Consensus profiles are computed up front and fitted
     # in threads so workers never receive a copy of the full matrix.
     consensus_profiles = group_medians(norm_mat_smooth, [labels == cl_id for cl_id in unique_clusters], n_cores)
-    SDM = np.array(
-        Parallel(n_jobs=n_cores, prefer="threads")(
-            delayed(fit_gmm_sigma)(consensus) for consensus in consensus_profiles
+    if backend.use_gpu():
+        SDM = np.array(
+            Parallel(n_jobs=n_cores, prefer="threads")(
+                delayed(fit_gmm_sigma)(consensus) for consensus in consensus_profiles
+            )
         )
-    )
+    else:
+        # The batched kernel gives each profile the same fit as fit_gmm_sigma.
+        SDM = _fit_gmm_3component_many(
+            np.column_stack(consensus_profiles),
+            [max(0.05, 0.5 * float(np.std(consensus))) for consensus in consensus_profiles],
+            max_iter=5000,
+            n_cores=n_cores,
+        )[2]
 
     # Silhouette width for 2-cluster separation
     if Z is not None:
