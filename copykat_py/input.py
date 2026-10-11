@@ -29,7 +29,7 @@ class PreparedInput:
     retains all input names before cell filtering.
     """
 
-    matrix: sparse.csr_matrix | npt.NDArray[Any]
+    matrix: sparse.csc_matrix | npt.NDArray[Any]
     genes: pd.Index | npt.NDArray[Any]
     barcodes: list[str]
     original_cell_names: list[str]
@@ -125,7 +125,7 @@ def _prepare_sparse_input(
     keep_genes = detection_rate > low_dr
     filtered_gene_rows = int((~keep_genes).sum())
     return PreparedInput(
-        matrix=csc[keep_genes, :].tocsr(),
+        matrix=csc[keep_genes, :],
         genes=genes[keep_genes],
         barcodes=barcodes.tolist(),
         original_cell_names=original_cell_names,
@@ -140,7 +140,7 @@ def _prepare_sparse_input(
 def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: float) -> PreparedInput:
     """Filter cells and genes, returning a ``PreparedInput`` result.
 
-    The matrix is genes x cells, scipy CSR for sparse dict input (so it is
+    The matrix is genes x cells, scipy CSC for sparse dict input (so it is
     only densified after annotation and cell filtering) or a numpy array.
     """
     if isinstance(rawmat, dict):
