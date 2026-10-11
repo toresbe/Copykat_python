@@ -80,13 +80,13 @@ def pipeline_stubs(monkeypatch):
         "baseline_synthetic": synthetic,
         "cna_mcmc": segment,
         "convert_to_bins": convert,
-        "dlm_smooth": lambda values, **kwargs: values.copy(order="F"),
+        "dlm_smooth": _identity_smooth,
     }
     for target, names in (
-        (preprocessing, ("annotate_gene_rows", "load_cyclegenes")),
+        (preprocessing, ("annotate_gene_rows", "load_cyclegenes", "dlm_smooth")),
         (baseline, ("baseline_norm_cl", "baseline_synthetic")),
         (segmentation, ("cna_mcmc",)),
-        (workflow, ("convert_to_bins", "dlm_smooth")),
+        (workflow, ("convert_to_bins",)),
     ):
         for name in names:
             monkeypatch.setattr(target, name, stubs[name])
@@ -97,6 +97,14 @@ def pipeline_stubs(monkeypatch):
     monkeypatch.setattr(plotting, "plot_heatmap_annotated", annotated_plot)
     monkeypatch.setattr(workflow._anchor, "arm_correlation_calls", lambda *args: np.arange(12) >= 6)
     return stubs, plot, annotated_plot
+
+
+def _identity_smooth(values: np.ndarray, n_cores: int = 1, out: np.ndarray | None = None) -> np.ndarray:
+    """Stand-in for dlm_smooth: returns (or writes) the input unchanged."""
+    if out is None:
+        return values.copy(order="F")
+    out[...] = values
+    return out
 
 
 def input_counts() -> pd.DataFrame:
