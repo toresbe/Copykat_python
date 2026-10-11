@@ -41,6 +41,10 @@ def get_last_convert_bins_info() -> ParallelInfo:
     return _LAST_PAR_INFO.copy()
 
 
+# Cells per task when computing bin medians.
+_BIN_BLOCK_CELLS = 2048
+
+
 def convert_to_bins(
     RNA_mat: pd.DataFrame,
     genome: Genome = Genome.HG20,
@@ -151,46 +155,55 @@ def convert_to_bins(
     # the gene-level values: a median of float32 values is one of them, so
     # nothing is lost, and the bins x cells matrix takes half the memory.
     n_cells = len(cell_cols)
-    RNA_adj = np.zeros((len(DNA), n_cells), order="F", dtype=np.float32)
-    valid_mask = np.zeros(len(DNA), dtype=bool)
-
-    def _process_bin(i: int) -> None:
-        row_idx = bin_gene_indices[i]
-        if row_idx:
-            RNA_adj[i, :] = np.median(RNA_values[row_idx, :], axis=0)
-            valid_mask[i] = True
-
     n_bins = len(DNA)
+    RNA_adj = np.zeros((n_bins, n_cells), order="F", dtype=np.float32)
+
+    # Bins with the same number of genes are computed together (one gather and
+    # one median per group, as on the GPU backend). A median selects values,
+    # so grouping cannot change them.
+    by_len: dict[int, list[int]] = {}
+    for b, rows in enumerate(bin_gene_indices):
+        if rows:
+            by_len.setdefault(len(rows), []).append(b)
+    groups = [
+        (np.asarray(bins), np.asarray([bin_gene_indices[b] for b in bins], dtype=np.intp)) for bins in by_len.values()
+    ]
+    # Empty bins copy their nearest valid bin (the lower one on ties).
+    valid_indices = np.flatnonzero([bool(rows) for rows in bin_gene_indices])
+    fill_to = fill_from = np.empty(0, dtype=np.intp)
+    if 0 < len(valid_indices) < n_bins:
+        fill_to = np.setdiff1d(np.arange(n_bins), valid_indices)
+        pos = np.searchsorted(valid_indices, fill_to)
+        left = valid_indices[np.maximum(pos - 1, 0)]
+        right = valid_indices[np.minimum(pos, len(valid_indices) - 1)]
+        fill_from = np.where((pos > 0) & ((fill_to - left) <= (right - fill_to)), left, right)
+
     max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
-    n_jobs = max(1, min(int(n_cores), max_cores, n_bins))
-    chunk_size = max(1, n_bins // (n_jobs * 4))
+    n_jobs = max(1, min(int(n_cores), max_cores))
+    block_cells = max(1, min(_BIN_BLOCK_CELLS, -(-n_cells // n_jobs)))
+    blocks = [(lo, min(n_cells, lo + block_cells)) for lo in range(0, n_cells, block_cells)]
     _LAST_PAR_INFO.update(
         {
-            "parallel": n_jobs > 1,
+            "parallel": n_jobs > 1 and len(blocks) > 1,
             "requested_cores": int(n_cores),
-            "effective_cores": int(n_jobs),
-            "tasks": int(n_bins),
-            "chunk_size": int(chunk_size),
+            "effective_cores": int(min(n_jobs, len(blocks))),
+            "tasks": len(blocks),
+            "chunk_size": int(block_cells),
         }
     )
 
-    def _process_chunk(start: int, end: int) -> None:
-        for i in range(start, end):
-            _process_bin(i)
+    def _process_cells(span: tuple[int, int]) -> None:
+        lo, hi = span
+        block_values = RNA_values[:, lo:hi]
+        out = RNA_adj[:, lo:hi]
+        for bins, rows in groups:
+            gathered = block_values[rows]  # (bins, genes per bin, cells)
+            out[bins] = gathered[:, 0] if rows.shape[1] == 1 else np.median(gathered, axis=1)
+        if len(fill_to):
+            out[fill_to] = out[fill_from]
 
-    # Threads share RNA_values and write disjoint rows of RNA_adj; a process
-    # pool would pickle the whole matrix into every task through the closure.
-    ranges = [(s, min(s + chunk_size, n_bins)) for s in range(0, n_bins, chunk_size)]
-    Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_process_chunk)(s, e) for s, e in ranges)
-
-    # Fill empty bins with nearest valid bin
-    valid_indices = np.where(valid_mask)[0]
-    if len(valid_indices) > 0 and len(valid_indices) < len(DNA):
-        empty_indices = np.where(~valid_mask)[0]
-        for ei in empty_indices:
-            distances = np.abs(valid_indices - ei)
-            nearest = valid_indices[np.argmin(distances)]
-            RNA_adj[ei, :] = RNA_adj[nearest, :]
+    # Threads share RNA_values and write disjoint cell columns of RNA_adj.
+    Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_process_cells)(span) for span in blocks)
 
     # Build output DataFrame on top of RNA_adj without copying it
     RNA_adj_df = pd.DataFrame(RNA_adj, columns=cell_cols, copy=False)
