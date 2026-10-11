@@ -22,6 +22,81 @@ The original CopyKAT-R package is widely used for distinguishing aneuploid tumor
   
 ---
 
+## Differences from upstream CopyKAT-Python
+
+This fork branched from [navinlabcode/Copykat_python](https://github.com/navinlabcode/Copykat_python) at
+`ea1a15c`. Everything below is relative to that commit. The install commands in this README clone the
+upstream repository; to get these changes, clone `https://github.com/toresbe/Copykat_python` instead.
+
+### Requirements
+
+- Python 3.11 or newer (upstream: 3.9). Minimum versions are raised for numpy (2.0), scipy, pandas,
+  scikit-learn, matplotlib and numba.
+- `pyarrow` and `threadpoolctl` are new required dependencies. `seaborn` and `tqdm` are no longer required.
+- New optional extras: `.[gpu]` (torch, triton; the GPU backends also need a CuPy build matching your CUDA
+  toolkit), `.[allele]` (torch) and `.[dev]` (ruff, mypy, stubs).
+
+### New command-line tools
+
+| Command | Purpose |
+| --- | --- |
+| `copykat-py-report` | Builds text, Markdown, HTML or JSON reports from a finished run directory. See [Reports from completed runs](#reports-from-completed-runs). |
+| `copykat-py-allele` | Allele-based check of the tumour/normal labels, with sub-commands `build-index`, `count`, `panel`, `phase` and `orient`. Needs reads or a BAM, not just a count matrix. See [the allele workflow guide](docs/allele_orientation.md). |
+
+### New flags on `copykat-py` and `copykat_matrix`
+
+All are opt-in. Without them a run uses the same choices as upstream.
+
+| Flag | Default | Choices | Effect |
+| --- | --- | --- | --- |
+| `--backend` | `cpu` | `cpu`, `gpu`, `gpu-compat` | Experimental CUDA backend for Ward clustering, selected GMM fits and baseline adjustment. |
+| `--ks-method` | `mc` | `mc`, `exact` | `exact` uses an exact posterior-Gamma KS distance for breakpoints instead of Monte Carlo sampling. The `--ks-cut` default was not recalibrated for it. |
+| `--anchor` | `sigma` | `sigma`, `markers` | `markers` picks an immune or endothelial marker-enriched cluster as the normal reference when one is found. |
+| `--final-call` | `clusters` | `clusters`, `arm_correlation` | `arm_correlation` makes the final calls from arm-level profiles. hg20 only; it raises an error with `--genome mm10`. |
+| `--allele-counts DIR` | none | | cellsnp-lite-format allele-count directory. Must be given together with `--allele-phase`. |
+| `--allele-phase CSV` | none | | Phased SNP CSV from `copykat-py-allele phase`. |
+
+With both allele flags, the prediction is checked against allelic imbalance after the run. The run writes
+`<sample>_copykat_allele_orientation.json`. If the labels are flipped, `<sample>_copykat_prediction.txt` is
+rewritten and the original is kept as `<sample>_copykat_prediction.before_allele.txt`; the heatmap keeps the
+original labels.
+
+### New flags on `copykat-py-plot`
+
+- `--continuous-meta COLUMN [COLUMN ...]` draws the named numeric metadata columns with a continuous color scale.
+- `--no-row-split` clusters all cells together instead of splitting rows by a metadata column.
+- `--cna` now also accepts mm10 gene-level CNA tables; the annotation columns are detected automatically.
+
+### Python API changes
+
+- `copykat()` takes four new keyword arguments matching the flags above: `backend_name`, `ks_method`,
+  `anchor` and `final_call`. Allele orientation is not a `copykat()` argument; call
+  `copykat_py.allele.orient_prediction` on the result instead.
+- `copykat_anndata()` does not take the new arguments; it always runs with the defaults.
+- Fixed choices are typed enums exported from `copykat_py` (`Genome`, `DistanceMetric`, `ExecutionBackend`
+  and others). Plain strings still work. See [Typed option enums](#typed-option-enums).
+- **Breaking:** `plot_heatmap_annotated()` no longer takes `row_split_col`, `sample_name`, `distance`,
+  `n_cores` or `output_path` as keyword arguments. Pass them in an `AnnotatedHeatmapOptions` from
+  `copykat_py.plotting` as `options=`, and the genome as the keyword-only `genome=` (default `Genome.HG20`).
+  An empty `row_split_col` turns off row splitting.
+- The `copykat()` result is typed as `CopyKATResult`. Besides `prediction`, `CNAmat` and `hclustering`, it
+  carries `runtime` (the contents of the runtime JSON) and, after allele orientation from the CLI,
+  `allele_orientation`.
+- Progress goes to the `copykat_py` logger instead of `print`. See [Progress messages](#progress-messages).
+
+### Outputs and behaviour
+
+- `<sample>_copykat_runtime.json` now also records parameters, software versions, reference-cell counts,
+  filtering counts and warnings, which `copykat-py-report` reads.
+- mm10 genes are ordered by chromosome and gene start before smoothing and segmentation. Upstream sorted
+  by a chromosome offset, which interleaved genes within a chromosome, so mm10 calls differ from upstream.
+  Rerun mm10 samples from raw counts. Validation: [docs/mm10-order-validation.md](docs/mm10-order-validation.md).
+- Large parts of the CPU pipeline were rewritten for speed and memory (Ward linkage, DLM smoothing,
+  segmentation, GMM fits, CNA output). The output files keep their formats but the values are not
+  guaranteed to match upstream bit for bit. See [the accuracy comparison](docs/accuracy-results.md).
+
+---
+
 ## Installation
 
 **From source:**
