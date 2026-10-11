@@ -11,6 +11,12 @@ X markers and dashed lines are extrapolated 170k points, not completed runs.
 Error bars show model sensitivity, not confidence intervals. Hollow markers
 are runs that were not pinned to physical cores.
 
+> **Update 2026-10-11:** the `cpu-experimental` branch (a new CPU stack, replacing the "CPU experimental"
+> column below) runs the full 170k Xenium set with the heatmap in 311 s at a 14.9 GB peak on 32 threads, and 80k in
+> 125 s (fork main: 2,328 s, 32.6 GB). Its accuracy against main on the labelled samples and what each change
+> preserves are in [`benchmark-cpu-experimental.md`](benchmark-cpu-experimental.md). The tables below are the
+> earlier measurements of other snapshots.
+
 ## What is compared
 
 | Implementation | Meaning |
@@ -47,6 +53,7 @@ isolated per-change effects.
 
 | Report | Contents |
 |---|---|
+| [CPU experimental branch](benchmark-cpu-experimental.md) | 10k-170k scaling of `cpu-experimental` vs fork main, per-step memory, per-commit effects, accuracy on 73 labelled samples |
 | [CPU-accounted scaling](benchmark-cpu.md) | Full 2k–170k sweep with CPU time, peak RSS, GPU memory, projections to 170k |
 | [Serial repeats](benchmark-serial.md) | Two repeats per size from 2k to 40k, run one at a time, with output-consistency checks |
 | [10k / 30k / 170k scaling and output checks](benchmark-scaling.md) | Earlier cursory sweep, kidney and mouse output comparisons, which PRs look promising |
