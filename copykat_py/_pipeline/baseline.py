@@ -9,6 +9,7 @@ import pandas as pd
 from scipy.cluster.hierarchy import fcluster
 
 from copykat_py import anchor as _anchor
+from copykat_py._medians import group_medians
 from copykat_py._pipeline.runtime import _format_seconds, _record_step
 from copykat_py._types import (
     AnchorPath,
@@ -147,7 +148,7 @@ def select_baseline(
             raise ValueError("Known normal cells provided but none found in dataset")
 
         logger.info("  run with known normal...")
-        basel = np.median(norm_mat_smooth[:, known_normal_mask], axis=1)
+        (basel,) = group_medians(norm_mat_smooth, [known_normal_mask], options.n_cores)
 
         # Cluster all cells
         data_t = norm_mat_smooth.T
