@@ -1,7 +1,9 @@
 """Gene annotation and in-place count transformation for CopyKAT."""
 
 import logging
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -153,25 +155,39 @@ def transform_and_smooth(
     smoothed = np.empty((n_genes, n_cells), dtype=np.float32)
     transform_seconds = 0.0
     smooth_seconds = 0.0
-    for lo in range(0, n_cells, _STREAM_BLOCK_CELLS):
-        hi = min(n_cells, lo + _STREAM_BLOCK_CELLS)
-        start = time.perf_counter()
+    max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
+    n_threads = max(1, min(int(n_cores), max_cores))
+
+    def _transform(block: FloatArray, lo: int, a: int, b: int) -> None:
+        """Freeman-Tukey transform and centre cells [lo + a, lo + b) into block[:, a:b]."""
+        cols = block[:, a:b]
         if sparse.issparse(counts):
-            block = cast(SparseMatrix, counts[:, lo:hi]).astype(np.float64).toarray(order="F")
+            cols[...] = cast(SparseMatrix, counts[:, lo + a : lo + b]).astype(np.float64).toarray(order="F")
         else:
-            block = np.asfortranarray(counts[:, lo:hi], dtype=np.float64)
-        # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1)), then centre each cell
-        sqrt_plus_one = block + 1
+            cols[...] = counts[:, lo + a : lo + b]
+        # log(sqrt(x) + sqrt(x+1)), then centre each cell
+        sqrt_plus_one = cols + 1
         np.sqrt(sqrt_plus_one, out=sqrt_plus_one)
-        np.sqrt(block, out=block)
-        block += sqrt_plus_one
+        np.sqrt(cols, out=cols)
+        cols += sqrt_plus_one
         del sqrt_plus_one
-        np.log(block, out=block)
-        block -= block.mean(axis=0, keepdims=True)
-        transform_seconds += time.perf_counter() - start
-        start = time.perf_counter()
-        dlm_smooth(block, n_cores=n_cores, out=smoothed[:, lo:hi])
-        smooth_seconds += time.perf_counter() - start
+        np.log(cols, out=cols)
+        cols -= cols.mean(axis=0, keepdims=True)
+
+    block_buffer = np.empty((n_genes, min(n_cells, _STREAM_BLOCK_CELLS)), order="F")
+    with ThreadPoolExecutor(n_threads) as executor:
+        for lo in range(0, n_cells, _STREAM_BLOCK_CELLS):
+            hi = min(n_cells, lo + _STREAM_BLOCK_CELLS)
+            start = time.perf_counter()
+            block = block_buffer[:, : hi - lo]
+            # Cells are independent: transform slices of the block in threads.
+            step = max(1, -(-(hi - lo) // n_threads))
+            spans = [(a, min(hi - lo, a + step)) for a in range(0, hi - lo, step)]
+            list(executor.map(lambda span, block=block, lo=lo: _transform(block, lo, *span), spans))
+            transform_seconds += time.perf_counter() - start
+            start = time.perf_counter()
+            dlm_smooth(block, n_cores=n_cores, out=smoothed[:, lo:hi])
+            smooth_seconds += time.perf_counter() - start
     _record_step(
         runtime_info,
         "freeman_tukey_transform",
