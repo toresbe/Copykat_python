@@ -35,6 +35,7 @@ from copykat_py._types import (
     ParallelInfo,
     PredictionLabel,
 )
+from copykat_py.ward_rnn import ward_linkage_rnn
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ _LAST_CLUSTER_INFO: ParallelInfo = {
 FULL_CLUSTER_MAX_CELLS = 2000
 # Ward linkage runs on a precomputed condensed distance matrix (n*(n-1)/2
 # doubles) when the memory it needs fits in this many GB; above it,
-# fastcluster.linkage_vector avoids the quadratic memory but is 4-6x slower.
+# ward_rnn.ward_linkage_rnn avoids the quadratic memory.
 # fastcluster.linkage copies the matrix even with preserve_input=False
 # (fastcluster 1.3.0), so the peak is two matrices, n*(n-1)*8 bytes: 8 GB
 # covers ~31,600 cells (20,000 cells: 3.2 GB; 30,000: 7.2 GB). Override with
@@ -217,14 +218,16 @@ def _collapse_repeated_features(data: CellByFeature, block_rows: int = 4096) -> 
 def _ward_linkage(data: CellByFeature, n_cores: int = 1) -> tuple[LinkageMatrix, str]:
     """Exact Ward linkage of the rows of ``data`` (Euclidean), fastest engine that fits.
 
-    Returns the linkage matrix and the engine name. Both fastcluster engines
-    produce the same merge tree; merge heights can differ in the last bits.
+    Returns the linkage matrix and the engine name. Both engines produce the
+    same merge tree; merge heights can differ in the last bits.
     """
     n_samples = data.shape[0]
     if _ward_pdist_fits(n_samples):
         dist = _pdist_euclidean(data, n_cores=n_cores)
         return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
-    return fastcluster.linkage_vector(data, method="ward", metric="euclidean"), "fastcluster.linkage_vector"
+    # O(n * d) memory and multithreaded; 16x faster than fastcluster.linkage_vector
+    # on 40,000 x 128 with 32 threads.
+    return ward_linkage_rnn(data, n_threads=_effective_threads(n_cores)), "ward_rnn"
 
 
 def _hierarchical_cluster(
@@ -239,9 +242,9 @@ def _hierarchical_cluster(
 ) -> tuple[ClusterLabels, LinkageMatrix]:
     """Hierarchical clustering with fastcluster-first execution.
 
-    For Ward + Euclidean clustering, use exact fastcluster Ward linkage for
+    For Ward + Euclidean clustering, use exact Ward linkage for
     both small and large inputs (see ``_ward_linkage``: a precomputed distance
-    matrix within ``WARD_PDIST_MAX_GB``, ``linkage_vector`` above).
+    matrix within ``WARD_PDIST_MAX_GB``, ``ward_rnn.ward_linkage_rnn`` above).
     Runs of identical adjacent feature columns (bins inside one CNA segment)
     are collapsed first, which leaves distances unchanged; when the collapsed
     width fits within the PCA component cap, that PCA would be lossless and is
