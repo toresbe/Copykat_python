@@ -21,6 +21,7 @@ from scipy.optimize import brentq
 from scipy.special import gammainc, gammaincinv, gammaln
 from scipy.stats import ks_2samp
 
+from copykat_py._medians import group_medians
 from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, KSMethod, ParallelInfo
 
 _LAST_PAR_INFO: ParallelInfo = {
@@ -225,7 +226,7 @@ def cna_mcmc(
 
     # Step 1: Compute cluster consensus profiles (median per cluster)
     unique_clusters = sorted(set(clu))
-    CON = np.column_stack([np.median(fttmat[:, clu == cl_id], axis=1) for cl_id in unique_clusters])
+    CON = np.column_stack(group_medians(fttmat, [clu == cl_id for cl_id in unique_clusters], n_cores))
 
     # Back-transform: exp()
     norm_mat_sm = np.exp(CON)

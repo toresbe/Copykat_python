@@ -19,6 +19,7 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
 from copykat_py import backend
+from copykat_py._medians import group_medians
 from copykat_py._types import (
     AnchorPath,
     BaselineWarning,
@@ -502,7 +503,7 @@ def baseline_norm_cl(
 
     # Parallel GMM fitting. Consensus profiles are computed up front and fitted
     # in threads so workers never receive a copy of the full matrix.
-    consensus_profiles = [np.median(norm_mat_smooth[:, labels == cl_id], axis=1) for cl_id in unique_clusters]
+    consensus_profiles = group_medians(norm_mat_smooth, [labels == cl_id for cl_id in unique_clusters], n_cores)
     SDM = np.array(
         Parallel(n_jobs=n_cores, prefer="threads")(
             delayed(fit_gmm_sigma)(consensus) for consensus in consensus_profiles
@@ -560,7 +561,7 @@ def baseline_norm_cl(
         normal_cluster_id, anchor_path = anchor_selector(labels, int(normal_cluster_id))
 
     normal_mask = labels == normal_cluster_id
-    basel = np.median(norm_mat_smooth[:, normal_mask], axis=1)
+    (basel,) = group_medians(norm_mat_smooth, [normal_mask], n_cores)
     preN_indices = np.where(normal_mask)[0]
     if cell_names is not None:
         names = np.asarray(cell_names, dtype=object)
