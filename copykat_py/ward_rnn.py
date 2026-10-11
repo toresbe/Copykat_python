@@ -30,6 +30,7 @@ can differ in the last bits.
 
 import numba
 import numpy as np
+from joblib import cpu_count
 from numba import njit, prange
 from threadpoolctl import threadpool_limits
 
@@ -262,7 +263,10 @@ def ward_linkage_rnn(data: CellByFeature, n_threads: int = 1) -> LinkageMatrix:
     gamma = 2.0 * (d + 8) * float(np.finfo(_SEARCH_DTYPE).eps)
     nrm = np.einsum("ij,ij->i", C, C)
 
-    n_threads = max(1, int(n_threads))
+    # GEMM- and memory-bound: SMT siblings slow it down (64,000 x 128 on a
+    # 16-core / 32-thread CPU: 14.2 s on 16 threads, 17.2 s on 32), and the
+    # result does not depend on the thread count.
+    n_threads = max(1, min(int(n_threads), cpu_count(only_physical_cores=True)))
     previous_threads = numba.get_num_threads()
     numba.set_num_threads(min(n_threads, numba.config.NUMBA_NUM_THREADS))
     try:
