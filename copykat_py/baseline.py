@@ -929,24 +929,17 @@ def baseline_synthetic(
             break
 
     rng = np.random.RandomState(123)
-    expr_relat_parts = []
     unique_clusters = sorted(set(labels))
-
+    # Each cluster's relative expression goes straight into its own columns
+    # (the synthetic normal profiles are float64, hence the result dtype).
+    # Column-major, the layout the former hstack-and-permute produced.
+    expr_relat = np.empty(norm_mat.shape, dtype=np.result_type(norm_mat.dtype, np.float64), order="F")
     for cl_id in unique_clusters:
         mask = labels == cl_id
         data_c = norm_mat[:, mask]
         sd_per_gene = np.std(data_c, axis=1)
         syn_norm = rng.normal(0, sd_per_gene)
-        relat = data_c - syn_norm[:, np.newaxis]
-        expr_relat_parts.append(relat)
-
-    expr_relat = np.hstack(expr_relat_parts)
-
-    # Reorder to match original cell order
-    cluster_order = np.concatenate([np.where(labels == cl_id)[0] for cl_id in unique_clusters])
-
-    # Create inverse permutation
-    inv_perm = np.argsort(cluster_order)
-    expr_relat = expr_relat[:, inv_perm]
+        expr_relat[:, mask] = data_c - syn_norm[:, np.newaxis]
+        del data_c
 
     return SyntheticBaselineResult(relative_expression=expr_relat, cluster_labels=labels)
