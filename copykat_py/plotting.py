@@ -113,12 +113,19 @@ def _thread_limited_numeric_ops(max_threads: int = 1) -> Iterator[None]:
 HEATMAP_MAX_ROWS = 4096
 
 
-def _display_rows(cell_order: npt.ArrayLike, max_rows: int = HEATMAP_MAX_ROWS) -> IntArray:
+def _display_positions(n_rows: int, max_rows: int | None = None) -> IntArray:
+    """Positions of the rows to draw: all of them, or ``max_rows`` (default HEATMAP_MAX_ROWS) evenly spaced ones."""
+    if max_rows is None:
+        max_rows = HEATMAP_MAX_ROWS
+    if n_rows <= max_rows:
+        return np.arange(n_rows)
+    return np.unique(np.linspace(0, n_rows - 1, max_rows).round().astype(int))
+
+
+def _display_rows(cell_order: npt.ArrayLike, max_rows: int | None = None) -> IntArray:
     """``cell_order``, or an evenly spaced subset of it with at most ``max_rows`` entries."""
     order = np.asarray(cell_order, dtype=int)
-    if len(order) <= max_rows:
-        return order
-    return order[np.linspace(0, len(order) - 1, max_rows).round().astype(int)]
+    return order[_display_positions(len(order), max_rows)]
 
 
 def _build_plot_embedding(mat: FloatArray, random_state: int = 1234) -> npt.NDArray[np.float32]:
@@ -869,8 +876,13 @@ def plot_heatmap_annotated(
         logger.info(f"    '{grp}': {len(grp_idx)} cells ordered")
 
     order = np.array(ordered_indices, dtype=int)
-    mat_ordered = mat[:, order]
+    # Draw only the cells that fit the image (see HEATMAP_MAX_ROWS); sidebars
+    # and group separators follow the same rows. Annotation colours are still
+    # computed over all cells so legends and colour scales do not change.
+    shown = _display_positions(len(order))
+    mat_ordered = mat[:, order[shown]]
     meta_ordered = meta_aligned.iloc[order].reset_index(drop=True)
+    shown_boundaries = np.searchsorted(shown, group_boundaries).tolist()
 
     # ── 3. Build categorical or continuous RGB image arrays ───────────────
     ann_cmaps = {}  # col → {category: hex}
@@ -881,12 +893,14 @@ def plot_heatmap_annotated(
         if col in forced_continuous or (col != row_split_col and is_continuous(meta_df[col])):
             annotation = continuous_annotation(meta_ordered[col])
             continuous[col] = annotation
-            ann_imgs[col] = annotation.colors
+            ann_imgs[col] = annotation.colors[shown]
             continue
         vals = meta_ordered[col].astype(str)
         cmap_dict = _assign_cat_colors(vals)
         ann_cmaps[col] = cmap_dict
-        ann_imgs[col] = np.array([mcolors.to_rgb(cmap_dict[v]) for v in vals], dtype=np.float32).reshape(n_cells, 1, 3)
+        ann_imgs[col] = np.array([mcolors.to_rgb(cmap_dict[v]) for v in vals.iloc[shown]], dtype=np.float32).reshape(
+            -1, 1, 3
+        )
 
     # ── 4. Figure layout ──────────────────────────────────────────────────
     layout = annotation_layout(ann_cols, continuous)
@@ -925,7 +939,7 @@ def plot_heatmap_annotated(
 
     for pos in np.where(np.diff(chrom_info.astype(int)))[0]:
         ax_heat.axvline(x=pos + 0.5, color="gray", linewidth=0.3, alpha=0.5)
-    for bd in group_boundaries[1:-1]:
+    for bd in shown_boundaries[1:-1]:
         ax_heat.axhline(y=bd - 0.5, color="white", linewidth=1.5)
 
     # ── 6. Chromosome bar (bottom row) ────────────────────────────────────
@@ -948,7 +962,7 @@ def plot_heatmap_annotated(
         ax_a.imshow(ann_imgs[col], aspect="auto", interpolation="nearest")
         ax_a.set_xticks([])
         ax_a.set_yticks([])
-        for bd in group_boundaries[1:-1]:
+        for bd in shown_boundaries[1:-1]:
             ax_a.axhline(y=bd - 0.5, color="white", linewidth=1.5)
 
         # column name in the top-row cell above each sidebar
@@ -973,7 +987,7 @@ def plot_heatmap_annotated(
     for i, grp in enumerate(group_names):
         if not row_split_col:
             continue
-        y_mid = (group_boundaries[i] + group_boundaries[i + 1]) / 2.0
+        y_mid = (shown_boundaries[i] + shown_boundaries[i + 1]) / 2.0
         ax_grp.text(
             0.98,
             y_mid,
