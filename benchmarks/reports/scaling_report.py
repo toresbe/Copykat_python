@@ -87,7 +87,9 @@ lines = [
     "47m10s in baseline estimation, 69m29s in baseline adjustment and 58m24s in "
     "final prediction, before finishing the heatmap. "
     "That older log is from d23282b, not actual main, and is not a completed runtime or a fresh result. "
-    "The fresh larger-CPU-stack run is bounded to 180 seconds. Any timeout is a "
+    "The earlier larger-CPU-stack run (`perf/exact-shortcuts`) was bounded to 180 seconds; the CPU "
+    "experimental column now shows the `cpu-experimental` tip, whose 10k, 30k and 170k runs (8 cores pinned, "
+    "no timeout) all completed. Any timeout in the other columns is a "
     "censored observation, not a completed timing. "
     "No 170k speedup ratio is inferred from that partial log.",
     "",

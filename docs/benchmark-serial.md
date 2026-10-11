@@ -1,8 +1,8 @@
 # Serial 2k–40k repeat benchmarks
 
-Last refreshed: 2026-10-10 12:53:34 UTC.
+Last refreshed: 2026-10-11 15:34:57 UTC.
 
-Currently proposed changes = pinned upstream main `ea1a15c` plus performance PRs `#4`, `#5`, `#6`, `#7`, `#8` and `#9`. The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep is underway after accuracy completed; current running and queued states appear in the CPU-accounted report. The original five-PR snapshot of PRs #4 and #6–#9 excluded #5; its evidence is retained in the historical archives. The open CLI fix #3 is outside both performance snapshots. CPU experimental (no verification) = `perf/exact-shortcuts` at `ff63f19`, with Arrow output, memory/storage refactors, Ward-engine and repeated-bin changes. This broader experimental integration is distinct from the open-PR snapshots. These benchmark records are pinned to their source snapshots; subsequent Git branch construction is documented in `fork-integration-audit.md`.
+Currently proposed changes = pinned upstream main `ea1a15c` plus performance PRs `#4`, `#5`, `#6`, `#7`, `#8` and `#9`. The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep is underway after accuracy completed; current running and queued states appear in the CPU-accounted report. The original five-PR snapshot of PRs #4 and #6–#9 excluded #5; its evidence is retained in the historical archives. The open CLI fix #3 is outside both performance snapshots. CPU experimental (no verification) = the `cpu-experimental` branch at `90e8885` (a new CPU stack that replaces the earlier `perf/exact-shortcuts` at `ff63f19`), run pinned to eight physical cores. Several of its commits are tagged `[NUMERICAL CHANGE]`, so its output checks below differ from upstream main by design; see `benchmark-cpu-experimental.md` for what each commit changes and the accuracy comparison. This broader experimental integration is distinct from the open-PR snapshots. These benchmark records are pinned to their source snapshots; subsequent Git branch construction is documented in `fork-integration-audit.md`.
 
 Status: serial phase started.
 
@@ -28,14 +28,14 @@ Means use only successful runs from this serial phase. Parallel measurements and
 | 25,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 439.16 ± 0.98 | 579.22 ± 1.60 | 438.47–439.85 |
 | 30,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 636.11 ± 4.33 | 806.54 ± 6.80 | 633.05–639.17 |
 | 40,000 | Currently proposed changes (6 PRs) | 2 / 2 | ok, ok | 1125.95 ± 1.81 | 1352.76 ± 0.03 | 1124.67–1127.23 |
-| 2,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 12.79 ± 0.01 | 19.04 ± 0.08 | 12.79–12.80 |
-| 5,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 11.56 ± 0.07 | 29.73 ± 0.20 | 11.50–11.61 |
-| 10,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 20.55 ± 0.12 | 59.53 ± 0.12 | 20.46–20.63 |
-| 15,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 31.06 ± 0.09 | 96.60 ± 0.25 | 30.99–31.12 |
-| 20,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 56.32 ± 0.58 | 155.39 ± 1.96 | 55.91–56.73 |
-| 25,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 63.64 ± 0.01 | 156.02 ± 0.53 | 63.63–63.65 |
-| 30,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 79.69 ± 0.21 | 200.86 ± 0.07 | 79.55–79.84 |
-| 40,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 473.30 ± 0.61 | 613.05 ± 1.72 | 472.87–473.73 |
+| 2,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 15.12 ± 0.00 | 17.93 ± 0.06 | 15.12–15.12 |
+| 5,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 13.86 ± 0.27 | 39.42 ± 0.71 | 13.67–14.04 |
+| 10,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 24.01 ± 0.28 | 71.79 ± 1.47 | 23.81–24.21 |
+| 15,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 29.17 ± 0.15 | 95.53 ± 0.33 | 29.06–29.27 |
+| 20,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 40.76 ± 0.49 | 134.68 ± 2.55 | 40.42–41.10 |
+| 25,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 43.10 ± 0.67 | 168.46 ± 2.83 | 42.62–43.58 |
+| 30,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 50.72 ± 0.69 | 212.05 ± 4.05 | 50.23–51.22 |
+| 40,000 | CPU experimental (no verification) | 2 / 2 | ok, ok | 67.02 ± 0.57 | 310.00 ± 1.49 | 66.61–67.42 |
 | 2,000 | GPU experimental (no verification) | 2 / 2 | ok, ok | 6.73 ± 1.68 | 5.80 ± 0.37 | 5.54–7.91 |
 | 5,000 | GPU experimental (no verification) | 2 / 2 | ok, ok | 7.24 ± 0.05 | 7.23 ± 0.04 | 7.20–7.27 |
 | 10,000 | GPU experimental (no verification) | 2 / 2 | ok, ok | 8.24 ± 0.01 | 8.24 ± 0.00 | 8.23–8.25 |
