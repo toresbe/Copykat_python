@@ -13,6 +13,8 @@ Algorithm:
 """
 
 import itertools
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -33,6 +35,10 @@ _LAST_PAR_INFO: ParallelInfo = {
     "mc_samples": 1000,
     "engine": "posterior_sampling",
 }
+
+
+# Values per block of exp() and running totals in cna_mcmc's segment means.
+_SEGMENT_BLOCK_ELEMS = 1 << 22
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,31 +252,45 @@ def cna_mcmc(
     # Step 3: For each cell, compute segment posterior means.
     # With alpha initialized to the segment mean and beta fixed to 1,
     # the Poisson-Gamma posterior mean reduces exactly to the segment mean.
-    norm_mat_all = np.exp(fttmat)
-    cumsum = np.vstack(
-        [
-            np.zeros((1, n_cells), dtype=norm_mat_all.dtype),
-            np.cumsum(norm_mat_all, axis=0),
-        ]
-    )
-
+    # Each cell's running total runs down its own column, so cell blocks
+    # (in parallel threads) give the same values as the whole matrix while
+    # only one block of exp() and running totals per thread is in memory.
+    max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))
+    n_threads = max(1, min(int(n_cores), max_cores))
+    block_cells = max(1, min(_SEGMENT_BLOCK_ELEMS // max(1, n_genes + 1), -(-n_cells // n_threads)))
+    blocks = [(lo, min(n_cells, lo + block_cells)) for lo in range(0, n_cells, block_cells)]
     _LAST_PAR_INFO.update(
         {
-            "parallel": False,
+            "parallel": n_threads > 1 and len(blocks) > 1,
             "requested_cores": int(n_cores),
-            "effective_cores": 1,
-            "tasks": int(len(BR) - 1),
-            "chunk_size": 0,
+            "effective_cores": int(min(n_threads, len(blocks))),
+            "tasks": len(blocks),
+            "chunk_size": int(block_cells),
             "mc_samples": int(mc_samples),
             "engine": f"{ks_method}_ks+closed_form_segment_mean",
         }
     )
 
     logCNA = np.empty((n_genes, n_cells), dtype=np.float32)
-    for left, right in itertools.pairwise(BR):
-        seg_sum = cumsum[right + 1] - cumsum[left]
-        seg_len = max(1, right - left + 1)
-        seg_mean = np.maximum(seg_sum / seg_len, 1e-300)
-        logCNA[left : right + 1, :] = np.log(seg_mean).astype(np.float32, copy=False)
+    segments = list(itertools.pairwise(BR))
+
+    def _segment_block(cols: tuple[int, int]) -> None:
+        lo, hi = cols
+        norm_mat_all = np.exp(fttmat[:, lo:hi])
+        cumsum = np.empty((n_genes + 1, hi - lo), dtype=norm_mat_all.dtype)
+        cumsum[0] = 0
+        np.cumsum(norm_mat_all, axis=0, out=cumsum[1:])
+        del norm_mat_all
+        for left, right in segments:
+            seg_sum = cumsum[right + 1] - cumsum[left]
+            seg_len = max(1, right - left + 1)
+            seg_mean = np.maximum(seg_sum / seg_len, 1e-300)
+            logCNA[left : right + 1, lo:hi] = np.log(seg_mean).astype(np.float32, copy=False)
+
+    if len(blocks) == 1:
+        _segment_block(blocks[0])
+    else:
+        with ThreadPoolExecutor(min(n_threads, len(blocks))) as executor:
+            list(executor.map(_segment_block, blocks))
 
     return SegmentationResult(log_cna=logCNA, breakpoints=BR)
