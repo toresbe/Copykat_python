@@ -18,7 +18,6 @@ from numba import njit, prange
 from scipy.cluster.hierarchy import fcluster
 from scipy.spatial.distance import cdist, pdist
 from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score
 
 from copykat_py import backend
 from copykat_py._medians import group_medians
@@ -36,6 +35,7 @@ from copykat_py._types import (
     ParallelInfo,
     PredictionLabel,
 )
+from copykat_py.silhouette import silhouette_mean
 from copykat_py.ward_rnn import ward_linkage_rnn
 
 logger = logging.getLogger(__name__)
@@ -705,9 +705,9 @@ def baseline_norm_cl(
             n_take = min(n_take, len(cl_idx))
             idx_parts.append(rng.choice(cl_idx, size=n_take, replace=False))
         idx = np.concatenate(idx_parts)
-        wn = silhouette_score(data_t[idx], labels_2[idx], metric="euclidean")
+        wn = silhouette_mean(data_t[idx], labels_2[idx], n_threads=_effective_threads(n_cores))
     else:
-        wn = silhouette_score(data_t, labels_2, metric="euclidean")
+        wn = silhouette_mean(data_t, labels_2, n_threads=_effective_threads(n_cores))
 
     # F-test: compare max variance to min variance
     from scipy.stats import f as f_dist
