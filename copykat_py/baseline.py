@@ -19,6 +19,7 @@ from scipy.cluster.hierarchy import fcluster
 from scipy.spatial.distance import cdist, pdist
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
+from threadpoolctl import threadpool_limits
 
 from copykat_py import backend
 from copykat_py._medians import group_medians
@@ -92,6 +93,11 @@ def _ward_pdist_fits(n_samples: int) -> bool:
     return n_samples * (n_samples - 1) * 8 <= budget_gb * 1e9
 
 
+# BLAS threads for the clustering PCA, independent of n_cores (see
+# _reduce_for_clustering). 8 was also the fastest setting on a 16-core CPU:
+# its small LU/QR/SVD steps slow down with more threads.
+PCA_BLAS_THREADS = 8
+
 AUTO_PCA_CELL_COUNT_CUTOFF = 50000
 AUTO_PCA_SMALL_SAMPLE = 256
 AUTO_PCA_LARGE_SAMPLE = 128
@@ -153,7 +159,11 @@ def _reduce_for_clustering(data: CellByFeature, max_components: int = 64) -> tup
         return data, None
 
     reducer = PCA(n_components=n_components, svd_solver="randomized", random_state=1234)
-    return reducer.fit_transform(data), n_components
+    # OpenBLAS's results depend on its thread count, which otherwise follows
+    # the CPUs the process may use: fix it so the projection (and every call
+    # after it) does not change with the machine's core count or pinning.
+    with threadpool_limits(PCA_BLAS_THREADS, user_api="blas"):
+        return reducer.fit_transform(data), n_components
 
 
 def _effective_threads(n_cores: int) -> int:
