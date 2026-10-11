@@ -9,7 +9,7 @@ such pair at once. Only the merged clusters, and clusters whose nearest
 neighbour was merged, need a new nearest-neighbour search. Memory is O(n * d):
 no n^2 distance matrix.
 
-Nearest neighbours come from an FP64 GEMM (||a||^2 + ||b||^2 - 2 a.b) that is
+Nearest neighbours come from an FP32 GEMM (||a||^2 + ||b||^2 - 2 a.b) that is
 turned into a lower bound on every Ward cost by subtracting a rounding-error
 bound. Each row's smallest bound is re-scored exactly from coordinate
 differences, then every column whose bound could still beat or tie the best
@@ -30,6 +30,10 @@ from copykat_py._types import CellByFeature, FloatArray, IntArray, LinkageMatrix
 
 # Bytes of GEMM output per nearest-neighbour block.
 _BLOCK_BYTES = 256 << 20
+# Precision of the candidate GEMM. FP32 is twice as fast; its larger rounding
+# error only widens the lower bounds, so more candidates are re-scored
+# exactly in FP64 and the result is unchanged.
+_SEARCH_DTYPE = np.float32
 
 
 @njit(inline="always")
@@ -88,17 +92,18 @@ def _nearest_from_gemm(
 
 
 def _nearest_neighbours(
-    C: FloatArray, size: FloatArray, nrm: FloatArray, query: IntArray, gamma: float
+    C: FloatArray, S: FloatArray, size: FloatArray, nrm: FloatArray, query: IntArray, gamma: float
 ) -> tuple[IntArray, FloatArray]:
+    """Exact nearest neighbours of ``query`` rows; ``S`` is ``C`` rounded to the search precision."""
     m = C.shape[0]
     nn = np.empty(len(query), dtype=np.int64)
     w = np.empty(len(query))
-    block = max(1, min(len(query), _BLOCK_BYTES // (8 * m)))
-    buffer = np.empty(block * m)  # reused: fresh pages for every block cost more than the GEMM
+    block = max(1, min(len(query), _BLOCK_BYTES // (S.itemsize * m)))
+    buffer = np.empty(block * m, dtype=S.dtype)  # reused: fresh pages for every block cost more than the GEMM
     for lo in range(0, len(query), block):
         rows = query[lo : lo + block]
         G = buffer[: len(rows) * m].reshape(len(rows), m)
-        np.matmul(C[rows], C.T, out=G)
+        np.matmul(S[rows], S.T, out=G)
         _nearest_from_gemm(G, rows, C, size, nrm, gamma, nn[lo : lo + block], w[lo : lo + block])
     return nn, w
 
@@ -111,9 +116,10 @@ def ward_linkage_rnn(data: CellByFeature, n_threads: int = 1) -> LinkageMatrix:
         return np.zeros((0, 4))
     # Ward is translation invariant; centring shrinks the norms and so the GEMM error bound.
     C = X - X.mean(axis=0)
-    # Rounding-error bound on ||a||^2 + ||b||^2 - 2 a.b relative to ||a||^2 + ||b||^2
-    # (each dot product within (d + 2) unit roundoffs of the norms), with 2x slack.
-    gamma = 8.0 * (d + 4) * np.finfo(np.float64).eps
+    # Error bound on ||a||^2 + ||b||^2 - 2 a.b (exact FP64 norms, dot products from
+    # the search-precision copy) relative to ||a||^2 + ||b||^2: rounding the
+    # coordinates costs about 3 unit roundoffs and the GEMM d + 2; 2x slack.
+    gamma = 2.0 * (d + 8) * float(np.finfo(_SEARCH_DTYPE).eps)
     nrm = np.einsum("ij,ij->i", C, C)
 
     n_threads = max(1, int(n_threads))
@@ -121,14 +127,14 @@ def ward_linkage_rnn(data: CellByFeature, n_threads: int = 1) -> LinkageMatrix:
     numba.set_num_threads(min(n_threads, numba.config.NUMBA_NUM_THREADS))
     try:
         with threadpool_limits(n_threads, user_api="blas"):
-            merges = _rnn_merges(C, nrm, gamma)
+            merges = _rnn_merges(C, C.astype(_SEARCH_DTYPE), nrm, gamma)
     finally:
         numba.set_num_threads(previous_threads)
     return _to_scipy_linkage(n, *merges)
 
 
 def _rnn_merges(
-    C: FloatArray, nrm: FloatArray, gamma: float
+    C: FloatArray, S: FloatArray, nrm: FloatArray, gamma: float
 ) -> tuple[list[IntArray], list[IntArray], list[FloatArray], list[FloatArray], list[IntArray]]:
     """Merge reciprocal nearest neighbours round by round; returns the merges in provisional order.
 
@@ -144,7 +150,7 @@ def _rnn_merges(
     rounds: list[IntArray] = []
     next_id = n
     rnd = 0
-    nn, nnw = _nearest_neighbours(C, size, nrm, np.arange(n), gamma)
+    nn, nnw = _nearest_neighbours(C, S, size, nrm, np.arange(n), gamma)
     while C.shape[0] > 1:
         m = C.shape[0]
         idx = np.arange(m)
@@ -161,6 +167,7 @@ def _rnn_merges(
         counts.append(snew)
         rounds.append(np.full(len(a), rnd))
         C[a] = (C[a] * sa[:, None] + C[b] * sb[:, None]) / snew[:, None]
+        S[a] = C[a]
         nrm[a] = np.einsum("ij,ij->i", C[a], C[a])
         size[a] = snew
         pid[a] = np.arange(next_id, next_id + len(a))
@@ -175,6 +182,7 @@ def _rnn_merges(
         keep[b] = False
         new_index = np.cumsum(keep) - 1
         C = C[keep]
+        S = S[keep]
         nrm = nrm[keep]
         size = size[keep]
         pid = pid[keep]
@@ -185,7 +193,7 @@ def _rnn_merges(
         if C.shape[0] > 1:
             query = np.flatnonzero(stale)
             if len(query):
-                nn[query], nnw[query] = _nearest_neighbours(C, size, nrm, query, gamma)
+                nn[query], nnw[query] = _nearest_neighbours(C, S, size, nrm, query, gamma)
     return child_a, child_b, delta, counts, rounds
 
 
