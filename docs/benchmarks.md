@@ -11,11 +11,12 @@ X markers and dashed lines are extrapolated 170k points, not completed runs.
 Error bars show model sensitivity, not confidence intervals. Hollow markers
 are runs that were not pinned to physical cores.
 
-> **Update 2026-10-11:** the `cpu-experimental` branch (a new CPU stack, replacing the "CPU experimental"
-> column below) runs the full 170k Xenium set with the heatmap in 311 s at a 14.9 GB peak on 32 threads, and 80k in
-> 125 s (fork main: 2,328 s, 32.6 GB). Its accuracy against main on the labelled samples and what each change
-> preserves are in [`benchmark-cpu-experimental.md`](benchmark-cpu-experimental.md). The tables below are the
-> earlier measurements of other snapshots.
+> **Update 2026-10-11:** the figure and the "CPU experimental" column below now show the `cpu-experimental` branch
+> at `90e8885` (8 cores pinned, no heatmap), replacing the earlier `perf/exact-shortcuts` stack: 170k cells complete in
+> 355 s at a 13.7 GB peak. With the heatmap on 32 threads it runs 170k in 311 s at 14.9 GB, and 80k in 125 s (fork
+> main: 2,328 s, 32.6 GB). Its accuracy against main on the labelled samples and what each change preserves are in
+> [`benchmark-cpu-experimental.md`](benchmark-cpu-experimental.md). Several of its commits change numbers, so its
+> outputs are not identical to main's. The other columns are the earlier measurements of their own snapshots.
 
 ## What is compared
 
@@ -23,7 +24,7 @@ are runs that were not pinned to physical cores.
 |---|---|
 | Upstream main | The original implementation at commit `ea1a15c` |
 | Currently proposed changes (6 PRs) | Upstream main plus the six performance PRs `#4`–`#9` proposed upstream |
-| CPU experimental (no verification) | A broader CPU integration (Arrow output, memory/storage refactors, Ward-engine and repeated-bin changes) |
+| CPU experimental (no verification) | The `cpu-experimental` branch at `90e8885`: parallel and streaming CPU stages, float32 bins matrix, reciprocal-nearest-neighbour Ward, exact clustering of narrow collapsed matrices. Several commits change numbers |
 | GPU experimental (no verification) | The optional CUDA backend with default Monte Carlo KS |
 
 "No verification" means outputs were not checked to be identical to upstream;
@@ -38,15 +39,15 @@ Single cold runs, eight requested cores, elapsed seconds (from
 | Input cells | Upstream main | Proposed (6 PRs) | CPU experimental | GPU experimental |
 |---:|---:|---:|---:|---:|
 | 10,000 | 134 | 86 | 24 | 8 |
-| 40,000 | 1,310 | 1,127 | 515 | 22 |
-| 80,000 | 3,337 | 2,081 | 2,088 | 41 |
-| 170,057 | not completed (memory guard at 120k) | not completed | 9,909 | 97 |
+| 40,000 | 1,310 | 1,127 | 66 | 22 |
+| 80,000 | 3,337 | 2,081 | 133 | 41 |
+| 170,057 | not completed (memory guard at 120k) | not completed | 355 | 97 |
 
 Upstream main and the six-PR stack hit the memory guard (about 97 GB of
 process-tree RSS) at 120,000 cells, so their 170k points in the figure are model
 estimates, not measurements. Peak process-tree RSS at 80k cells was about 74 GB
-for both, versus 12 GB for the CPU experimental stack and 12 GB for the GPU
-stack. These are one-off measurements on one machine, not a stable estimate of
+for both, versus 7.8 GB for the CPU experimental stack (the harness floor, set by reading the input) and 12 GB for the GPU
+stack; the CPU stack's 170k run peaked at 13.7 GB. These are one-off measurements on one machine, not a stable estimate of
 isolated per-change effects.
 
 ## Reports

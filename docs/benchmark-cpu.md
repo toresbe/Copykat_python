@@ -2,9 +2,9 @@
 
 Follow-up: [two serial repeat rounds at 2k–40k](benchmark-serial.md), queued after this sweep completes.
 
-Last refreshed: 2026-10-10 12:53:32 UTC.
+Last refreshed: 2026-10-11 15:15:38 UTC.
 
-Currently proposed changes = pinned upstream main `ea1a15c` plus performance PRs `#4`, `#5`, `#6`, `#7`, `#8` and `#9`. The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep is underway after accuracy completed; current running and queued states appear in the CPU-accounted report. The original five-PR snapshot of PRs #4 and #6–#9 excluded #5; its evidence is retained in the historical archives. The open CLI fix #3 is outside both performance snapshots. CPU experimental (no verification) = `perf/exact-shortcuts` at `ff63f19`, with Arrow output, memory/storage refactors, Ward-engine and repeated-bin changes. This broader experimental integration is distinct from the open-PR snapshots. These benchmark records are pinned to their source snapshots; subsequent Git branch construction is documented in `fork-integration-audit.md`.
+Currently proposed changes = pinned upstream main `ea1a15c` plus performance PRs `#4`, `#5`, `#6`, `#7`, `#8` and `#9`. The six-PR filesystem snapshot includes the Arrow writer. Its serial follow-up sweep is underway after accuracy completed; current running and queued states appear in the CPU-accounted report. The original five-PR snapshot of PRs #4 and #6–#9 excluded #5; its evidence is retained in the historical archives. The open CLI fix #3 is outside both performance snapshots. CPU experimental (no verification) = the `cpu-experimental` branch at `90e8885` (a new CPU stack that replaces the earlier `perf/exact-shortcuts` at `ff63f19`), run pinned to eight physical cores. Several of its commits are tagged `[NUMERICAL CHANGE]`, so its output checks below differ from upstream main by design; see `benchmark-cpu-experimental.md` for what each commit changes and the accuracy comparison. This broader experimental integration is distinct from the open-PR snapshots. These benchmark records are pinned to their source snapshots; subsequent Git branch construction is documented in `fork-integration-audit.md`.
 
 These follow-up runs have no elapsed-time limit. Each uses eight requested cores. The RAM scheduler reserves future growth and at least 11 GB of available memory; each supervisor stops a run if available RAM falls below 10 GB or SSD space below 2 GB. New runs are pinned to CPUs 0–7 or 8–15: eight distinct physical cores on the 5950X, with no SMT sibling shared between new pinned jobs. At most two jobs run at once, with only one new job while the surviving unpinned 170k run finishes. That original run is preserved without changing its affinity. Memory bandwidth, CPU boost and cache effects can still interact; timings are exploratory. The schedule records overlap, and four isolated 10k anchors run after unpinned work finishes. Fresh worker processes reuse filesystem/input/JIT caches; those caches are not flushed. CPU core-seconds count user and system CPU consumed by all threads and descendant workers in a dedicated Linux cgroup, measured at pipeline boundaries. They exclude loading and audit hashing. CPU time does not include GPU device work; use elapsed time for CPU/GPU latency comparisons. This sweep disables heatmap rendering consistently across every mode and size (plot=false); table formatting remains included, with large tables directed to /dev/null. The earlier sweep included heatmaps, so its times are not directly comparable to these calculation-focused measurements. Peak tree RSS sums processes and can count shared pages more than once; it excludes GPU VRAM.
 
@@ -34,17 +34,17 @@ The previous 170k CPU point was censored by an explicit 180-second process-time 
 | 80,000 | Currently proposed changes (6 PRs) | ok | 2081.32 | 2466.09 | 74.06 | pinned physical8 |
 | 120,000 | Currently proposed changes (6 PRs) | memory_guard | — | — | 94.80 | pinned physical8 |
 | 170,057 | Currently proposed changes (6 PRs) | skipped_by_user | — | — | — | original unpinned |
-| 2,000 | CPU experimental (no verification) | ok | 15.62 | 22.18 | 7.70 | pinned physical8 |
-| 5,000 | CPU experimental (no verification) | ok | 12.98 | 36.43 | 7.70 | pinned physical8 |
-| 10,000 | CPU experimental (no verification) | ok | 24.24 | 67.69 | 7.70 | original unpinned |
-| 15,000 | CPU experimental (no verification) | ok | 32.76 | 103.88 | 7.70 | pinned physical8 |
-| 20,000 | CPU experimental (no verification) | ok | 65.43 | 183.60 | 7.72 | pinned physical8 |
-| 25,000 | CPU experimental (no verification) | ok | 71.69 | 179.67 | 7.73 | pinned physical8 |
-| 30,000 | CPU experimental (no verification) | ok | 90.68 | 226.12 | 8.14 | original unpinned |
-| 40,000 | CPU experimental (no verification) | ok | 515.38 | 684.40 | 12.53 | pinned physical8 |
-| 80,000 | CPU experimental (no verification) | ok | 2088.29 | 2250.40 | 12.49 | pinned physical8 |
-| 120,000 | CPU experimental (no verification) | ok | 4762.50 | 5439.67 | 22.74 | pinned physical8 |
-| 170,057 | CPU experimental (no verification) | ok | 9908.56 | 10756.46 | — | original unpinned |
+| 2,000 | CPU experimental (no verification) | ok | 15.30 | 18.02 | 7.76 | pinned physical8 |
+| 5,000 | CPU experimental (no verification) | ok | 13.99 | 41.05 | 7.76 | pinned physical8 |
+| 10,000 | CPU experimental (no verification) | ok | 24.47 | 73.26 | 7.76 | pinned physical8 |
+| 15,000 | CPU experimental (no verification) | ok | 28.97 | 95.47 | 7.76 | pinned physical8 |
+| 20,000 | CPU experimental (no verification) | ok | 40.20 | 134.12 | 7.76 | pinned physical8 |
+| 25,000 | CPU experimental (no verification) | ok | 42.42 | 167.77 | 7.76 | pinned physical8 |
+| 30,000 | CPU experimental (no verification) | ok | 49.45 | 208.33 | 7.76 | pinned physical8 |
+| 40,000 | CPU experimental (no verification) | ok | 65.78 | 307.12 | 7.76 | pinned physical8 |
+| 80,000 | CPU experimental (no verification) | ok | 132.56 | 704.09 | 7.76 | pinned physical8 |
+| 120,000 | CPU experimental (no verification) | ok | 216.56 | 1244.96 | 10.08 | pinned physical8 |
+| 170,057 | CPU experimental (no verification) | ok | 355.44 | 2145.24 | 13.69 | pinned physical8 |
 | 2,000 | GPU experimental (no verification) | ok | 5.68 | 5.64 | 7.73 | pinned physical8 |
 | 5,000 | GPU experimental (no verification) | ok | 7.38 | 7.39 | 7.73 | pinned physical8 |
 | 10,000 | GPU experimental (no verification) | ok | 8.35 | 8.35 | 7.73 | pinned physical8 |
@@ -82,28 +82,27 @@ Memory uses a linear fit with intercept to successful pinned 20k–80k tree-RSS 
 
 | Cells | CPU experimental (no verification) vs upstream main | Currently proposed changes (6 PRs) vs upstream main |
 |---:|---|---|
-| 2,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 5,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 10,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 15,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 20,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 25,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 30,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 40,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
-| 80,000 | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 2,000 | cna_numeric: different/missing; prediction: different/missing; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 5,000 | cna_numeric: different/missing; prediction: different/missing; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 10,000 | cna_numeric: different/missing; prediction: different/missing; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 15,000 | cna_numeric: different/missing; prediction: different/missing; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 20,000 | cna_numeric: different/missing; prediction: identical; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 25,000 | cna_numeric: different/missing; prediction: identical; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 30,000 | cna_numeric: different/missing; prediction: identical; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 40,000 | cna_numeric: different/missing; prediction: identical; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
+| 80,000 | cna_numeric: different/missing; prediction: different/missing; tree_structure: different/missing; tree_heights: different/missing | cna_numeric: identical; prediction: identical; tree_structure: identical; tree_heights: identical |
 | 120,000 | awaiting completed pair | awaiting completed pair |
 | 170,057 | awaiting completed pair | awaiting completed pair |
 
 ## Isolated 10k checks
 
-Recovered CPU experimental (no verification) 170,057: original pipeline/cgroup CPU readings were retained. Original supervisor RSS-peak history was lost; whole-run cgroup memory peak is 29.86 GB. Cgroup memory includes charged cache and is a different metric from tree RSS.
 These diagnostic checks run sequentially on CPUs 0–7 with no other review benchmark running. Comparing against the earlier 10k observations mixes changes in affinity, cache state and contention; it cannot attribute a difference to contention alone.
 
 | Implementation | Status | Elapsed seconds | CPU core-seconds | Original 10k CPU / isolated CPU |
 |---|---|---:|---:|---:|
 | Upstream main | ok | 116.19 | 194.55 | 1.17 |
 | Currently proposed changes (6 PRs) | queued | — | — | — |
-| CPU experimental (no verification) | ok | 20.95 | 60.50 | 1.12 |
+| CPU experimental (no verification) | ok | 20.95 | 60.50 | 1.21 |
 | GPU experimental (no verification) | ok | 8.24 | 8.23 | 1.01 |
 
 ## Clustering paths actually used
@@ -132,17 +131,17 @@ These diagnostic checks run sequentially on CPUs 0–7 with no other review benc
 | 80,000 | Currently proposed changes (6 PRs) | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector |
 | 120,000 | Currently proposed changes (6 PRs) | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector |
 | 170,057 | Currently proposed changes (6 PRs) | — | — | — |
-| 2,000 | CPU experimental (no verification) | full_matrix+pdist+fastcluster.linkage | full_matrix+dedup195+pdist+fastcluster.linkage | full_matrix+dedup195+pdist+fastcluster.linkage |
-| 5,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup135+pdist+fastcluster.linkage | dedup135+pdist+fastcluster.linkage |
-| 10,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup154+pdist+fastcluster.linkage | dedup154+pdist+fastcluster.linkage |
-| 15,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup165+pdist+fastcluster.linkage | dedup165+pdist+fastcluster.linkage |
-| 20,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup153+pdist+fastcluster.linkage | dedup153+pdist+fastcluster.linkage |
-| 25,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup155+pdist+fastcluster.linkage | dedup155+pdist+fastcluster.linkage |
-| 30,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup142+pdist+fastcluster.linkage | dedup142+pdist+fastcluster.linkage |
-| 40,000 | CPU experimental (no verification) | pca256+fastcluster.linkage_vector | dedup138+pdist+fastcluster.linkage | dedup138+pdist+fastcluster.linkage |
-| 80,000 | CPU experimental (no verification) | pca128+fastcluster.linkage_vector | dedup128+fastcluster.linkage_vector | dedup128+fastcluster.linkage_vector |
-| 120,000 | CPU experimental (no verification) | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector |
-| 170,057 | CPU experimental (no verification) | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector | pca128+fastcluster.linkage_vector |
+| 2,000 | CPU experimental (no verification) | full_matrix+pdist+fastcluster.linkage | full_matrix+dedup193+pdist+fastcluster.linkage | full_matrix+dedup193+pdist+fastcluster.linkage |
+| 5,000 | CPU experimental (no verification) | pca256+pdist+fastcluster.linkage | dedup134+pdist+fastcluster.linkage | dedup134+pdist+fastcluster.linkage |
+| 10,000 | CPU experimental (no verification) | pca256+ward_rnn | dedup152+ward_rnn | dedup152+ward_rnn |
+| 15,000 | CPU experimental (no verification) | pca256+ward_rnn | dedup164+ward_rnn | dedup164+ward_rnn |
+| 20,000 | CPU experimental (no verification) | pca256+ward_rnn | dedup153+ward_rnn | dedup153+ward_rnn |
+| 25,000 | CPU experimental (no verification) | pca256+ward_rnn | dedup155+ward_rnn | dedup155+ward_rnn |
+| 30,000 | CPU experimental (no verification) | pca256+ward_rnn | dedup142+ward_rnn | dedup142+ward_rnn |
+| 40,000 | CPU experimental (no verification) | pca256+ward_rnn | dedup138+ward_rnn | dedup138+ward_rnn |
+| 80,000 | CPU experimental (no verification) | pca128+ward_rnn | dedup142+ward_rnn | dedup142+ward_rnn |
+| 120,000 | CPU experimental (no verification) | pca128+ward_rnn | dedup140+ward_rnn | dedup140+ward_rnn |
+| 170,057 | CPU experimental (no verification) | pca128+ward_rnn | dedup157+ward_rnn | dedup157+ward_rnn |
 | 2,000 | GPU experimental (no verification) | gpu.ward_rnn | dedup195+gpu.ward_rnn | dedup195+gpu.ward_rnn |
 | 5,000 | GPU experimental (no verification) | gpu.ward_rnn | dedup140+gpu.ward_rnn | dedup140+gpu.ward_rnn |
 | 10,000 | GPU experimental (no verification) | gpu.ward_rnn | dedup143+gpu.ward_rnn | dedup143+gpu.ward_rnn |
