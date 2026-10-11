@@ -559,12 +559,12 @@ def _run_copykat_analysis(
         log_handle.close()
 
 
-def main() -> CopyKATResult:
+def main() -> None:
     """Entry point for the legacy matrix-focused ``copykat-py`` CLI."""
     parser = _build_main_parser()
     args = parser.parse_args()
     rawmat = _load_matrix_input(args.input, args.genes, args.barcodes)
-    return _run_copykat_analysis(
+    _run_copykat_analysis(
         args,
         rawmat,
         meta_csv=None,
@@ -574,12 +574,12 @@ def main() -> CopyKATResult:
     )
 
 
-def matrix_main() -> CopyKATResult:
+def matrix_main() -> None:
     """Entry point for ``copykat_matrix``."""
     parser = _build_matrix_parser()
     args = parser.parse_args()
     rawmat = _load_matrix_input(args.input, args.genes, args.barcodes)
-    return _run_copykat_analysis(
+    _run_copykat_analysis(
         args,
         rawmat,
         meta_csv=args.meta,
