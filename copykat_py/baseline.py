@@ -99,6 +99,10 @@ def _ward_pdist_fits(n_samples: int) -> bool:
     return n_samples * (n_samples - 1) * 8 <= budget_gb * 1e9
 
 
+# Cluster runs of repeated bins exactly (no PCA) when the collapsed width is
+# at most this multiple of the PCA component cap.
+EXACT_COLLAPSED_FACTOR = 2
+
 AUTO_PCA_CELL_COUNT_CUTOFF = 50000
 AUTO_PCA_SMALL_SAMPLE = 256
 AUTO_PCA_LARGE_SAMPLE = 128
@@ -257,8 +261,9 @@ def _hierarchical_cluster(
     there on or when the matrix would exceed ``WARD_PDIST_MAX_GB``).
     Runs of identical adjacent feature columns (bins inside one CNA segment)
     are collapsed first, which leaves distances unchanged; when the collapsed
-    width fits within the PCA component cap, that PCA would be lossless and is
-    skipped. The ``max_cells`` argument is kept for compatibility but is not used.
+    width is at most ``EXACT_COLLAPSED_FACTOR`` times the PCA component cap,
+    the collapsed matrix is clustered exactly instead of being projected. The
+    ``max_cells`` argument is kept for compatibility but is not used.
 
     Parameters
     ----------
@@ -338,7 +343,10 @@ def _hierarchical_cluster(
             # large, wide inputs and keeps at most this many components.
             pca_components_used = min(pca_components, n_samples - 1, n_features)
             pca_applies = n_samples > FULL_CLUSTER_MAX_CELLS and n_features > 256 and pca_components_used >= 8
-            if not pca_applies or collapsed.shape[1] <= pca_components_used:
+            # Clustering the collapsed matrix is exact Ward on the full matrix.
+            # Up to EXACT_COLLAPSED_FACTOR x the PCA width it costs about what
+            # the PCA projection would, so skip the approximation.
+            if not pca_applies or collapsed.shape[1] <= EXACT_COLLAPSED_FACTOR * pca_components_used:
                 Z, engine = _ward_linkage(collapsed, n_cores=n_cores)
                 _LAST_CLUSTER_INFO["engine"] = f"dedup{collapsed.shape[1]}+{engine}"
                 labels = fcluster(Z, t=n_clusters, criterion="maxclust")

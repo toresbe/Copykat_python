@@ -51,3 +51,14 @@ def test_ward_linkage_engine_by_cell_count(monkeypatch: pytest.MonkeyPatch) -> N
     Z, engine = baseline._ward_linkage(X, n_cores=2)
     assert engine == "ward_rnn"
     np.testing.assert_array_equal(Z[:, [0, 1, 3]], fastcluster.linkage(X, method="ward")[:, [0, 1, 3]])
+
+
+def test_narrow_collapsed_matrix_is_clustered_exactly() -> None:
+    rng = np.random.default_rng(8)
+    segments = rng.normal(size=(2500, 300))  # 300 distinct segment values per cell
+    data = np.repeat(segments, 4, axis=1)  # each repeated over 4 bins
+    _labels, Z = baseline._hierarchical_cluster(data, 2, n_cores=2, reduce=True, pca_components=256)
+    assert baseline.get_last_cluster_info()["engine"].startswith("dedup300+")
+    collapsed = segments * 2.0  # sqrt(run length) scaling
+    expected = fastcluster.linkage(collapsed, method="ward")
+    np.testing.assert_array_equal(Z[:, [0, 1, 3]], expected[:, [0, 1, 3]])
