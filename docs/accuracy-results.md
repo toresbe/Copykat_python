@@ -1,5 +1,35 @@
 # Main versus GPU + marker anchoring: installed-data accuracy
 
+## Author's preface
+
+This describes some hypothesized ways to boost the accuracy of CopyKAT calls. **This is not default behavior**, it must be enabled with `--anchor markers` and `--final-call arm_correlation`. 
+
+My primary goal is to make something that can function as a much faster drop-in replacement for CopyKAT-R, without really touching the biological/statistical side of things more than necessary.
+
+Everything below is maintained by language models; please take with a big grain of salt. Basically - on a lark I asked a frontier LLM if there were any ways to spend the compute we had freed up through algorithmic optimizations on improving the accuracy of its calls.
+
+It came up with two suggestions:
+
+### Final call modification
+
+The default final call on a cell is based on which of the two groups from Ward clustering a cell belongs to. The group containing a higher fraction of the normal-reference cells is called diploid; the other is called aneuploid.
+
+`arm_correlation` (working title F3) scores each cell by how closely its chromosome-arm profile matches a tumor-like consensus. A cell is aneuploid if its score exceeds the 99th-percentile score among the normal-reference cells. This might help samples where tumor-like cells don't fall neatly into the two categories.
+
+### Normal cell anchoring
+
+This change adds some heuristics by first looking for immune or endothelial markers, then it tries immune-marker enrichment, then finally falls back to the normal GMM sigma.
+
+Together it adds up to this, which I still have no way of knowing is measurement error or some fundamental misunderstanding.
+
+![Study-level paired accuracy](accuracy-assets/study-accuracy.png)
+
+Again, this was just an experiment, explicitly not vetted by a competent human. Until then, please consider everything here either overfitting or measurement error or a more fundamental misunderstanding. The only reason I'm making it public is in case someone found it interesting.
+
+*all hence is by bot*
+
+---
+
 Last refreshed: 2026-10-10 09:07:42 UTC.
 
 This accuracy-only phase is queued after the serial performance repeats. No benchmark performance counters, timings or speed comparisons are collected. Reference: upstream main `ea1a15c`. Candidate: pinned `5401668`, GPU backend, B6 markers and F3 arm correlation, default Monte Carlo KS. Both use the same installed Python dependencies, four requested threads and identical raw inputs. Labels never enter the inference pipeline.
@@ -7,8 +37,6 @@ This accuracy-only phase is queued after the serial performance repeats. No benc
 Author/OpenScPCA malignant labels are proxies for aneuploidy, not independent DNA ground truth. Many author annotations are partly CNA/marker-derived. These datasets were often used in prior development/evaluation; this is not a new sealed holdout. No method, anchor rule or threshold is tuned on these results.
 
 Selected 125 samples from 60 studies; 121 completed aligned pairs. The frozen selection takes up to two fraction-extreme eligible samples per 3CA study, all eligible converted ScPCA libraries, eligible README samples, and up to two healthy donors per count-valid h5ad. Whole selected samples are used, without cell subsampling. Selection uses only installed data/labels and frozen size/class criteria, never model results.
-
-![Study-level paired accuracy](accuracy-assets/study-accuracy.png)
 
 ## Paired study-level results
 
