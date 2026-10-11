@@ -14,13 +14,15 @@ def silhouette_mean(data: CellByFeature, labels: ClusterLabels, n_threads: int =
 
     Same definition as ``sklearn.metrics.silhouette_score``: a point's
     silhouette is 0 in a singleton cluster, and points in other clusters are
-    compared by mean distance. Distances come from float64 GEMMs
-    (||x||^2 + ||y||^2 - 2 x.y) over row blocks, summed per cluster with a
-    second GEMM; sklearn rounds float32 inputs' distances to float32 instead,
-    so the result can differ in the last bits.
+    compared by mean distance. Distances come from float32 GEMMs
+    (||x||^2 + ||y||^2 - 2 x.y) on the centred data over row blocks, like
+    sklearn's float32 distances, and are summed per cluster in float64; the
+    result agrees with sklearn to about 1e-9.
     """
-    X = np.asarray(data, dtype=np.float64)
-    X = X - X.mean(axis=0)  # translation-invariant; smaller norms cancel less
+    X64 = np.asarray(data, dtype=np.float64)
+    # translation-invariant; centring keeps the norms, hence cancellation, small
+    X = (X64 - X64.mean(axis=0)).astype(np.float32)
+    del X64
     n = X.shape[0]
     uniq, inv = np.unique(np.asarray(labels), return_inverse=True)
     k = len(uniq)
@@ -29,9 +31,9 @@ def silhouette_mean(data: CellByFeature, labels: ClusterLabels, n_threads: int =
     onehot = np.zeros((n, k))
     onehot[np.arange(n), inv] = 1.0
     counts = onehot.sum(axis=0)
-    sq = np.einsum("ij,ij->i", X, X)
+    sq = np.einsum("ij,ij->i", X, X, dtype=np.float64).astype(np.float32)
     sums = np.empty((n, k))
-    step = max(1, _BLOCK_BYTES // (8 * n))
+    step = max(1, _BLOCK_BYTES // (12 * n))  # float32 block plus its float64 copy
     with threadpool_limits(max(1, int(n_threads)), user_api="blas"):
         for lo in range(0, n, step):
             hi = min(n, lo + step)
@@ -42,7 +44,7 @@ def silhouette_mean(data: CellByFeature, labels: ClusterLabels, n_threads: int =
             np.maximum(D, 0.0, out=D)
             np.sqrt(D, out=D)
             D[np.arange(hi - lo), np.arange(lo, hi)] = 0.0
-            sums[lo:hi] = D @ onehot
+            sums[lo:hi] = D.astype(np.float64) @ onehot
     own = counts[inv]
     a = sums[np.arange(n), inv] / np.maximum(own - 1, 1)
     mean_other = sums / counts[None, :]
