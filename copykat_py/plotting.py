@@ -105,9 +105,29 @@ def _thread_limited_numeric_ops(max_threads: int = 1) -> Iterator[None]:
             yield
 
 
+# The heatmap is about 2,000 pixels tall (15 in at 150 dpi), and nearest-
+# neighbour rendering shows one cell per pixel row. Above this many cells,
+# an evenly spaced subset of the ordered cells is drawn instead of all of
+# them, which keeps matplotlib from copying the whole bins x cells matrix
+# several times (+24 GB at 80,000 cells).
+HEATMAP_MAX_ROWS = 4096
+
+
+def _display_rows(cell_order: npt.ArrayLike, max_rows: int = HEATMAP_MAX_ROWS) -> IntArray:
+    """``cell_order``, or an evenly spaced subset of it with at most ``max_rows`` entries."""
+    order = np.asarray(cell_order, dtype=int)
+    if len(order) <= max_rows:
+        return order
+    return order[np.linspace(0, len(order) - 1, max_rows).round().astype(int)]
+
+
 def _build_plot_embedding(mat: FloatArray, random_state: int = 1234) -> npt.NDArray[np.float32]:
     """Return a float32 embedding optimized for large-cell heatmap ordering."""
-    data = np.asarray(mat.T, dtype=np.float32, order="C")
+    # Repeated adjacent bins collapse to one scaled column each without
+    # changing any distance between cells, and without copying the full matrix.
+    collapsed = _collapse_repeated_features(mat.T)
+    data = np.asarray(mat.T if collapsed is None else collapsed, dtype=np.float32, order="C")
+    del collapsed
     n_cells, n_features = data.shape
     if n_cells < 12000 or n_features <= 64:
         return data
@@ -505,8 +525,9 @@ def plot_heatmap(
     if cell_order is None:
         cell_order = np.arange(n_cells)
 
-    # Reorder matrix
-    mat_ordered = mat[:, cell_order]
+    # Reorder matrix (only the cells that can be displayed)
+    display_rows = _display_rows(cell_order)
+    mat_ordered = mat[:, display_rows]
 
     # --- Figure & GridSpec ------------------------------------------------
     h = 10 if n_cells < 3000 else 15
@@ -591,9 +612,12 @@ def plot_heatmap(
     if predictions is not None:
         ax_pred = fig.add_subplot(gs[1, col_pred], sharey=ax_heat)
         pred_list = list(predictions.values())
-        pred_ordered = [pred_list[i] if i < len(pred_list) else PredictionLabel.NOT_DEFINED for i in cell_order]
-        pred_palette = _assign_cat_colors(pred_ordered)
-        pred_colors = np.array([mcolors.to_rgb(pred_palette[str(p)]) for p in pred_ordered]).reshape(n_cells, 1, 3)
+        pred_ordered = [pred_list[i] if i < len(pred_list) else PredictionLabel.NOT_DEFINED for i in display_rows]
+        # every heatmap cell's category, also those the display subset skips
+        pred_palette = _assign_cat_colors(
+            pred_list[i] if i < len(pred_list) else PredictionLabel.NOT_DEFINED for i in cell_order
+        )
+        pred_colors = np.array([mcolors.to_rgb(pred_palette[str(p)]) for p in pred_ordered]).reshape(-1, 1, 3)
         ax_pred.imshow(pred_colors, aspect="auto", interpolation="nearest")
         ax_pred.set_xticks([])
         ax_pred.set_yticks([])
