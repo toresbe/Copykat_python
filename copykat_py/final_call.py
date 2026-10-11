@@ -154,6 +154,20 @@ def cluster_and_call(
     return FinalCallResult(labels=labels, linkage=clustering.linkage, predictions=predictions)
 
 
+def _row_blocks(n_rows: int, rows_per_block: int) -> list[tuple[int, int]]:
+    """Row ranges of about ``rows_per_block`` rows, none with exactly one row unless ``n_rows == 1``.
+
+    NumPy sums a single row along its contiguous axis pairwise, but several
+    rows of a column-major block sequentially, like the whole matrix; so a
+    lone trailing row joins the block before it.
+    """
+    step = max(2, rows_per_block)
+    blocks = [(lo, min(lo + step, n_rows)) for lo in range(0, n_rows, step)]
+    if len(blocks) > 1 and blocks[-1][1] - blocks[-1][0] == 1:
+        blocks[-2:] = [(blocks[-2][0], n_rows)]
+    return blocks
+
+
 def adjust_baseline_inplace(
     mat: FloatArray,
     diploid_mask: BoolArray,
@@ -170,13 +184,24 @@ def adjust_baseline_inplace(
         from copykat_py.gpu import ops
 
         return cast(FloatArray, ops.adjust_baseline(mat, diploid_mask))
-    mat -= mat[:, diploid_mask].mean(axis=1, keepdims=True)
+    # Per-row statistics of the diploid columns are taken over row blocks, so
+    # only a block of the diploid columns is ever copied. Fancy-indexed blocks
+    # keep the full copy's memory layout, hence its summation order: the
+    # results are identical to computing them on mat[:, diploid_mask] at once.
+    n_rows = mat.shape[0]
+    dip_blocks = _row_blocks(n_rows, chunk_elems // max(1, int(np.count_nonzero(diploid_mask))))
+    for start, stop in dip_blocks:
+        block = mat[start:stop]
+        block -= block[:, diploid_mask].mean(axis=1, keepdims=True)
     mat -= mat.mean(axis=0, keepdims=True)
 
-    diploid = mat[:, diploid_mask]
-    cf_h = np.std(diploid, axis=1)
-    base = np.mean(diploid, axis=1)
-    del diploid
+    stat_dtype = mat.dtype if mat.dtype.kind == "f" else np.dtype(np.float64)  # what np.std/np.mean return
+    cf_h = np.empty(n_rows, dtype=stat_dtype)
+    base = np.empty(n_rows, dtype=stat_dtype)
+    for start, stop in dip_blocks:
+        diploid = mat[start:stop][:, diploid_mask]
+        cf_h[start:stop] = np.std(diploid, axis=1)
+        base[start:stop] = np.mean(diploid, axis=1)
     threshold = 0.25 * cf_h
     cell_means = mat.mean(axis=0, keepdims=True)
 
