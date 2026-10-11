@@ -147,9 +147,11 @@ def convert_to_bins(
                 bin_gene_indices[bin_i] = row_indices
 
     # Column-major so each cell's profile is contiguous, matching the layout
-    # the downstream baseline adjustment has always operated on.
+    # the downstream baseline adjustment has always operated on. float32 like
+    # the gene-level values: a median of float32 values is one of them, so
+    # nothing is lost, and the bins x cells matrix takes half the memory.
     n_cells = len(cell_cols)
-    RNA_adj = np.zeros((len(DNA), n_cells), order="F")
+    RNA_adj = np.zeros((len(DNA), n_cells), order="F", dtype=np.float32)
     valid_mask = np.zeros(len(DNA), dtype=bool)
 
     def _process_bin(i: int) -> None:
