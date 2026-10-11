@@ -2,11 +2,9 @@
 
 ## Author's preface
 
+My short term goal is to make something that can function as a much faster drop-in replacement for CopyKAT-R, without really touching the biological/statistical side of things more than necessary. Validation of the data in the experimental branch against upstream versions of copycat will follow.
+
 This describes some hypothesized ways to boost the accuracy of CopyKAT calls. **This is not default behavior**, it must be enabled with `--anchor markers` and `--final-call arm_correlation`.  Basically - on a lark I asked a frontier LLM if there were any ways to spend the compute we had freed up through algorithmic optimizations on improving the accuracy of its calls.
-
-My primary goal is to make something that can function as a much faster drop-in replacement for CopyKAT-R, without really touching the biological/statistical side of things more than necessary.
-
-Everything below the horizontal ruler is maintained by language models; please take with a big grain of salt. 
 
 It came up with two suggestions:
 
