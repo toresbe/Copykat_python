@@ -1,11 +1,14 @@
 # Benchmarks
 
-> **Status: untested since the refactor.** These scripts were reorganised
-> (moved out of `docs/`, renamed, merged into one harness, split into
-> subdirectories, and switched to `bench_config.py` instead of hard-coded paths) without being run. They
-> compile and pass `ruff`, and `fetch_data.py 3ca` was tried on synthetic data,
-> but no benchmark has been run end to end since the change. Expect small
-> breakages (paths, imports, renamed variables) when you first run them.
+> **Status (2026-10-11):** `run.sh` → `benchmark.py run` works again with the
+> split pipeline (it had crashed before step 1 since the refactor) and was run
+> end to end on Xenium 10k-170k for [`benchmark-cpu-experimental.md`](../docs/benchmark-cpu-experimental.md).
+> The campaign, report and accuracy scripts in the subdirectories have not been
+> re-run since they were reorganised; expect small breakages there.
+>
+> Note that `load_raw("xenium<N>")` reads the full 170k-cell matrix before
+> subsetting it, so a small Xenium run's peak RSS includes about 7.7 GB of
+> input loading.
 
 One harness for measuring CopyKAT-py speed and accuracy. Written reports and
 figures live in [`docs/`](../docs) (`benchmark-*` and `accuracy-*`); the scripts
