@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "copykat-py"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Python implementation of CopyKAT: Copynumber Karyotyping of Aneuploid Tumors from scRNA-seq data"
 readme = "README.md"
-license = {text = "GPL-2.0"}
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",
@@ -22,6 +23,19 @@ dependencies = [
     "pyarrow>=22",
     "threadpoolctl>=3.1",
 ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Homepage = "https://github.com/navinlabcode/Copykat_python"
+Issues = "https://github.com/navinlabcode/Copykat_python/issues"
 
 [project.optional-dependencies]
 large-datasets = ["fastcluster>=1.3.0"]
@@ -36,6 +50,9 @@ copykat_matrix = "copykat_py.cli:matrix_main"
 copykat-py-plot = "copykat_py.cli:plot_main"
 copykat-py-report = "copykat_py.reporting.cli:main"
 copykat-py-allele = "copykat_py.allele.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "copykat_py.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["copykat_py*"]
