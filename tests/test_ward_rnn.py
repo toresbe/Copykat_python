@@ -41,3 +41,13 @@ def test_ward_linkage_uses_rnn_above_pdist_budget(monkeypatch: pytest.MonkeyPatc
     Z, engine = baseline._ward_linkage(X, n_cores=2)
     assert engine == "ward_rnn"
     np.testing.assert_array_equal(Z[:, [0, 1, 3]], fastcluster.linkage(X, method="ward")[:, [0, 1, 3]])
+
+
+def test_ward_linkage_engine_by_cell_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    X = _clustered(300, 10, 7)
+    monkeypatch.setattr(baseline, "WARD_RNN_MIN_CELLS", 301)
+    assert baseline._ward_linkage(X, n_cores=2)[1] == "pdist+fastcluster.linkage"
+    monkeypatch.setattr(baseline, "WARD_RNN_MIN_CELLS", 300)
+    Z, engine = baseline._ward_linkage(X, n_cores=2)
+    assert engine == "ward_rnn"
+    np.testing.assert_array_equal(Z[:, [0, 1, 3]], fastcluster.linkage(X, method="ward")[:, [0, 1, 3]])

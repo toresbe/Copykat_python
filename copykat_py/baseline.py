@@ -86,6 +86,13 @@ FULL_CLUSTER_MAX_CELLS = 2000
 WARD_PDIST_MAX_GB = 8.0
 
 
+# From this many cells on, Ward linkage uses ward_rnn.ward_linkage_rnn even
+# when the distance matrix would fit: it is faster from ~2,500 cells and
+# needs no n^2 memory. Below it, pdist + fastcluster keeps small samples'
+# merge heights bit-identical to earlier releases.
+WARD_RNN_MIN_CELLS = 5000
+
+
 def _ward_pdist_fits(n_samples: int) -> bool:
     budget_gb = float(os.getenv("COPYKAT_WARD_PDIST_MAX_GB", WARD_PDIST_MAX_GB))
     # the condensed matrix plus fastcluster.linkage's working copy of it
@@ -223,11 +230,12 @@ def _ward_linkage(data: CellByFeature, n_cores: int = 1) -> tuple[LinkageMatrix,
     same merge tree; merge heights can differ in the last bits.
     """
     n_samples = data.shape[0]
-    if _ward_pdist_fits(n_samples):
+    if n_samples < WARD_RNN_MIN_CELLS and _ward_pdist_fits(n_samples):
         dist = _pdist_euclidean(data, n_cores=n_cores)
         return fastcluster.linkage(dist, method="ward", preserve_input=False), "pdist+fastcluster.linkage"
-    # O(n * d) memory and multithreaded; 16x faster than fastcluster.linkage_vector
-    # on 40,000 x 128 with 32 threads.
+    # O(n * d) memory and multithreaded: 3x faster than pdist + fastcluster
+    # at 20,000-30,000 cells (without their 3-7 GB distance matrix) and 16x
+    # faster than fastcluster.linkage_vector at 40,000 x 128, with 32 threads.
     return ward_linkage_rnn(data, n_threads=_effective_threads(n_cores)), "ward_rnn"
 
 
@@ -245,7 +253,8 @@ def _hierarchical_cluster(
 
     For Ward + Euclidean clustering, use exact Ward linkage for
     both small and large inputs (see ``_ward_linkage``: a precomputed distance
-    matrix within ``WARD_PDIST_MAX_GB``, ``ward_rnn.ward_linkage_rnn`` above).
+    matrix below ``WARD_RNN_MIN_CELLS`` cells, ``ward_rnn.ward_linkage_rnn`` from
+    there on or when the matrix would exceed ``WARD_PDIST_MAX_GB``).
     Runs of identical adjacent feature columns (bins inside one CNA segment)
     are collapsed first, which leaves distances unchanged; when the collapsed
     width fits within the PCA component cap, that PCA would be lossless and is
