@@ -3,17 +3,19 @@
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from scipy import sparse
 
 from copykat_py._pipeline.runtime import _format_seconds, _record_step
-from copykat_py._types import BoolArray, FloatArray, GeneIdType, Genome, IntArray, RuntimeInfo
+from copykat_py._types import BoolArray, FloatArray, GeneIdType, Genome, IntArray, RuntimeInfo, SparseMatrix
 from copykat_py.annotation import annotate_gene_rows
 from copykat_py.data_loader import load_cyclegenes
 from copykat_py.input import _keep_cells_by_chr_coverage
+from copykat_py.smoothing import dlm_smooth
 
 logger = logging.getLogger(__name__)
 
@@ -110,3 +112,70 @@ def transform_counts_inplace(
     _record_step(runtime_info, "freeman_tukey_transform", step_start, extra={"matrix_shape": list(norm_mat.shape)})
 
     return norm_mat, seg_mask, keep_cells2
+
+
+# Cells per block in transform_and_smooth: two float64 genes x cells blocks
+# (counts and their sqrt(x + 1)) stay around 0.5 GB for 8,000 genes.
+_STREAM_BLOCK_CELLS = 4096
+
+
+def transform_and_smooth(
+    counts: SparseMatrix | FloatArray,
+    chromosomes: npt.NDArray[Any],
+    *,
+    detection_rate: float,
+    ngene_chr: int,
+    n_cores: int,
+    runtime_info: RuntimeInfo,
+) -> tuple[FloatArray, BoolArray, BoolArray, float]:
+    """Freeman-Tukey transform, centre and DLM-smooth ``counts`` (genes x cells) block by block.
+
+    Same values as densifying ``counts`` to a column-major float64 matrix,
+    ``transform_counts_inplace`` and ``dlm_smooth``: every step works on
+    whole cells, and each block is column-major like the full matrix, so
+    NumPy sums each cell in the same order. Only one block of cells is ever
+    dense in float64; the result is the float32 smoothed matrix.
+
+    Returns the smoothed matrix, the segmentation gene mask, the
+    post-UP_DR cell mask and the seconds spent smoothing (the transform is
+    recorded as the ``freeman_tukey_transform`` step).
+    """
+    n_genes, n_cells = counts.shape
+    if sparse.issparse(counts):
+        counts = cast(SparseMatrix, counts).tocsc()
+        positive = cast(SparseMatrix, counts > 0)
+        DR2 = np.asarray(positive.sum(axis=1)).ravel() / n_cells
+    else:
+        DR2 = (counts > 0).sum(axis=1) / n_cells
+    seg_mask = detection_rate <= DR2
+    keep_cells2 = _keep_cells_by_chr_coverage(counts[seg_mask], chromosomes[seg_mask], ngene_chr)
+
+    smoothed = np.empty((n_genes, n_cells), dtype=np.float32)
+    transform_seconds = 0.0
+    smooth_seconds = 0.0
+    for lo in range(0, n_cells, _STREAM_BLOCK_CELLS):
+        hi = min(n_cells, lo + _STREAM_BLOCK_CELLS)
+        start = time.perf_counter()
+        if sparse.issparse(counts):
+            block = cast(SparseMatrix, counts[:, lo:hi]).astype(np.float64).toarray(order="F")
+        else:
+            block = np.asfortranarray(counts[:, lo:hi], dtype=np.float64)
+        # Freeman-Tukey transformation: log(sqrt(x) + sqrt(x+1)), then centre each cell
+        sqrt_plus_one = block + 1
+        np.sqrt(sqrt_plus_one, out=sqrt_plus_one)
+        np.sqrt(block, out=block)
+        block += sqrt_plus_one
+        del sqrt_plus_one
+        np.log(block, out=block)
+        block -= block.mean(axis=0, keepdims=True)
+        transform_seconds += time.perf_counter() - start
+        start = time.perf_counter()
+        dlm_smooth(block, n_cores=n_cores, out=smoothed[:, lo:hi])
+        smooth_seconds += time.perf_counter() - start
+    _record_step(
+        runtime_info,
+        "freeman_tukey_transform",
+        time.perf_counter() - transform_seconds,
+        extra={"matrix_shape": [int(n_genes), int(n_cells)]},
+    )
+    return smoothed, seg_mask, keep_cells2, smooth_seconds
