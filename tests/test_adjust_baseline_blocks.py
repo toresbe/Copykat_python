@@ -7,17 +7,18 @@ from copykat_py.final_call import adjust_baseline_inplace
 
 
 def _reference(mat: np.ndarray, diploid_mask: np.ndarray) -> np.ndarray:
-    """The previous whole-matrix implementation."""
-    mat -= mat[:, diploid_mask].mean(axis=1, keepdims=True)
-    mat -= mat.mean(axis=0, keepdims=True)
+    """Whole-matrix version of the adjustment (float32 accumulates in float64)."""
+    acc = np.float64 if mat.dtype == np.float32 else None
+    mat -= mat[:, diploid_mask].mean(axis=1, keepdims=True, dtype=acc).astype(mat.dtype)
+    mat -= mat.mean(axis=0, keepdims=True, dtype=acc).astype(mat.dtype)
     diploid = mat[:, diploid_mask]
-    cf_h = np.std(diploid, axis=1)
-    base = np.mean(diploid, axis=1)
+    cf_h = np.std(diploid, axis=1, dtype=acc).astype(mat.dtype)
+    base = np.mean(diploid, axis=1, dtype=acc).astype(mat.dtype)
     threshold = 0.25 * cf_h
-    cell_means = mat.mean(axis=0, keepdims=True)
+    cell_means = mat.mean(axis=0, keepdims=True, dtype=acc).astype(mat.dtype)
     noise = np.abs(mat - base[:, None]) <= threshold[:, None]
     np.copyto(mat, np.broadcast_to(cell_means, mat.shape), where=noise)
-    mat -= mat.mean(axis=0, keepdims=True)
+    mat -= mat.mean(axis=0, keepdims=True, dtype=acc).astype(mat.dtype)
     return mat
 
 

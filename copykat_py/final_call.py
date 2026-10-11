@@ -188,22 +188,26 @@ def adjust_baseline_inplace(
     # only a block of the diploid columns is ever copied. Fancy-indexed blocks
     # keep the full copy's memory layout, hence its summation order: the
     # results are identical to computing them on mat[:, diploid_mask] at once.
+    # A float32 matrix (the bins matrix, and mm10's gene-level values) keeps
+    # its storage but accumulates every mean and SD in float64: a float32 sum
+    # over 100,000 cells would lose most of its digits.
+    acc = np.float64 if mat.dtype == np.float32 else None
     n_rows = mat.shape[0]
     dip_blocks = _row_blocks(n_rows, chunk_elems // max(1, int(np.count_nonzero(diploid_mask))))
     for start, stop in dip_blocks:
         block = mat[start:stop]
-        block -= block[:, diploid_mask].mean(axis=1, keepdims=True)
-    mat -= mat.mean(axis=0, keepdims=True)
+        block -= block[:, diploid_mask].mean(axis=1, keepdims=True, dtype=acc).astype(mat.dtype, copy=False)
+    mat -= mat.mean(axis=0, keepdims=True, dtype=acc).astype(mat.dtype, copy=False)
 
     stat_dtype = mat.dtype if mat.dtype.kind == "f" else np.dtype(np.float64)  # what np.std/np.mean return
     cf_h = np.empty(n_rows, dtype=stat_dtype)
     base = np.empty(n_rows, dtype=stat_dtype)
     for start, stop in dip_blocks:
         diploid = mat[start:stop][:, diploid_mask]
-        cf_h[start:stop] = np.std(diploid, axis=1)
-        base[start:stop] = np.mean(diploid, axis=1)
+        cf_h[start:stop] = np.std(diploid, axis=1, dtype=acc)
+        base[start:stop] = np.mean(diploid, axis=1, dtype=acc)
     threshold = 0.25 * cf_h
-    cell_means = mat.mean(axis=0, keepdims=True)
+    cell_means = mat.mean(axis=0, keepdims=True, dtype=acc).astype(mat.dtype, copy=False)
 
     step = max(1, chunk_elems // max(1, mat.shape[1]))
     for start in range(0, mat.shape[0], step):
@@ -213,5 +217,5 @@ def adjust_baseline_inplace(
         )
         np.copyto(block, np.broadcast_to(cell_means, block.shape), where=noise_mask)
 
-    mat -= mat.mean(axis=0, keepdims=True)
+    mat -= mat.mean(axis=0, keepdims=True, dtype=acc).astype(mat.dtype, copy=False)
     return mat
