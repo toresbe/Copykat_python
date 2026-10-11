@@ -95,7 +95,7 @@ def _dlm_smooth_blocks(y: GeneByCell, K: FloatArray, B: FloatArray, out: GeneByC
                 out[t, c0 + j] = m[t + 1, j] - mean
 
 
-def dlm_smooth(norm_mat: GeneByCell, n_cores: int = 1) -> GeneByCell:
+def dlm_smooth(norm_mat: GeneByCell, n_cores: int = 1, out: GeneByCell | None = None) -> GeneByCell:
     """Apply DLM smoothing to all cells in parallel.
 
     Parameters
@@ -104,6 +104,10 @@ def dlm_smooth(norm_mat: GeneByCell, n_cores: int = 1) -> GeneByCell:
         Normalized gene expression matrix.
     n_cores : int
         Number of parallel threads.
+    out : np.ndarray or None
+        Optional float32 (n_genes, n_cells) array (or view) to write into, so
+        callers can smooth a large matrix block by block. Each cell is
+        smoothed independently, so blocks give the same values.
 
     Returns
     -------
@@ -127,7 +131,7 @@ def dlm_smooth(norm_mat: GeneByCell, n_cores: int = 1) -> GeneByCell:
 
     K, B = _dlm_gains(n_genes)
     y = np.asarray(norm_mat, dtype=np.float64)
-    smoothed = np.empty((n_genes, n_cells), dtype=np.float32)
+    smoothed = np.empty((n_genes, n_cells), dtype=np.float32) if out is None else out
     previous_threads = numba.get_num_threads()
     numba.set_num_threads(n_jobs)
     try:

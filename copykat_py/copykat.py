@@ -15,11 +15,9 @@ Faithfully reimplements the R copykat() function workflow:
 import logging
 import time
 from dataclasses import asdict
-from typing import cast
 
 import numpy as np
 import pandas as pd
-from scipy import sparse
 
 from copykat_py import anchor as _anchor
 from copykat_py import backend
@@ -27,7 +25,7 @@ from copykat_py._logging import with_default_progress_output
 from copykat_py._pipeline.baseline import BaselineOptions, select_baseline
 from copykat_py._pipeline.output import OutputOptions, write_results
 from copykat_py._pipeline.prediction import PredictionOptions, adjust_and_call
-from copykat_py._pipeline.preprocessing import FilteringOptions, annotate_genes, transform_counts_inplace
+from copykat_py._pipeline.preprocessing import FilteringOptions, annotate_genes, transform_and_smooth
 from copykat_py._pipeline.runtime import _format_seconds, _record_step, new_runtime_info, select_pca_components
 from copykat_py._pipeline.segmentation import _segment_with_retries, _SegmentationOptions
 from copykat_py._types import (
@@ -42,7 +40,6 @@ from copykat_py._types import (
     Genome,
     KSMethod,
     RawMatrix,
-    SparseMatrix,
 )
 from copykat_py.baseline import (
     FULL_CLUSTER_MAX_CELLS,
@@ -57,7 +54,7 @@ from copykat_py.output import (
     _write_cna_csv,
 )
 from copykat_py.segmentation import get_last_cna_mcmc_info
-from copykat_py.smoothing import dlm_smooth, get_last_dlm_smooth_info
+from copykat_py.smoothing import get_last_dlm_smooth_info
 
 logger = logging.getLogger(__name__)
 
@@ -259,38 +256,29 @@ def copykat(
     if not np.all(keep_cells):
         cell_cols = [cell_cols[i] for i in np.where(keep_cells)[0]]
         expr_values = expr_values[:, keep_cells]
-    # Column-major, as pandas' DataFrame.to_numpy() returned it before: the
-    # per-cell centering below sums down each column, and numpy's summation
-    # order (hence the last bits of every value) depends on the layout. Those
-    # bits can flip near-tie merges in the step-4 clustering on low-confidence
-    # samples, so keep the original layout to reproduce results exactly.
-    if sparse.issparse(expr_values):
-        rawmat3 = cast(SparseMatrix, expr_values).astype(np.float64).toarray(order="F")
-    else:
-        rawmat3 = np.asfortranarray(expr_values, dtype=np.float64)
-    del expr_values
     _record_step(runtime_info, "cell_filter_pre_smoothing", step_start, extra={"cells_after_filter": len(cell_cols)})
 
-    norm_mat, seg_mask, keep_cells2 = transform_counts_inplace(
-        rawmat3,
+    # Transform, centre and smooth block by block, so the counts are never a
+    # dense float64 genes x cells matrix. Each block is column-major, as
+    # pandas' DataFrame.to_numpy() returned the full matrix before: the
+    # per-cell centering sums down each column, and numpy's summation order
+    # (hence the last bits of every value) depends on the layout. Those bits
+    # can flip near-tie merges in the step-4 clustering on low-confidence
+    # samples, so keep the original layout to reproduce results exactly.
+    logger.info("step 3: smoothing data with DLM ...")
+    norm_mat_smooth, seg_mask, keep_cells2, smooth_seconds = transform_and_smooth(
+        expr_values,
         anno_mat["chromosome_name"].to_numpy(),
         detection_rate=effective_detection_rate,
         ngene_chr=filtering.ngene_chr,
+        n_cores=n_cores,
         runtime_info=runtime_info,
     )
-    del rawmat3  # transform_counts_inplace returned this same backing array
-
-    logger.info(f"  {norm_mat.shape[0]} genes, {norm_mat.shape[1]} cells after preprocessing")
-
-    # =========================================================================
-    # Step 3: DLM smoothing
-    # =========================================================================
-    logger.info("step 3: smoothing data with DLM ...")
-    step_start = time.perf_counter()
-    norm_mat_smooth = dlm_smooth(norm_mat, n_cores=n_cores)
-    del norm_mat
+    del expr_values
+    logger.info(f"  {norm_mat_smooth.shape[0]} genes, {norm_mat_smooth.shape[1]} cells after preprocessing")
     dlm_info = get_last_dlm_smooth_info()
-    elapsed = _record_step(runtime_info, "dlm_smoothing", step_start, parallel_info=dlm_info)
+    dlm_info["tasks"] = int(norm_mat_smooth.shape[1])
+    elapsed = _record_step(runtime_info, "dlm_smoothing", time.perf_counter() - smooth_seconds, parallel_info=dlm_info)
     logger.info(
         f"  smoothing runtime: {_format_seconds(elapsed)} "
         f"(parallel={dlm_info['parallel']}, cores={dlm_info['effective_cores']})"
