@@ -17,9 +17,12 @@ from typing import Any
 import numpy as np
 import pytest
 from metrics import Run, run_copykat
-from synthetic_data import SyntheticDataset, simulate
+from synthetic_data import SimulationConfig, SyntheticDataset, simulate
+
+from copykat_py._types import Genome
 
 _METRICS: dict[str, Any] = {}
+GENOMES = [Genome.HG20, Genome.MM10]
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -60,27 +63,33 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+@pytest.fixture(scope="session", params=GENOMES, ids=str)
+def genome(request: pytest.FixtureRequest) -> Genome:
+    """Every synthetic test runs once per reference genome."""
+    return request.param
+
+
 @pytest.fixture(scope="session")
-def record():
-    """``record(section, key, value)`` keeps a metric for the CI summary."""
+def record(genome: Genome):
+    """``record(section, key, value)`` keeps a metric for the CI summary, filed under the genome."""
 
     def _record(section: str, key: str, value: Any) -> None:
-        _METRICS.setdefault(section, {})[key] = value
+        _METRICS.setdefault(f"{genome}/{section}", {})[key] = value
 
     return _record
 
 
 @pytest.fixture(scope="session")
-def dataset() -> SyntheticDataset:
-    return simulate()
+def dataset(genome: Genome) -> SyntheticDataset:
+    return simulate(SimulationConfig(genome=genome))
 
 
 @pytest.fixture(scope="session")
-def runs_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return tmp_path_factory.mktemp("copykat_runs")
+def runs_dir(genome: Genome, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp(f"copykat_runs_{genome}")
 
 
 @pytest.fixture(scope="session")
 def baseline_run(dataset: SyntheticDataset, runs_dir: Path) -> Run:
-    """The pipeline on the default dataset with automatic reference selection, run once per session."""
+    """The pipeline on the default dataset with automatic reference selection, run once per genome."""
     return run_copykat(dataset, runs_dir / "baseline")

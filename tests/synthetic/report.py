@@ -43,16 +43,28 @@ def _fmt(value: Any) -> str:
         return f"`{json.dumps(value)}`" if isinstance(value, dict) else str(value)
     if isinstance(value, int):
         return str(value)
-    return f"{value:.4f}"
+    # Small nonzero values (float rounding in the invariance checks) would print as 0.0000.
+    return f"{value:.2e}" if 0 < abs(value) < 1e-3 else f"{value:.4f}"
 
 
 def _delta(head: Any, base: Any) -> str:
+    if base is None:
+        return "new"
     if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in (head, base)):
         return "" if head == base else "changed"
     diff = head - base
-    if math.isclose(diff, 0.0, abs_tol=5e-5):
+    if diff == 0:
         return "0"
-    return f"{diff:+.4f}"
+    return f"{diff:+.2e}" if abs(diff) < 1e-3 else f"{diff:+.4f}"
+
+
+def _by_genome(metrics: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Split ``"genome/section"`` keys into ``{genome: {section: rows}}``."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for key, rows in (metrics or {}).items():
+        genome, _, section = key.rpartition("/")
+        grouped.setdefault(genome or "hg20", {})[section] = rows
+    return grouped
 
 
 def markdown(head: dict[str, Any], base: dict[str, Any] | None, figure_note: str | None) -> str:
@@ -63,21 +75,24 @@ def markdown(head: dict[str, Any], base: dict[str, Any] | None, figure_note: str
         lines += ["Each metric for this branch, the base branch run on the same tests, and the change.", ""]
     if figure_note:
         lines += [figure_note, ""]
-    for section, title in SECTIONS.items():
-        rows = head.get(section)
-        if not rows:
-            continue
-        lines += [f"### {title}", ""]
-        if base is None:
-            lines += ["| Metric | Value |", "| --- | ---: |"]
-            lines += [f"| {key} | {_fmt(value)} |" for key, value in rows.items()]
-        else:
-            base_rows = base.get(section, {})
-            lines += ["| Metric | This branch | Base | Change |", "| --- | ---: | ---: | ---: |"]
-            for key, value in rows.items():
-                old = base_rows.get(key)
-                lines.append(f"| {key} | {_fmt(value)} | {_fmt(old)} | {_delta(value, old)} |")
-        lines.append("")
+    base_genomes = _by_genome(base)
+    for genome, sections in _by_genome(head).items():
+        lines += [f"### {genome}", ""]
+        for section, title in SECTIONS.items():
+            rows = sections.get(section)
+            if not rows:
+                continue
+            lines += [f"#### {title}", ""]
+            if base is None:
+                lines += ["| Metric | Value |", "| --- | ---: |"]
+                lines += [f"| {key} | {_fmt(value)} |" for key, value in rows.items()]
+            else:
+                base_rows = base_genomes.get(genome, {}).get(section, {})
+                lines += ["| Metric | This branch | Base | Change |", "| --- | ---: | ---: | ---: |"]
+                for key, value in rows.items():
+                    old = base_rows.get(key)
+                    lines.append(f"| {key} | {_fmt(value)} | {_fmt(old)} | {_delta(value, old)} |")
+            lines.append("")
     return "\n".join(lines)
 
 
@@ -119,11 +134,16 @@ def figure(head: dict[str, Any], base: dict[str, Any] | None, path: Path) -> Non
         ),
         ("Injected shift on chr5:\nCNA response", "Injected log2 fold change", _dose_response),
     ]
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3.6), facecolor=SURFACE)
-    # Base first and dashed, so this branch draws on top and identical curves still show both.
-    runs = ([("Base", base, BASE_COLOR, "--")] if base else []) + [("This branch", head, HEAD_COLOR, "-")]
-    for ax, (title, xlabel, extract) in zip(axes, panels, strict=True):
+    head_genomes, base_genomes = _by_genome(head), _by_genome(base)
+    genomes = list(head_genomes)
+    fig, axes = plt.subplots(len(genomes), 3, figsize=(12, 3.6 * len(genomes)), facecolor=SURFACE, squeeze=False)
+    cells = [(axes[row][col], genome, panel) for row, genome in enumerate(genomes) for col, panel in enumerate(panels)]
+    for ax, genome, (title, xlabel, extract) in cells:
         ax.set_facecolor(SURFACE)
+        # Base first and dashed, so this branch draws on top and identical curves still show both.
+        runs = [("This branch", head_genomes[genome], HEAD_COLOR, "-")]
+        if genome in base_genomes:
+            runs.insert(0, ("Base", base_genomes[genome], BASE_COLOR, "--"))
         for label, metrics, color, style in runs:
             x, y = extract(metrics)
             if x:
@@ -139,7 +159,7 @@ def figure(head: dict[str, Any], base: dict[str, Any] | None, path: Path) -> Non
                     markeredgewidth=2,
                     label=label,
                 )
-        ax.set_title(title, loc="left", fontsize=10, color=INK)
+        ax.set_title(f"{genome} · {title}", loc="left", fontsize=10, color=INK)
         ax.set_xlabel(xlabel, fontsize=9, color=MUTED)
         ax.grid(True, color=GRID, linewidth=0.8)
         ax.set_axisbelow(True)
@@ -148,8 +168,8 @@ def figure(head: dict[str, Any], base: dict[str, Any] | None, path: Path) -> Non
         for side in ("left", "bottom"):
             ax.spines[side].set_color(GRID)
         ax.tick_params(colors=MUTED, labelsize=8)
-    if len(runs) > 1:
-        axes[0].legend(frameon=False, fontsize=8, labelcolor=INK)
+    if base_genomes:
+        axes[0][0].legend(frameon=False, fontsize=8, labelcolor=INK)
     fig.tight_layout()
     fig.savefig(path, dpi=130, facecolor=SURFACE)
     plt.close(fig)

@@ -18,7 +18,7 @@ def _raw_event_shift(run_dir, dataset):
     chrom, start = raw["chromosome_name"].astype(str).to_numpy(), raw["start_position"].to_numpy()
     tumor = [c for c in dataset.tumor_cells if c in raw.columns]
     shifts = []
-    for event in dataset.config.events:
+    for event in dataset.config.karyotype:
         rows = (chrom == event.chrom) & (start >= event.start) & (start < event.end)
         shifts.append(abs(raw.loc[rows, tumor].to_numpy().mean()))
     return float(np.mean(shifts))
@@ -29,7 +29,7 @@ def _normal_offset(run, dataset):
     normal = [c for c in dataset.normal_cells if c in run.cna.columns]
     offsets = [
         abs(run.cna.loc[region_mask(run.bins, e.chrom, e.start, e.end), normal].to_numpy().mean())
-        for e in dataset.config.events
+        for e in dataset.config.karyotype
     ]
     return float(np.mean(offsets))
 

@@ -17,7 +17,7 @@ from synthetic_data import AUTOSOMES, SimulationConfig, simulate
 
 from copykat_py._types import PredictionLabel
 
-# Smallest whole-population CNA shift the default karyotype produces is about
+# Smallest whole-population CNA shift the default karyotypes produce is about
 # 0.12 (one-copy gain); a null population should stay well under that.
 NULL_CHROMOSOME_LIMIT = 0.08
 
@@ -25,9 +25,9 @@ NULL_CHROMOSOME_LIMIT = 0.08
 def test_planted_events_are_recovered(dataset, baseline_run, record):
     accuracy = call_accuracy(baseline_run, dataset)
     correlation = profile_correlation(baseline_run, dataset)
-    shifts = {event.label(): event_shift(baseline_run, dataset, event) for event in dataset.config.events}
-    planted = {event.chrom for event in dataset.config.events}
-    neutral = [c for c in AUTOSOMES if c not in planted]
+    shifts = {event.label(): event_shift(baseline_run, dataset, event) for event in dataset.config.karyotype}
+    planted = {event.chrom for event in dataset.config.karyotype}
+    neutral = [c for c in AUTOSOMES[dataset.config.genome] if c not in planted]
     tumor, normal = dataset.tumor_cells, dataset.normal_cells
     off_target = max(
         abs(
@@ -44,17 +44,17 @@ def test_planted_events_are_recovered(dataset, baseline_run, record):
 
     assert accuracy >= 0.97
     assert correlation >= 0.85
-    for event in dataset.config.events:
+    for event in dataset.config.karyotype:
         shift = shifts[event.label()]
         assert np.sign(shift) == np.sign(event.copies - 2), event.label()
         assert abs(shift) >= 0.06, event.label()
-    by_copies = {event.copies: shifts[event.label()] for event in dataset.config.events if event.copies > 2}
+    by_copies = {event.copies: shifts[event.label()] for event in dataset.config.karyotype if event.copies > 2}
     assert by_copies[4.0] > by_copies[3.0], "a two-copy gain should read stronger than a one-copy gain"
     assert off_target < 0.03
 
 
-def test_pure_diploid_population_has_no_confident_calls(runs_dir, record):
-    data = simulate(SimulationConfig(n_tumor=0, n_normal=300, events=()))
+def test_pure_diploid_population_has_no_confident_calls(genome, runs_dir, record):
+    data = simulate(SimulationConfig(genome=genome, n_tumor=0, n_normal=300, events=()))
     run = run_copykat(data, runs_dir / "null")
     labels = run.predictions.value_counts()
     confident_aneuploid = int(run.predictions.eq(PredictionLabel.ANEUPLOID).sum())
@@ -82,8 +82,8 @@ def test_half_sequencing_depth(dataset, runs_dir, record):
 
 
 @pytest.mark.parametrize("n_tumor", [30, 270], ids=["10pct_tumor", "90pct_tumor"])
-def test_tumor_purity(n_tumor, runs_dir, record):
-    data = simulate(SimulationConfig(n_tumor=n_tumor, n_normal=300 - n_tumor))
+def test_tumor_purity(n_tumor, genome, runs_dir, record):
+    data = simulate(SimulationConfig(genome=genome, n_tumor=n_tumor, n_normal=300 - n_tumor))
     run = run_copykat(data, runs_dir / f"purity_{n_tumor}")
     accuracy, correlation = call_accuracy(run, data), profile_correlation(run, data)
     record("purity", f"{n_tumor / 3:.0f}pct_tumor_call_accuracy", accuracy)

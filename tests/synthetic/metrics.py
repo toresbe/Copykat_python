@@ -13,19 +13,31 @@ import numpy as np
 import pandas as pd
 from synthetic_data import Event, SyntheticDataset
 
-from copykat_py._types import PredictionLabel
+from copykat_py._types import Genome, PredictionLabel
 from copykat_py.copykat import copykat
 
 ANEUPLOID_LABELS = {PredictionLabel.ANEUPLOID, PredictionLabel.ANEUPLOID_LOW_CONFIDENCE}
 DIPLOID_LABELS = {PredictionLabel.DIPLOID, PredictionLabel.DIPLOID_LOW_CONFIDENCE}
-COORDINATE_COLUMNS = ["chrom", "chrompos", "abspos"]
+# Leading annotation columns of CNAmat: genomic bins for hg20, genes for mm10.
+ANNOTATION_COLUMNS = {
+    Genome.HG20: ["chrom", "chrompos", "abspos"],
+    Genome.MM10: [
+        "abspos",
+        "chromosome_name",
+        "start_position",
+        "end_position",
+        "ensembl_gene_id",
+        "mgi_symbol",
+        "band",
+    ],
+}
 
 
 @dataclass
 class Run:
     predictions: pd.Series  # copykat.pred, indexed by cell name
     cna: pd.DataFrame  # bins x cells
-    bins: pd.DataFrame  # chrom (str), chrompos, abspos
+    bins: pd.DataFrame  # chrom (str), chrompos: bin (hg20) or gene start (mm10)
     runtime: dict[str, Any]
 
     @property
@@ -37,17 +49,25 @@ class Run:
 
 def run_copykat(data: SyntheticDataset, out_dir: Path, counts: Any = None, **kwargs: Any) -> Run:
     out_dir.mkdir(parents=True, exist_ok=True)
-    options = {"plot_genes": False, "n_cores": int(os.environ.get("SYNTHETIC_N_CORES", "2"))}
+    options = {
+        "plot_genes": False,
+        "n_cores": int(os.environ.get("SYNTHETIC_N_CORES", "2")),
+        "genome": data.config.genome,
+    }
     options.update(kwargs)
     # The pipeline logs every step at INFO; keep pytest output readable.
     with _quiet():
         result = copykat(data.counts if counts is None else counts, sam_name=str(out_dir / "synthetic"), **options)
     cna = result["CNAmat"]
-    bins = cna[COORDINATE_COLUMNS].copy()
+    annotation = ANNOTATION_COLUMNS[Genome(options["genome"])]
+    if annotation[0] == "chrom":
+        bins = cna[["chrom", "chrompos"]].copy()
+    else:
+        bins = cna[["chromosome_name", "start_position"]].set_axis(["chrom", "chrompos"], axis=1)
     bins["chrom"] = bins["chrom"].astype(str)
     return Run(
         predictions=result["prediction"].set_index("cell.names")["copykat.pred"],
-        cna=cna.drop(columns=COORDINATE_COLUMNS),
+        cna=cna.drop(columns=annotation),
         bins=bins,
         runtime=result["runtime"],
     )
@@ -104,7 +124,7 @@ def profile_correlation(run: Run, data: SyntheticDataset) -> float:
     tumor = [c for c in data.tumor_cells if c in run.cna.columns]
     normal = [c for c in data.normal_cells if c in run.cna.columns]
     observed = run.cna[tumor].mean(axis=1).to_numpy() - run.cna[normal].mean(axis=1).to_numpy()
-    expected = expected_log_ratio(run.bins, data.config.events)
+    expected = expected_log_ratio(run.bins, data.config.karyotype)
     return float(np.corrcoef(observed, expected)[0, 1])
 
 

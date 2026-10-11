@@ -1,7 +1,7 @@
 """Seeded scRNA-seq count simulator with planted copy-number truth.
 
-Genes are real hg20 symbols, so the pipeline annotates and bins them as it would
-real data. Counts are gamma-Poisson (negative binomial) draws whose means scale
+Genes are real hg20 or mm10 symbols, so the pipeline annotates (and, for hg20,
+bins) them as it would real data. Counts are gamma-Poisson (negative binomial) draws whose means scale
 with each cell's library size, each gene's base rate, the tumour copy number
 over the gene (CN / 2) and, for normal cells, a cell-type program that changes
 expression without changing copy number.
@@ -14,9 +14,13 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
+from copykat_py._types import Genome
 from copykat_py.data_loader import load_full_anno
 
-AUTOSOMES = [str(c) for c in range(1, 23)]
+AUTOSOMES = {Genome.HG20: [str(c) for c in range(1, 23)], Genome.MM10: [str(c) for c in range(1, 20)]}
+SYMBOL_COLUMN = {Genome.HG20: "hgnc_symbol", Genome.MM10: "mgi_symbol"}
+# What annotation_order sorts genes by: absolute position for hg20, chromosome and start for mm10.
+ORDER_KEY = {Genome.HG20: ["abspos"], Genome.MM10: ["chromosome_name", "start_position"]}
 
 
 @dataclass(frozen=True)
@@ -35,13 +39,22 @@ class Event:
         return f"{kind} {where} (CN={self.copies:g})"
 
 
-# Two arm-scale gains and two losses, the kind of karyotype CopyKAT is built for.
-DEFAULT_EVENTS: tuple[Event, ...] = (
-    Event("7", 3.0),
-    Event("20", 4.0),
-    Event("10", 1.0),
-    Event("3", 1.0, end=90_000_000),  # 3p loss
-)
+# Two large gains and two losses, the kind of karyotype CopyKAT is built for.
+# Chromosomes 1, 2, 5 and 12 stay copy-neutral in both: the perturbation tests use them.
+DEFAULT_EVENTS: dict[Genome, tuple[Event, ...]] = {
+    Genome.HG20: (
+        Event("7", 3.0),
+        Event("20", 4.0),
+        Event("10", 1.0),
+        Event("3", 1.0, end=90_000_000),  # 3p loss
+    ),
+    Genome.MM10: (
+        Event("15", 3.0),  # carries Myc, often gained in mouse tumours
+        Event("11", 4.0),
+        Event("4", 1.0),
+        Event("14", 1.0, end=60_000_000),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -56,8 +69,13 @@ class SimulationConfig:
     normal_cell_types: int = 2
     program_fraction: float = 0.03  # share of genes up-regulated in each normal cell type
     program_fold: float = 3.0
-    events: tuple[Event, ...] = DEFAULT_EVENTS
+    genome: Genome = Genome.HG20
+    events: tuple[Event, ...] | None = None  # None: DEFAULT_EVENTS for the genome
     seed: int = 20261011
+
+    @property
+    def karyotype(self) -> tuple[Event, ...]:
+        return DEFAULT_EVENTS[self.genome] if self.events is None else self.events
 
 
 @dataclass
@@ -81,17 +99,20 @@ class SyntheticDataset:
         return replace(self, counts=self.counts[cells], is_tumor=self.is_tumor[cells], mean=self.mean[cells])
 
 
-def _gene_panel(n_genes: int, rng: np.random.Generator) -> pd.DataFrame:
+def _gene_panel(n_genes: int, genome: Genome, rng: np.random.Generator) -> pd.DataFrame:
     """Pick ``n_genes`` uniquely-named autosomal genes spread evenly over the genome."""
-    anno = load_full_anno()
-    anno = anno[anno["chromosome_name"].astype(str).isin(AUTOSOMES)]
-    anno = anno.dropna(subset=["hgnc_symbol"])
-    anno = anno[anno["hgnc_symbol"].astype(str).str.len() > 0]
-    anno = anno.drop_duplicates(subset="hgnc_symbol", keep=False)
+    symbol = SYMBOL_COLUMN[genome]
+    anno = load_full_anno(genome)
+    anno = anno[anno["chromosome_name"].astype(str).isin(AUTOSOMES[genome])]
+    anno = anno.dropna(subset=[symbol])
+    anno = anno[anno[symbol].astype(str).str.len() > 0]
+    anno = anno.drop_duplicates(subset=symbol, keep=False)
     # Genes sharing a position are ordered by input row (see test_invariance), so
     # leave them out of the panel; tests that need a tie add one on purpose.
-    anno = anno.drop_duplicates(subset="abspos", keep=False)
-    anno = anno.sort_values("abspos")
+    anno = anno.drop_duplicates(subset=ORDER_KEY[genome], keep=False)
+    # mm10 abspos is a per-chromosome offset, so order by chromosome and start.
+    chrom = anno["chromosome_name"].astype(int).to_numpy()
+    anno = anno.iloc[np.lexsort((anno["start_position"].to_numpy(), chrom))]
     picked = np.sort(rng.choice(len(anno), size=n_genes, replace=False))
     anno = anno.iloc[picked]
     return pd.DataFrame(
@@ -99,8 +120,20 @@ def _gene_panel(n_genes: int, rng: np.random.Generator) -> pd.DataFrame:
             "chrom": anno["chromosome_name"].astype(str).to_numpy(),
             "start": anno["start_position"].astype(np.int64).to_numpy(),
         },
-        index=pd.Index(anno["hgnc_symbol"].astype(str).to_numpy(), name="symbol"),
+        index=pd.Index(anno[symbol].astype(str).to_numpy(), name="symbol"),
     )
+
+
+def tied_gene_pair(genome: Genome) -> tuple[str, str, str]:
+    """Two uniquely-named autosomal genes the pipeline cannot order by position, and their chromosome."""
+    symbol = SYMBOL_COLUMN[genome]
+    anno = load_full_anno(genome).dropna(subset=[symbol])
+    anno = anno[anno["chromosome_name"].astype(str).isin(AUTOSOMES[genome])]
+    anno = anno.drop_duplicates(subset=symbol, keep=False)
+    tied = anno[anno.duplicated(subset=ORDER_KEY[genome], keep=False)]
+    tied = tied.sort_values([*ORDER_KEY[genome], symbol])
+    first, second = tied.iloc[0], tied.iloc[1]
+    return str(first[symbol]), str(second[symbol]), str(first["chromosome_name"])
 
 
 def copies_for(genes: pd.DataFrame, events: tuple[Event, ...]) -> np.ndarray:
@@ -115,7 +148,7 @@ def copies_for(genes: pd.DataFrame, events: tuple[Event, ...]) -> np.ndarray:
 def simulate(config: SimulationConfig | None = None) -> SyntheticDataset:
     config = config or SimulationConfig()
     rng = np.random.default_rng(config.seed)
-    genes = _gene_panel(config.n_genes, rng)
+    genes = _gene_panel(config.n_genes, config.genome, rng)
     n_cells = config.n_tumor + config.n_normal
 
     base_rate = rng.lognormal(0.0, config.gene_rate_sdlog, size=len(genes))
@@ -124,7 +157,7 @@ def simulate(config: SimulationConfig | None = None) -> SyntheticDataset:
         -0.5 * config.library_size_sdlog**2, config.library_size_sdlog, size=n_cells
     )
 
-    tumor_copies = copies_for(genes, config.events)
+    tumor_copies = copies_for(genes, config.karyotype)
     multiplier = np.ones((len(genes), n_cells))
     multiplier[:, : config.n_tumor] = (tumor_copies / 2.0)[:, None]
 
