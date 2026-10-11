@@ -119,25 +119,44 @@ def worker(args):
         "source": str(source),
         "steps": [],
     }
-    original = ck._record_step
     result["source_copykat_sha256"] = sha_file(ck.__file__)
 
-    def record(*a, **k):
-        elapsed = original(*a, **k)
-        result["steps"] = list(a[0]["steps"])
-        save(ROOT / "results" / (args.name + ".progress.json"), result)
-        return elapsed
+    def patch_everywhere(name, make_wrapper):
+        """Wrap ``name`` in every loaded copykat_py module that binds it (older
+        snapshots define everything in copykat.py, newer ones import the
+        helpers into several _pipeline modules)."""
+        originals = {}
+        for mod_name, mod in list(sys.modules.items()):
+            if mod_name.startswith("copykat_py") and callable(getattr(mod, name, None)):
+                fn = getattr(mod, name)
+                originals.setdefault(id(fn), make_wrapper(fn))
+                setattr(mod, name, originals[id(fn)])
 
-    ck._record_step = record
-    segmentation = ck.cna_mcmc
+    def make_record(original):
+        def record(*a, **k):
+            elapsed = original(*a, **k)
+            result["steps"] = list(a[0]["steps"])
+            save(ROOT / "results" / (args.name + ".progress.json"), result)
+            return elapsed
+
+        return record
+
     result["breakpoint_attempts"] = []
 
-    def segment(*a, **k):
-        r = segmentation(*a, **k)
-        result["breakpoint_attempts"].append([int(x) for x in r["breaks"]])
-        return r
+    def make_segment(segmentation):
+        def segment(*a, **k):
+            r = segmentation(*a, **k)
+            breaks = r["breaks"] if isinstance(r, dict) else r.breakpoints
+            result["breakpoint_attempts"].append([int(x) for x in breaks])
+            return r
 
-    ck.cna_mcmc = segment
+        return segment
+
+    for module in ["copykat_py._pipeline.runtime", "copykat_py._pipeline.segmentation", "copykat_py.segmentation"]:
+        with contextlib.suppress(ImportError):  # older snapshot layout
+            importlib.import_module(module)
+    patch_everywhere("_record_step", make_record)
+    patch_everywhere("cna_mcmc", make_segment)
     if args.mode == "capture":
 
         class Captured(Exception):
@@ -150,7 +169,7 @@ def worker(args):
             result["smoothing_order"] = "F" if y.flags.f_contiguous else "C"
             raise Captured()
 
-        ck.dlm_smooth = capture
+        patch_everywhere("dlm_smooth", lambda _original: capture)
     elif args.null_outputs:
         for suffix in ["CNA_raw_results_gene_by_cell.txt", "CNA_results.txt"]:
             os.symlink("/dev/null", out / ("audit_copykat_" + suffix))
