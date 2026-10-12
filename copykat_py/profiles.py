@@ -53,9 +53,11 @@ class NumericsProfile:
     R's KS statistic, 1,000 draws, clusters in R's order, draw for draw as R with
     ``n.cores = 1``. ``fast``: NumPy draws, SciPy's KS, 500-1,000 draws."""
 
-    segment_values: Literal["closed_form", "r_replay"]
-    """Per-cell segment values: the exact posterior mean (R's 1,000-draw average converges to
-    it), or R's own draws replayed (serial; matches an R run with ``n.cores = 1``)."""
+    segment_values: Literal["r_replay", "closed_form"]
+    """Per-cell segment values. ``r_replay``: R's own 1,000 draws per segment and cell, replayed
+    in R's order (serial), as an R run with ``n.cores = 1`` computes them. ``closed_form``: the
+    exact posterior mean that those draws estimate; much faster, but R's Monte Carlo noise can
+    move cells between the final clusters, and so move calls (see ``docs/profiles.md``)."""
 
     final_call: Literal["r1.2.5", "r1.1.0", "fast"]
     """Steps 7-8. ``r1.2.5``/``r1.1.0`` (``rcompat/final_call.py``): ``hclust(ward.D)`` on the
@@ -74,7 +76,7 @@ R_1_2_5 = NumericsProfile(
     baseline="r",
     min_cluster_cells=10,
     segmentation="r",
-    segment_values="closed_form",
+    segment_values="r_replay",
     final_call="r1.2.5",
 )
 

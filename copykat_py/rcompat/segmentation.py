@@ -138,8 +138,9 @@ def cna_mcmc(
     """
     n_genes, n_cells = fttmat.shape
     clu = np.asarray(clu)
-    labels = [i for i in range(int(clu.min()), int(clu.max()) + 1) if np.any(clu == i)]
-    if len(labels) != int(clu.max()) - int(clu.min()) + 1:
+    lowest, highest = int(np.min(clu)), int(np.max(clu))
+    labels = [i for i in range(lowest, highest + 1) if np.any(clu == i)]
+    if len(labels) != highest - lowest + 1:
         logger.warning("  a step-4 cluster lost all its cells to filtering; CopyKAT-R would stop here")
     consensus = np.column_stack(group_medians(fttmat, [clu == i for i in labels], n_cores))
     consensus = libm_exp(np.asarray(consensus, dtype=np.float64))
@@ -151,7 +152,7 @@ def cna_mcmc(
     BR = sorted(breakpoints)
 
     retry = len(BR) < 25
-    logCNA = np.empty((n_genes, n_cells), dtype=out_dtype)
+    logCNA: np.ndarray = np.empty((n_genes, n_cells), dtype=out_dtype)
     for lo in range(0, n_cells, _SHAPE_BLOCK_CELLS):
         hi = min(n_cells, lo + _SHAPE_BLOCK_CELLS)
         shapes, rates = _segment_shapes(fttmat, BR, lo, hi)

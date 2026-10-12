@@ -205,10 +205,10 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
         help="With --profile r: the CopyKAT-R release to match (default 1.2.5).",
     )
     parser.add_argument(
-        "--r-replay-draws",
+        "--exact-segment-means",
         action="store_true",
-        help="With --profile r: per-cell segment values from R's own 1,000 draws (serial) instead of "
-        "their exact expectation, to match an R run with n.cores = 1 to the last digit.",
+        help="With --profile r: per-cell segment values from the exact posterior mean instead of "
+        "replaying R's 1,000 draws per segment. Faster, but can move calls (docs/profiles.md).",
     )
     parser.add_argument(
         "--dump-stages",
@@ -605,11 +605,11 @@ def main() -> CopyKATResult:
 
 
 def _profile_from_args(args: argparse.Namespace) -> "str | NumericsProfile":
-    if not args.r_replay_draws:
+    if not args.exact_segment_means:
         return args.profile
     if args.profile != "r":
-        raise SystemExit("--r-replay-draws applies only to --profile r")
-    return resolve_profile("r", args.r_version).replace(segment_values="r_replay")
+        raise SystemExit("--exact-segment-means applies only to --profile r")
+    return resolve_profile("r", args.r_version).replace(name="r+exact-means", segment_values="closed_form")
 
 
 def console_main() -> None:
@@ -666,8 +666,14 @@ def copykat_anndata(
     output_seg: bool = False,
     plot_genes: bool = True,
     pca_components: int | None = None,
+    profile: str = "r",
+    r_version: str | None = None,
 ) -> CopyKATResult:
-    """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
+    """Python-friendly AnnData wrapper that accepts an in-memory AnnData object.
+
+    ``profile`` and ``r_version`` are as for ``copykat()``; other options of the
+    ``copykat-py`` command line take their defaults.
+    """
     genome = Genome(genome)
     distance = DistanceMetric(distance)
     id_type = GeneIdType.normalize(id_type)
@@ -694,7 +700,9 @@ def copykat_anndata(
     if selected_meta:
         logger.info(f"Selected obs columns: {selected_meta}")
 
-    args = argparse.Namespace(
+    # Start from the command line's defaults so that every option the run reads exists.
+    args = _build_main_parser().parse_args(["--input", "<AnnData object>"])
+    vars(args).update(
         input="<AnnData object>",
         layer=layer,
         use_raw=use_raw,
@@ -717,6 +725,8 @@ def copykat_anndata(
         n_cores=n_cores,
         pca_components=pca_components,
         output_dir=str(output_dir),
+        profile=profile,
+        r_version=r_version,
     )
     return _run_copykat_analysis(
         args,

@@ -4,7 +4,7 @@
 Usage: verify/compare.py RUN_A RUN_B > comparison.tsv
 
 Each RUN is an output folder of verify/r/run_copykat.R or verify/run_port.sh; both
-write their intermediate results to RUN/stages/ in the same format (verify/stages.md).
+write their intermediate results to RUN/stages/ in the same format (verify/README.md).
 The output is one line per measurement: step, metric, value. Cells are matched by
 name, so a different cell order is not a difference.
 """

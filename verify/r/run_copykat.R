@@ -9,7 +9,7 @@
 # The package itself is not patched: trace() inserts "save this variable" calls
 # into the running copy of copykat(), and everything else is CopyKAT's own code
 # and its own output files. Stages are written to OUTPUT_DIR/stages/ in the
-# format described in verify/stages.md, which the Python side writes too.
+# format described in verify/README.md, which the Python side writes too.
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) >= 4) .libPaths(c(args[4], .libPaths()))
 suppressMessages({ library(copykat); library(Matrix) })

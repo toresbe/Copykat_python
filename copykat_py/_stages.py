@@ -2,7 +2,7 @@
 
 Nothing is written unless a directory is configured (``copykat(..., dump_stages=DIR)``
 or ``copykat-py --dump-stages DIR``). The layout matches what
-``verify/r/run_copykat.R`` writes for R (see ``verify/stages.md``): one directory per
+``verify/r/run_copykat.R`` writes for R (see ``verify/README.md``): one directory per
 value, numbers as raw little-endian float64 in ``values.f64``, text one entry per line
 in ``values.txt``, the shape in ``shape.txt``, and row/column names alongside.
 """

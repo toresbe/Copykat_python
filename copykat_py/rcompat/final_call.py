@@ -68,7 +68,7 @@ def _choose_k(Z: LinkageMatrix, version: str) -> ClusterLabels:
         return cutree(Z, 2)
     for k in (4, 3, 2):
         labels = cutree(Z, k)
-        if np.bincount(labels)[1:].min() > 10:
+        if np.min(np.bincount(labels)[1:]) > 10:
             return labels
     logger.warning("  no cut into 2-4 clusters has more than 10 cells in each; CopyKAT-R stops here. Using k = 2")
     return cutree(Z, 2)
@@ -79,7 +79,7 @@ def _scores(labels: ClusterLabels, cell_names: Sequence[str], preN: Collection[s
     names = np.asarray(cell_names, dtype=object)
     normal = set(preN)
     scores = []
-    for i in range(1, labels.max() + 1):
+    for i in range(1, int(np.max(labels)) + 1):
         cli = names[labels == i]
         shared = len(set(cli) & normal)
         scores.append(shared / (len(normal) if version == "1.2.5" else len(cli)))
@@ -153,7 +153,7 @@ def call(
         if consensus_correlation >= 0.6:
             predictions[:] = PredictionLabel.DIPLOID
         else:
-            for i in range(1, labels.max() + 1):
+            for i in range(1, int(np.max(labels)) + 1):
                 conses = np.median(gene_level[:, labels == i], axis=1)
                 nearer_diploid = _wasserstein1d(conses, conses_diploid) < _wasserstein1d(conses, conses_aneuploid)
                 predictions[labels == i] = PredictionLabel.DIPLOID if nearer_diploid else PredictionLabel.ANEUPLOID

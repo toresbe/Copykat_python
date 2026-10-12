@@ -66,7 +66,7 @@ def baseline_norm_cl(norm_mat_smooth: GeneByCell, cell_names: Sequence[str], min
     n_genes = norm_mat_smooth.shape[0]
     Z = ward_d2_tree(norm_mat_smooth, n_cores)
     ct = cut_with_min_size(Z, min_cells)
-    clusters = np.arange(1, ct.max() + 1)
+    clusters = np.arange(1, int(np.max(ct)) + 1)
     consensus = group_medians(norm_mat_smooth, [ct == i for i in clusters], n_cores)
     sx = np.array([max(0.05, 0.5 * r_sd(c)) for c in consensus])
     _mu, _lam, SDM, restarted = normalmix_em(np.column_stack(consensus), sx, maxit=5000)
