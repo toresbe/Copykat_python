@@ -36,6 +36,12 @@ Results so far (CopyKAT-R from github.com/navinlabcode/copykat on R 4.3, x86-64)
 | Simulated, 90% tumour | 300 | same decisions | same decisions |
 | Simulated, half depth | 300 | same decisions | same decisions |
 | Simulated, 1/5 depth | 300 | same decisions | same decisions |
+| Simulated, 60% tumour | 2,000 | same decisions | not run |
+
+Every comparison in this table has every intermediate matrix within 1e-10 of R's.
+On the 2,000-cell sample (4-core cloud machine), CopyKAT-R took 55 minutes with one
+core; the `r` profile took 42 seconds and `experimental` 33 seconds. The `r`
+profile's extra time is the serial replay of R's draws in step 5.
 
 The simulated samples come from the seeded simulator of the synthetic-truth
 tests (`tests/synthetic/synthetic_data.py` on the `claude/project-thread-60caw9`
