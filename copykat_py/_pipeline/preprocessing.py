@@ -12,6 +12,7 @@ import numpy.typing as npt
 import pandas as pd
 from scipy import sparse
 
+from copykat_py import profiles
 from copykat_py._pipeline.runtime import _format_seconds, _record_step
 from copykat_py._types import BoolArray, FloatArray, GeneIdType, Genome, IntArray, RuntimeInfo, SparseMatrix
 from copykat_py.annotation import annotate_gene_rows
@@ -152,7 +153,7 @@ def transform_and_smooth(
     seg_mask = detection_rate <= DR2
     keep_cells2 = _keep_cells_by_chr_coverage(counts[seg_mask], chromosomes[seg_mask], ngene_chr)
 
-    smoothed = np.empty((n_genes, n_cells), dtype=np.float32)
+    smoothed = np.empty((n_genes, n_cells), dtype=profiles.storage_dtype())
     transform_seconds = 0.0
     smooth_seconds = 0.0
     max_cores = int(os.getenv("COPYKAT_MAX_CORES", str(os.cpu_count() or 1)))

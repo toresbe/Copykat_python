@@ -23,6 +23,7 @@ from scipy.optimize import brentq
 from scipy.special import gammainc, gammaincinv, gammaln
 from scipy.stats import ks_2samp
 
+from copykat_py import profiles
 from copykat_py._medians import group_medians
 from copykat_py._types import ClusterLabels, FloatArray, GeneByCell, KSMethod, ParallelInfo
 
@@ -272,7 +273,7 @@ def cna_mcmc(
         }
     )
 
-    logCNA = np.empty((n_genes, n_cells), dtype=np.float32)
+    logCNA = np.empty((n_genes, n_cells), dtype=profiles.storage_dtype())
     segments = list(itertools.pairwise(BR))
 
     def _segment_block(cols: tuple[int, int]) -> None:
@@ -286,7 +287,7 @@ def cna_mcmc(
             seg_sum = cumsum[right + 1] - cumsum[left]
             seg_len = max(1, right - left + 1)
             seg_mean = np.maximum(seg_sum / seg_len, 1e-300)
-            logCNA[left : right + 1, lo:hi] = np.log(seg_mean).astype(np.float32, copy=False)
+            logCNA[left : right + 1, lo:hi] = np.log(seg_mean)
 
     if len(blocks) == 1:
         _segment_block(blocks[0])

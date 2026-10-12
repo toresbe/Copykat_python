@@ -9,6 +9,7 @@ import pandas as pd
 from scipy import sparse
 from scipy.io import mmread
 
+from copykat_py import profiles
 from copykat_py._types import BoolArray, RawMatrix, SparseMatrix
 
 
@@ -118,6 +119,8 @@ def _prepare_sparse_input(
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
         raise ValueError("No cells have more than min_gene_per_cell genes")
     keep_cells = genes_per_cell >= min_gene_per_cell
+    if (~keep_cells).sum() == 1 and profiles.active().input_filters == "r":
+        keep_cells[:] = True  # R removes low cells only when more than one qualifies
     filtered_cells = int((~keep_cells).sum())
     csc = csc[:, keep_cells]
     barcodes = barcodes[keep_cells]
@@ -163,6 +166,8 @@ def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: flo
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
         raise ValueError("No cells have more than min_gene_per_cell genes")
     low_gene_cells = genes_per_cell < min_gene_per_cell
+    if low_gene_cells.sum() == 1 and profiles.active().input_filters == "r":
+        low_gene_cells[:] = False  # R removes low cells only when more than one qualifies
     filtered_cells = int(low_gene_cells.sum())
     if filtered_cells > 0:
         loaded = loaded.loc[:, ~low_gene_cells]

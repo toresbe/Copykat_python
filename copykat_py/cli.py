@@ -31,6 +31,8 @@ from copykat_py._types import (
     SparseMatrix,
 )
 from copykat_py.genomic_coordinates import split_cna_table
+from copykat_py.profiles import NumericsProfile
+from copykat_py.profiles import resolve as resolve_profile
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +190,31 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
         default=KSMethod.MONTE_CARLO,
         choices=list(KSMethod),
         help="Breakpoint statistic: Monte Carlo posterior KS (default) or exact posterior-Gamma KS.",
+    )
+    parser.add_argument(
+        "--profile",
+        default="r",
+        choices=["r", "experimental"],
+        help="r: reproduce CopyKAT-R (default). experimental: fastest settings, which move some calls. "
+        "See docs/profiles.md.",
+    )
+    parser.add_argument(
+        "--r-version",
+        default=None,
+        choices=["1.2.5", "1.1.0"],
+        help="With --profile r: the CopyKAT-R release to match (default 1.2.5).",
+    )
+    parser.add_argument(
+        "--r-replay-draws",
+        action="store_true",
+        help="With --profile r: per-cell segment values from R's own 1,000 draws (serial) instead of "
+        "their exact expectation, to match an R run with n.cores = 1 to the last digit.",
+    )
+    parser.add_argument(
+        "--dump-stages",
+        type=os.path.abspath,  # resolved before the run changes into --output-dir
+        default=None,
+        help="[verification] Directory to write intermediate results to, for comparison with CopyKAT-R (verify/).",
     )
     parser.add_argument(
         "--allele-counts",
@@ -503,6 +530,9 @@ def _run_copykat_analysis(
             ks_method=args.ks_method,
             anchor=args.anchor,
             final_call=args.final_call,
+            dump_stages=args.dump_stages,
+            profile=_profile_from_args(args),
+            r_version=args.r_version,
             meta_csv=meta_csv,
             row_split_col=row_split_col,
         )
@@ -572,6 +602,28 @@ def main() -> CopyKATResult:
         input_label=args.input,
         post_plot_meta=args.meta,
     )
+
+
+def _profile_from_args(args: argparse.Namespace) -> "str | NumericsProfile":
+    if not args.r_replay_draws:
+        return args.profile
+    if args.profile != "r":
+        raise SystemExit("--r-replay-draws applies only to --profile r")
+    return resolve_profile("r", args.r_version).replace(segment_values="r_replay")
+
+
+def console_main() -> None:
+    """``copykat-py`` console script: ``main()`` without returning its result.
+
+    A console script exits with whatever its function returns, so returning the
+    result dict would print it and exit with status 1 after a successful run.
+    """
+    main()
+
+
+def matrix_console_main() -> None:
+    """``copykat_matrix`` console script (see ``console_main``)."""
+    matrix_main()
 
 
 def matrix_main() -> CopyKATResult:
