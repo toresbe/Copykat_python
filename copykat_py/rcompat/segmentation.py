@@ -10,9 +10,9 @@ keeps their mean.
 
 The breakpoints here use the same generator (``rng.py``), the same arithmetic for the
 posterior shapes (``rstats.py``), the same KS statistic and the same draw order, so
-they are R's breakpoints. For the per-cell values, R's 1,000-draw mean estimates the
-posterior mean, which is computed exactly by default (``segment_values =
-"closed_form"``); ``"r_replay"`` replays R's draws instead. When too few breakpoints
+they are R's breakpoints. For the per-cell values, the `r` profiles replay R's
+1,000 draws (``segment_values = "r_replay"``); ``"closed_form"`` instead computes
+the posterior mean that those draws estimate. When too few breakpoints
 are found R retries with a lower cut, after having made every per-cell draw, so the
 generator is advanced past them (``burn``) before the retry.
 """
