@@ -101,7 +101,7 @@ def _aggregate_duplicate_genes_frame(df: pd.DataFrame) -> pd.DataFrame:
     if not df.index.has_duplicates:
         return df
 
-    # Match R rowsum(..., reorder=TRUE): sum duplicate symbols and sort groups.
+    # Sum duplicate symbols and sort the groups (R's rowsum(..., reorder=TRUE)).
     return df.groupby(level=0, sort=True).sum()
 
 
@@ -113,7 +113,10 @@ def _prepare_sparse_input(
     low_dr: float,
 ) -> PreparedInput:
     """Sparse branch of ``_prepare_input_matrix``: filter without densifying."""
-    csc, genes = _aggregate_duplicate_genes_sparse(mat.tocsc(copy=False), genes)
+    r_order = profiles.active().input_filters == "r"
+    csc = mat.tocsc(copy=False)
+    if not r_order:
+        csc, genes = _aggregate_duplicate_genes_sparse(csc, genes)
     original_cell_names = barcodes.tolist()
     genes_per_cell = np.asarray(csc.getnnz(axis=0)).ravel()
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
@@ -127,9 +130,12 @@ def _prepare_sparse_input(
     detection_rate = np.asarray(csc.getnnz(axis=1)).ravel() / max(csc.shape[1], 1)
     keep_genes = detection_rate > low_dr
     filtered_gene_rows = int((~keep_genes).sum())
+    csc, genes = csc[keep_genes, :], genes[keep_genes]
+    if r_order:
+        csc, genes = _aggregate_duplicate_genes_sparse(csc, genes)
     return PreparedInput(
-        matrix=csc[keep_genes, :],
-        genes=genes[keep_genes],
+        matrix=csc,
+        genes=genes,
         barcodes=barcodes.tolist(),
         original_cell_names=original_cell_names,
         stats=InputStats(
@@ -160,7 +166,9 @@ def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: flo
             )
 
     loaded = _load_matrix(rawmat)
-    loaded = _aggregate_duplicate_genes_frame(loaded)
+    r_order = profiles.active().input_filters == "r"
+    if not r_order:
+        loaded = _aggregate_duplicate_genes_frame(loaded)
     original_cell_names = list(loaded.columns)
     genes_per_cell = (loaded > 0).sum(axis=0)
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
@@ -176,6 +184,8 @@ def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: flo
     filtered_gene_rows = int((~keep_genes).sum())
     if keep_genes.sum() >= 1:
         loaded = loaded.loc[keep_genes]
+    if r_order:
+        loaded = _aggregate_duplicate_genes_frame(loaded)
     return PreparedInput(
         matrix=loaded.to_numpy(),
         genes=loaded.index,

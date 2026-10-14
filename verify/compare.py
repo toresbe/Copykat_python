@@ -22,8 +22,9 @@ Row = tuple[str, str, object]
 
 def columns(stage: dict, cells: list[str], colnames: list[str] | None = None) -> np.ndarray:
     """The columns of a saved (genes or bins) x cells matrix, in the order of ``cells``."""
-    index = {name: i for i, name in enumerate(colnames or stage["colnames"])}
-    return stage["values"][:, [index[c] for c in cells]]
+    # R's data.frame step turns "-" in barcodes into "." in the bins matrix, so match on that spelling
+    index = {name.replace("-", "."): i for i, name in enumerate(colnames or stage["colnames"])}
+    return stage["values"][:, [index[c.replace("-", ".")] for c in cells]]
 
 
 def by_cell(stage: dict) -> dict[str, object]:

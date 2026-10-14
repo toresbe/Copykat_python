@@ -37,7 +37,9 @@ class NumericsProfile:
 
     input_filters: Literal["r", "fast"]
     """Step 1. ``r``: a single cell under ``min_gene_per_cell`` is kept, as R's
-    ``sum(genes.raw < min.gene.per.cell) > 1`` does; ``fast`` removes it."""
+    ``sum(genes.raw < min.gene.per.cell) > 1`` does; ``fast`` removes it. Also ``r``:
+    rows with the same gene symbol are counted and filtered one by one and the survivors summed,
+    as R does; ``fast`` sums them first."""
 
     baseline: Literal["r", "fast"]
     """Step 4. ``r`` (``rcompat/baseline.py``): Ward on every gene, cutree's cluster numbers,

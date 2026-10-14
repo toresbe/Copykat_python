@@ -74,6 +74,7 @@ on the 90%-tumour sample above).
 | Step | CopyKAT-R, and the `r` profile | `experimental` |
 |---|---|---|
 | 1 | A single cell with too few genes is kept (R removes them only when more than one qualifies) | Removed |
+| 1 | Rows that share a gene symbol are counted and filtered one by one (a symbol whose copies are each under `LOW.DR` is dropped), then the survivors are summed | Summed first, then filtered, so a symbol can pass only because its copies add up |
 | 1-6 | Smoothed, segmented and binned values in float64 | float32 (half the memory) |
 | 4 | Ward clustering on every gene; clusters numbered as `cutree` numbers them | PCA above 2,000 cells |
 | 4 | Clusters need more than 10 cells (1.2.5) or 5 (1.1.0) | 5 |
