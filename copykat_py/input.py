@@ -105,6 +105,25 @@ def _aggregate_duplicate_genes_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df.groupby(level=0, sort=True).sum()
 
 
+def _low_gene_cells(genes_per_cell: npt.NDArray[Any], min_gene_per_cell: int) -> BoolArray:
+    """Cells to remove for having too few genes, by the active profile's rule.
+
+    R 1.2.5 removes them only when more than one cell qualifies
+    (``sum(genes.raw < min.gene.per.cell) > 1``). R 1.1.0 tests a different count than it
+    removes: ``if (sum(genes.raw < 100) > 1)`` removes every cell under 200 genes, so
+    cells with 100-199 genes stay unless more than one cell has fewer than 100.
+    """
+    low = np.asarray(genes_per_cell < min_gene_per_cell)
+    profile = profiles.active()
+    if profile.input_filters == "r":
+        if profile.r_version == "1.1.0":
+            if (genes_per_cell < 100).sum() <= 1:
+                low[:] = False
+        elif low.sum() == 1:
+            low[:] = False
+    return low
+
+
 def _prepare_sparse_input(
     mat: SparseMatrix,
     genes: npt.NDArray[Any],
@@ -121,9 +140,7 @@ def _prepare_sparse_input(
     genes_per_cell = np.asarray(csc.getnnz(axis=0)).ravel()
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
         raise ValueError("No cells have more than min_gene_per_cell genes")
-    keep_cells = genes_per_cell >= min_gene_per_cell
-    if (~keep_cells).sum() == 1 and profiles.active().input_filters == "r":
-        keep_cells[:] = True  # R removes low cells only when more than one qualifies
+    keep_cells = ~_low_gene_cells(genes_per_cell, min_gene_per_cell)
     filtered_cells = int((~keep_cells).sum())
     csc = csc[:, keep_cells]
     barcodes = barcodes[keep_cells]
@@ -173,9 +190,7 @@ def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: flo
     genes_per_cell = (loaded > 0).sum(axis=0)
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
         raise ValueError("No cells have more than min_gene_per_cell genes")
-    low_gene_cells = genes_per_cell < min_gene_per_cell
-    if low_gene_cells.sum() == 1 and profiles.active().input_filters == "r":
-        low_gene_cells[:] = False  # R removes low cells only when more than one qualifies
+    low_gene_cells = _low_gene_cells(np.asarray(genes_per_cell), min_gene_per_cell)
     filtered_cells = int(low_gene_cells.sum())
     if filtered_cells > 0:
         loaded = loaded.loc[:, ~low_gene_cells]
