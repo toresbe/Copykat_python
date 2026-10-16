@@ -69,6 +69,16 @@ CopyKAT-Python supports two main entry points:
 
 <img width="1183" height="566" alt="image" src="https://github.com/user-attachments/assets/2e8b1ae0-ef1c-4cc1-9e3d-f8cf6f9a88b5" />
 
+### Profiles
+
+By default (`--profile r`) a run makes the same decisions as CopyKAT-R 1.2.5 run
+with one core: the same normal reference, breakpoints, clusters and calls.
+`--r-version 1.1.0` follows CopyKAT-R 1.1.0 instead. `--profile experimental`
+uses this package's fastest settings, which move some calls. See
+[docs/profiles.md](docs/profiles.md) for what each profile changes, and
+[verify/](verify/README.md) for the script that runs CopyKAT-R and this package
+side by side and compares every step.
+
 ### Terminal — `copykat_matrix` / `copykat-py`
 
 **CSV or TSV matrix:**
@@ -395,6 +405,9 @@ The full [FFPE Human Breast Cancer](https://www.10xgenomics.com/datasets/atera-w
 <img width="1296" height="720" alt="image" src="https://github.com/user-attachments/assets/d21e99ce-2dcf-4d64-813f-2de59ef8641a" />
 
 ## Why Results May Differ from CopyKAT-R
+
+*This section describes the `experimental` profile. The default `r` profile
+reproduces CopyKAT-R's decisions, including `ward.D`; see [docs/profiles.md](docs/profiles.md).*
 
 From the above comparison of the final prediction, the Seurat cluster 4 was called diploid by CopyKAT-R but aneuploid by CopyKAT-Py.
 The copykat-py call was confirmed correct through the corresponding H&E cell morphology in this case. 

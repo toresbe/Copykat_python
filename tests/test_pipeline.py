@@ -124,6 +124,7 @@ def test_pipeline_output_contracts(tmp_path, pipeline_stubs, genome, reference) 
     sample = str(tmp_path / "sample")
     result = workflow.copykat(
         input_counts(),
+        profile="experimental",  # the stubs replace the fast path's steps
         genome=genome,
         min_gene_per_cell=5,
         ngene_chr=1,
@@ -173,6 +174,7 @@ def test_pipeline_output_contracts(tmp_path, pipeline_stubs, genome, reference) 
 def test_arm_calls_survive_baseline_adjustment(tmp_path, pipeline_stubs) -> None:
     result = workflow.copykat(
         input_counts(),
+        profile="experimental",
         min_gene_per_cell=5,
         ngene_chr=1,
         norm_cell_names=[f"cell{i}" for i in range(6)],

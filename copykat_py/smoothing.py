@@ -13,6 +13,7 @@ import numba
 import numpy as np
 from numba import njit, prange
 
+from copykat_py import profiles
 from copykat_py._types import FloatArray, GeneByCell, ParallelInfo
 
 _LAST_PAR_INFO: ParallelInfo = {
@@ -131,7 +132,7 @@ def dlm_smooth(norm_mat: GeneByCell, n_cores: int = 1, out: GeneByCell | None = 
 
     K, B = _dlm_gains(n_genes)
     y = np.asarray(norm_mat, dtype=np.float64)
-    smoothed = np.empty((n_genes, n_cells), dtype=np.float32) if out is None else out
+    smoothed = np.empty((n_genes, n_cells), dtype=profiles.storage_dtype()) if out is None else out
     previous_threads = numba.get_num_threads()
     numba.set_num_threads(n_jobs)
     try:

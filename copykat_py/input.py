@@ -9,6 +9,7 @@ import pandas as pd
 from scipy import sparse
 from scipy.io import mmread
 
+from copykat_py import profiles
 from copykat_py._types import BoolArray, RawMatrix, SparseMatrix
 
 
@@ -100,8 +101,27 @@ def _aggregate_duplicate_genes_frame(df: pd.DataFrame) -> pd.DataFrame:
     if not df.index.has_duplicates:
         return df
 
-    # Match R rowsum(..., reorder=TRUE): sum duplicate symbols and sort groups.
+    # Sum duplicate symbols and sort the groups (R's rowsum(..., reorder=TRUE)).
     return df.groupby(level=0, sort=True).sum()
+
+
+def _low_gene_cells(genes_per_cell: npt.NDArray[Any], min_gene_per_cell: int) -> BoolArray:
+    """Cells to remove for having too few genes, by the active profile's rule.
+
+    R 1.2.5 removes them only when more than one cell qualifies
+    (``sum(genes.raw < min.gene.per.cell) > 1``). R 1.1.0 tests a different count than it
+    removes: ``if (sum(genes.raw < 100) > 1)`` removes every cell under 200 genes, so
+    cells with 100-199 genes stay unless more than one cell has fewer than 100.
+    """
+    low = np.asarray(genes_per_cell < min_gene_per_cell)
+    profile = profiles.active()
+    if profile.input_filters == "r":
+        if profile.r_version == "1.1.0":
+            if (genes_per_cell < 100).sum() <= 1:
+                low[:] = False
+        elif low.sum() == 1:
+            low[:] = False
+    return low
 
 
 def _prepare_sparse_input(
@@ -112,21 +132,27 @@ def _prepare_sparse_input(
     low_dr: float,
 ) -> PreparedInput:
     """Sparse branch of ``_prepare_input_matrix``: filter without densifying."""
-    csc, genes = _aggregate_duplicate_genes_sparse(mat.tocsc(copy=False), genes)
+    r_order = profiles.active().input_filters == "r"
+    csc = mat.tocsc(copy=False)
+    if not r_order:
+        csc, genes = _aggregate_duplicate_genes_sparse(csc, genes)
     original_cell_names = barcodes.tolist()
     genes_per_cell = np.asarray(csc.getnnz(axis=0)).ravel()
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
         raise ValueError("No cells have more than min_gene_per_cell genes")
-    keep_cells = genes_per_cell >= min_gene_per_cell
+    keep_cells = ~_low_gene_cells(genes_per_cell, min_gene_per_cell)
     filtered_cells = int((~keep_cells).sum())
     csc = csc[:, keep_cells]
     barcodes = barcodes[keep_cells]
     detection_rate = np.asarray(csc.getnnz(axis=1)).ravel() / max(csc.shape[1], 1)
     keep_genes = detection_rate > low_dr
     filtered_gene_rows = int((~keep_genes).sum())
+    csc, genes = csc[keep_genes, :], genes[keep_genes]
+    if r_order:
+        csc, genes = _aggregate_duplicate_genes_sparse(csc, genes)
     return PreparedInput(
-        matrix=csc[keep_genes, :],
-        genes=genes[keep_genes],
+        matrix=csc,
+        genes=genes,
         barcodes=barcodes.tolist(),
         original_cell_names=original_cell_names,
         stats=InputStats(
@@ -157,12 +183,14 @@ def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: flo
             )
 
     loaded = _load_matrix(rawmat)
-    loaded = _aggregate_duplicate_genes_frame(loaded)
+    r_order = profiles.active().input_filters == "r"
+    if not r_order:
+        loaded = _aggregate_duplicate_genes_frame(loaded)
     original_cell_names = list(loaded.columns)
     genes_per_cell = (loaded > 0).sum(axis=0)
     if (genes_per_cell > min_gene_per_cell).sum() == 0:
         raise ValueError("No cells have more than min_gene_per_cell genes")
-    low_gene_cells = genes_per_cell < min_gene_per_cell
+    low_gene_cells = _low_gene_cells(np.asarray(genes_per_cell), min_gene_per_cell)
     filtered_cells = int(low_gene_cells.sum())
     if filtered_cells > 0:
         loaded = loaded.loc[:, ~low_gene_cells]
@@ -171,6 +199,8 @@ def _prepare_input_matrix(rawmat: RawMatrix, min_gene_per_cell: int, low_dr: flo
     filtered_gene_rows = int((~keep_genes).sum())
     if keep_genes.sum() >= 1:
         loaded = loaded.loc[keep_genes]
+    if r_order:
+        loaded = _aggregate_duplicate_genes_frame(loaded)
     return PreparedInput(
         matrix=loaded.to_numpy(),
         genes=loaded.index,

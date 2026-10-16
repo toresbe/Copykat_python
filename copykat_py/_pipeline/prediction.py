@@ -7,12 +7,14 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from copykat_py import _stages, profiles
 from copykat_py import anchor as _anchor
 from copykat_py._pipeline.baseline import _BaselineState
 from copykat_py._pipeline.runtime import _format_seconds, _record_step
 from copykat_py._types import (
     BaselineWarning,
     CellLineMode,
+    DistanceMetric,
     FinalCallStrategy,
     FloatArray,
     Genome,
@@ -30,6 +32,7 @@ from copykat_py.final_call import (
     adjust_baseline_inplace as _adjust_baseline_inplace,
 )
 from copykat_py.normal_cells import normal_cells_to_names
+from copykat_py.rcompat import final_call as r_final_call
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,8 @@ class PredictionOptions:
     pca_components : int
         Resolved PCA component cap used by large final clustering steps,
         selected earlier from the input cell count and genome or an override.
+    distance : DistanceMetric
+        Distance for the step 7-8 clustering under the ``r`` profile, as in R.
     """
 
     genome: Genome
@@ -64,6 +69,7 @@ class PredictionOptions:
     final_call: FinalCallStrategy
     n_cores: int
     pca_components: int
+    distance: DistanceMetric = DistanceMetric.EUCLIDEAN
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,9 +100,20 @@ def adjust_and_call(
     *,
     options: PredictionOptions,
     runtime_info: RuntimeInfo,
+    gene_level: FloatArray | None = None,
 ) -> FinalPrediction:
-    """Adjust values in place; retain the genome-specific cell-line behavior."""
+    """Adjust values in place; retain the genome-specific cell-line behavior.
+
+    ``gene_level`` (genes x cells) is needed by the ``r`` profile's R 1.2.5 final call.
+    """
     synthetic_mode = options.genome is Genome.HG20 and options.cell_line is CellLineMode.YES
+    r_version = profiles.active().final_call
+    if r_version != "fast" and not synthetic_mode:
+        if options.genome is Genome.HG20:
+            return _adjust_and_call_r(
+                uber_mat_adj, gene_level, cell_cols_seg, cell_name_list, baseline_state, r_version[1:], options
+            )
+        logger.warning("  steps 7-8 follow CopyKAT-R only for hg20; using this package's final call for mm10")
     logger.info("step 7: adjust baseline ...")
     step_start = time.perf_counter()
 
@@ -131,6 +148,7 @@ def adjust_and_call(
             pca_components=options.pca_components,
             prediction_override=arm_calls,
         )
+        _stages.save("final/step7_clusters", initial_call.labels, names=cell_cols_seg)
         # Baseline adjustment: subtract diploid mean, then denoise
         diploid_mask = initial_call.predictions == PredictionLabel.DIPLOID
         if diploid_mask.sum() > 0:
@@ -190,3 +208,33 @@ def adjust_and_call(
     )
 
     return FinalPrediction(mat_adj, clustering_result)
+
+
+def _adjust_and_call_r(
+    uber_mat_adj: FloatArray,
+    gene_level: FloatArray | None,
+    cell_cols_seg: list[str],
+    cell_name_list: list[str],
+    baseline_state: _BaselineState,
+    version: str,
+    options: PredictionOptions,
+) -> FinalPrediction:
+    """Steps 7-8 as CopyKAT-R ``version`` runs them (``rcompat/final_call.py``)."""
+    logger.info(f"step 7-8: re-adjust baseline and final prediction (CopyKAT-R {version}) ...")
+    preN = normal_cells_to_names(baseline_state.normal_cells, cell_name_list)
+    result = r_final_call.call(
+        uber_mat_adj,
+        gene_level,
+        cell_cols_seg,
+        preN,
+        version=version,
+        distance=options.distance,
+        low_confidence=baseline_state.warning is BaselineWarning.UNCLASSIFIED,
+    )
+    _stages.save("final/step7_clusters", result.step7_labels, names=cell_cols_seg)
+    if result.consensus_correlation is not None:
+        _stages.save("final/consensus_correlation", [result.consensus_correlation])
+    return FinalPrediction(
+        result.adjusted,
+        FinalCallResult(labels=result.labels, linkage=result.linkage, predictions=result.predictions),
+    )

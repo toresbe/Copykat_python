@@ -31,6 +31,8 @@ from copykat_py._types import (
     SparseMatrix,
 )
 from copykat_py.genomic_coordinates import split_cna_table
+from copykat_py.profiles import NumericsProfile
+from copykat_py.profiles import resolve as resolve_profile
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +190,31 @@ def _add_common_copykat_args(parser: argparse.ArgumentParser) -> None:
         default=KSMethod.MONTE_CARLO,
         choices=list(KSMethod),
         help="Breakpoint statistic: Monte Carlo posterior KS (default) or exact posterior-Gamma KS.",
+    )
+    parser.add_argument(
+        "--profile",
+        default="r",
+        choices=["r", "experimental"],
+        help="r: reproduce CopyKAT-R (default). experimental: fastest settings, which move some calls. "
+        "See docs/profiles.md.",
+    )
+    parser.add_argument(
+        "--r-version",
+        default=None,
+        choices=["1.2.5", "1.1.0"],
+        help="With --profile r: the CopyKAT-R release to match (default 1.2.5).",
+    )
+    parser.add_argument(
+        "--exact-segment-means",
+        action="store_true",
+        help="With --profile r: per-cell segment values from the exact posterior mean instead of "
+        "replaying R's 1,000 draws per segment. Faster, but can move calls (docs/profiles.md).",
+    )
+    parser.add_argument(
+        "--dump-stages",
+        type=os.path.abspath,  # resolved before the run changes into --output-dir
+        default=None,
+        help="[verification] Directory to write intermediate results to, for comparison with CopyKAT-R (verify/).",
     )
     parser.add_argument(
         "--allele-counts",
@@ -503,6 +530,9 @@ def _run_copykat_analysis(
             ks_method=args.ks_method,
             anchor=args.anchor,
             final_call=args.final_call,
+            dump_stages=args.dump_stages,
+            profile=_profile_from_args(args),
+            r_version=args.r_version,
             meta_csv=meta_csv,
             row_split_col=row_split_col,
         )
@@ -574,6 +604,28 @@ def main() -> CopyKATResult:
     )
 
 
+def _profile_from_args(args: argparse.Namespace) -> "str | NumericsProfile":
+    if not args.exact_segment_means:
+        return args.profile
+    if args.profile != "r":
+        raise SystemExit("--exact-segment-means applies only to --profile r")
+    return resolve_profile("r", args.r_version).replace(name="r+exact-means", segment_values="closed_form")
+
+
+def console_main() -> None:
+    """``copykat-py`` console script: ``main()`` without returning its result.
+
+    A console script exits with whatever its function returns, so returning the
+    result dict would print it and exit with status 1 after a successful run.
+    """
+    main()
+
+
+def matrix_console_main() -> None:
+    """``copykat_matrix`` console script (see ``console_main``)."""
+    matrix_main()
+
+
 def matrix_main() -> CopyKATResult:
     """Entry point for ``copykat_matrix``."""
     parser = _build_matrix_parser()
@@ -614,8 +666,14 @@ def copykat_anndata(
     output_seg: bool = False,
     plot_genes: bool = True,
     pca_components: int | None = None,
+    profile: str = "r",
+    r_version: str | None = None,
 ) -> CopyKATResult:
-    """Python-friendly AnnData wrapper that accepts an in-memory AnnData object."""
+    """Python-friendly AnnData wrapper that accepts an in-memory AnnData object.
+
+    ``profile`` and ``r_version`` are as for ``copykat()``; other options of the
+    ``copykat-py`` command line take their defaults.
+    """
     genome = Genome(genome)
     distance = DistanceMetric(distance)
     id_type = GeneIdType.normalize(id_type)
@@ -642,7 +700,9 @@ def copykat_anndata(
     if selected_meta:
         logger.info(f"Selected obs columns: {selected_meta}")
 
-    args = argparse.Namespace(
+    # Start from the command line's defaults so that every option the run reads exists.
+    args = _build_main_parser().parse_args(["--input", "<AnnData object>"])
+    vars(args).update(
         input="<AnnData object>",
         layer=layer,
         use_raw=use_raw,
@@ -665,6 +725,8 @@ def copykat_anndata(
         n_cores=n_cores,
         pca_components=pca_components,
         output_dir=str(output_dir),
+        profile=profile,
+        r_version=r_version,
     )
     return _run_copykat_analysis(
         args,

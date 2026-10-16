@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
+from copykat_py import profiles
 from copykat_py._types import BinByCell, GeneByCell, Genome, ParallelInfo
 from copykat_py.data_loader import load_dna_bins, load_full_anno
 
@@ -98,10 +99,10 @@ def convert_to_bins(
         if cell_names is None:
             raise ValueError("cell_names is required when values is given")
         cell_cols = list(cell_names)
-        RNA_values = np.asarray(values, dtype=np.float32)  # shape: (n_genes, n_cells)
+        RNA_values = np.asarray(values, dtype=profiles.storage_dtype())  # shape: (n_genes, n_cells)
     else:
         cell_cols = [c for c in RNA_mat.columns if c not in anno_cols]
-        RNA_values = RNA_mat[cell_cols].values.astype(np.float32, copy=False)  # shape: (n_genes, n_cells)
+        RNA_values = RNA_mat[cell_cols].values.astype(profiles.storage_dtype(), copy=False)  # shape: (n_genes, n_cells)
     gene_symbols = RNA_mat[symbol_col].values
 
     # Map genes in RNA_mat to indices for fast lookup.
@@ -151,7 +152,7 @@ def convert_to_bins(
     # the gene-level values: a median of float32 values is one of them, so
     # nothing is lost, and the bins x cells matrix takes half the memory.
     n_cells = len(cell_cols)
-    RNA_adj = np.zeros((len(DNA), n_cells), order="F", dtype=np.float32)
+    RNA_adj = np.zeros((len(DNA), n_cells), order="F", dtype=profiles.storage_dtype())
     valid_mask = np.zeros(len(DNA), dtype=bool)
 
     def _process_bin(i: int) -> None:

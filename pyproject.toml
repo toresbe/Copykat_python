@@ -31,8 +31,8 @@ allele = ["torch>=2.4"]
 dev = ["ruff>=0.6", "mypy>=1.10", "pandas-stubs", "scipy-stubs"]
 
 [project.scripts]
-copykat-py = "copykat_py.cli:main"
-copykat_matrix = "copykat_py.cli:matrix_main"
+copykat-py = "copykat_py.cli:console_main"
+copykat_matrix = "copykat_py.cli:matrix_console_main"
 copykat-py-plot = "copykat_py.cli:plot_main"
 copykat-py-report = "copykat_py.reporting.cli:main"
 copykat-py-allele = "copykat_py.allele.cli:main"

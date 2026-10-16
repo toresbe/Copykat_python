@@ -3,7 +3,10 @@
 import logging
 from dataclasses import dataclass
 
+from copykat_py import _stages, profiles
 from copykat_py._types import ClusterLabels, FloatArray, KSMethod
+from copykat_py.rcompat import segmentation as r_segmentation
+from copykat_py.rcompat.rng import RRandom
 from copykat_py.segmentation import SegmentationResult, cna_mcmc
 
 logger = logging.getLogger(__name__)
@@ -42,16 +45,40 @@ def _segment_with_retries(
     options: _SegmentationOptions,
 ) -> SegmentationResult:
     """Retry sparse breakpoint results without copying the input matrix."""
-    for fraction in (1.0, 0.5, 0.25):
+    profile = profiles.active()
+    # copykat() calls set.seed(1234) first and nothing draws before step 5.
+    r_stream = RRandom(1234) if profile.segmentation == "r" else None
+    for attempt, fraction in enumerate((1.0, 0.5, 0.25), start=1):
         if fraction < 1.0:
             logger.info(f"  too few breakpoints; decreased KS_cut to {fraction:.0%}")
-        result = cna_mcmc(
-            cluster_labels,
-            relative_expression,
-            bins=options.window_size,
-            cut_cor=fraction * options.ks_cutoff,
-            n_cores=options.n_cores,
-            ks_method=options.ks_method,
+        if r_stream is not None:
+            result = r_segmentation.cna_mcmc(
+                cluster_labels,
+                relative_expression,
+                bins=options.window_size,
+                cut_cor=fraction * options.ks_cutoff,
+                rng=r_stream,
+                replay=profile.segment_values == "r_replay",
+                burn_if_retry=attempt < 3,
+                n_cores=options.n_cores,
+                out_dtype=profiles.storage_dtype(),
+            )
+        else:
+            result = cna_mcmc(
+                cluster_labels,
+                relative_expression,
+                bins=options.window_size,
+                cut_cor=fraction * options.ks_cutoff,
+                n_cores=options.n_cores,
+                ks_method=options.ks_method,
+            )
+        _stages.save(
+            f"segmentation_{attempt}",
+            {
+                "breaks": [b + 1 for b in result.breakpoints],  # 1-based, as in R
+                "logCNA": result.log_cna,
+                "cut.cor": [fraction * options.ks_cutoff],
+            },
         )
         if len(result.breakpoints) >= 25:
             return result
